@@ -1,0 +1,56 @@
+# test-minimal — smoke-test template for the bot_templates loader.
+#
+# Declares the smallest non-trivial set of skills + applications so the
+# loader, validator, resolver, and provisioner can exercise every code path
+# without touching real OpenClaw state. Used in
+# packages/admin/tests/test_bot_templates.py.
+#
+# Do NOT deploy a real bot from this template — it has no useful purpose
+# beyond exercising the framework. Real templates live alongside this one
+# (morning-briefing/, project-bot/, etc.).
+
+name: test-minimal
+display_name: Test Minimal Template
+description: >
+  Smoke-test template — declares one always-available skill and one gallery
+  application reference so the loader and validator exercise the full schema.
+  Not intended for real bot deployment.
+
+voice_preset: neutral
+channel_pattern: any-messaging
+
+# Two skills exercising distinct resolver branches without depending on
+# any auto-installable plugin:
+#   - ``messaging`` is recognised as a "manual" skill (configured via the
+#     bot's channel/integration setup, not via plugin install).
+#   - ``brave`` is declared with ``optional: true`` so the resolver
+#     records it as unsupported-but-non-blocking — exercising the
+#     "won't auto-install but won't block deploy" branch.
+skills:
+  - id: messaging
+    source: openclaw-plugin
+    optional: false
+  - id: brave
+    source: openclaw-plugin
+    optional: true
+
+# One application that depends on the declared skills. References the
+# existing gallery task-manager app so the validator's "gallery vs
+# embedded" branch is covered. Tests do not actually install the app
+# (they exercise the planning stage only).
+applications:
+  - name: Test Task Manager
+    app_id: app_task_manager
+    skill_deps:
+      - messaging
+    config:
+      probe_only: true
+
+# Template vars exercised by the AGENTS.md / SOUL.md templates in this dir.
+template_vars:
+  user_name:
+    description: How the bot should address the operator.
+    required: true
+  time_zone:
+    description: IANA timezone string. Used for scheduled-delivery hints.
+    default: America/Los_Angeles

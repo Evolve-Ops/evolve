@@ -1,0 +1,368 @@
+#!/bin/bash
+# tools/meta-substrate-sync <target-repo-path> — install / refresh the META dev substrate
+# into ANOTHER project's checkout on the same machine (META:substrate Initiative 11,
+# multi-project substrate; docs/spec-substrate-2026-06-15.md §16, decision B3 staged-extract).
+#
+# WHY THIS EXISTS. The home-scoped `~/.claude/` (skills, hooks, memory, scheduled tasks)
+# already loads in ANY checkout on the machine — so `/meta` `/status` `/close` and the
+# unattended sweeps run in a second project for free (memory [[substrate-multi-project-calgraph-2026-06-30]]).
+# What a consuming repo LACKS is the repo-tracked half of the substrate: the doctrine
+# docs the skills read (`docs/META-*.md` etc.), the generic `tools/meta-*` the procedures
+# shell out to, and a per-project `.claude/meta.json` (+ its own aspect registry). Without
+# those, `/meta` misfires there — e.g. `tools/meta-config` is "command not found". This
+# tool seeds and refreshes exactly that repo-tracked half from the Evolve checkout it is
+# run from (the substrate's dev-home / source of truth).
+#
+# CONTRACT (modeled on tools/meta-skills-sync):
+#   - SOURCE = the Evolve checkout this script lives in (override with --source <path>).
+#     Its WORKING TREE is the authority (this is a manual operator installer, not a
+#     session-start hook, so unlike meta-skills-sync it reads files on disk, not origin/main).
+#   - BYTE-DIFF / IDEMPOTENT. A manifest file is written only when it is absent or its bytes
+#     differ from SOURCE's; a second run over an already-synced target is a byte-identical
+#     no-op. --force re-writes every manifest file regardless (still byte-exact / idempotent
+#     in content).
+#   - NEVER DELETES. It only ever creates or overwrites-from-source the manifest files and
+#     creates the two scaffolds; it never removes a target-local file (a target may carry
+#     its own docs/tools that are none of our business).
+#   - SCAFFOLDS ARE CREATE-IF-ABSENT. `.claude/meta.json` and the fresh starter aspect
+#     registry are written only when missing — an existing target meta.json / registry is
+#     the target's OWN config and is left untouched (never clobbered, not even by --force).
+#   - Prints a compact summary of what changed (or would change, under --dry-run).
+#
+# WHAT IT INSTALLS (the SUBSTRATE_SYNC_MANIFEST below):
+#   * Doctrine docs  -> <target>/docs/     (the closed doctrine set the skills' bootstrap reads)
+#   * Generic tools  -> <target>/tools/    (meta-* + meta_config, EXCLUDING the Evolve-specific
+#                                           tools/preflight + tools/ui-style-lint — the target
+#                                           authors its own preflight in a later bite)
+#   * Scaffold       <target>/.claude/meta.json   (if absent; repo_slug inferred from the
+#                                                   target's `git remote get-url origin`)
+#   * Scaffold       <target>/<registry_path>     (if absent; a FRESH, EMPTY-of-Evolve-aspects
+#                                                   starter registry — the target's OWN registry,
+#                                                   never Evolve's aspect list)
+#
+# Usage:
+#   tools/meta-substrate-sync <target-repo-path> [--dry-run] [--force] [--source <evolve-checkout>]
+#     <target-repo-path>   the consuming project's checkout to install/refresh into (required)
+#     --dry-run            report what WOULD change; write nothing
+#     --force              re-write manifest files even when byte-identical (scaffolds untouched)
+#     --source <path>      the Evolve checkout to sync FROM (default: this script's own repo)
+#     -h, --help           print this usage
+#
+# Maintained by META:substrate (docs/spec-substrate-2026-06-15.md §16).
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+usage: meta-substrate-sync <target-repo-path> [--dry-run] [--force] [--source <evolve-checkout>]
+
+Install / refresh the repo-tracked half of the META dev substrate (doctrine docs +
+generic tools + a per-project .claude/meta.json + a fresh aspect registry) into another
+project's checkout on the same machine. Byte-exact, idempotent, and NEVER deletes.
+
+  <target-repo-path>   the consuming project's checkout to install into (required)
+  --dry-run            report what WOULD change; write nothing
+  --force              re-write manifest files even when byte-identical (scaffolds untouched)
+  --source <path>      the Evolve checkout to sync FROM (default: this script's own repo)
+  -h, --help           print this usage
+USAGE
+}
+
+# --- the manifest ------------------------------------------------------------------------
+# Doctrine docs (repo-relative, under docs/). This is the CLOSED reference set the skills'
+# bootstrap reads: every doc->doc link among these seven points at another member of the set
+# (verified — no dangling doctrine links). `using-the-meta-system.md` is included because
+# META-bootstrap.md hard-links to it (the plain-language operator guide); omitting it would
+# leave a dead link in a synced, load-bearing doc.
+SUBSTRATE_DOCS=(
+  META-bootstrap.md
+  META-session-guide.md
+  meta-ledger-schema.md
+  meta-reconcile-procedure.md
+  meta-coherence-procedure.md
+  meta-system-setup.md
+  using-the-meta-system.md
+)
+
+# Generic tools (repo-relative, under tools/). The substrate machinery the markdown
+# procedures shell out to. meta-inflight loads meta-queue as a sibling module and meta-issue
+# imports meta_config, so the set is internally closed. tools/preflight and tools/ui-style-lint
+# are DELIBERATELY EXCLUDED — they are Evolve-specific; the target authors its own preflight.
+SUBSTRATE_TOOLS=(
+  meta-config
+  meta_config.py
+  meta-inflight
+  meta-issue
+  meta-ledger-prune
+  meta-queue
+  meta-skills-sync
+  test_meta_config.py
+)
+
+# The fresh starter aspect-registry path the scaffolded meta.json points `registry_path` at.
+# It is a DEDICATED file, distinct from the synced docs/META-session-guide.md (which carries
+# Evolve's registry table as inert reference doctrine) — so the registry the skills actually
+# read via registry_path is the target's OWN, never Evolve's aspect list.
+STARTER_REGISTRY_REL="docs/META-aspect-registry.md"
+
+# --- arg parse ---------------------------------------------------------------------------
+TARGET=""
+SOURCE=""
+DRY_RUN=0
+FORCE=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dry-run)  DRY_RUN=1; shift ;;
+    --force)    FORCE=1; shift ;;
+    --source)   SOURCE="${2:-}"; shift 2 ;;
+    --source=*) SOURCE="${1#--source=}"; shift ;;
+    -h|--help)  usage; exit 0 ;;
+    --) shift; break ;;
+    -*) printf 'meta-substrate-sync: unknown option %q\n' "$1" >&2; usage >&2; exit 2 ;;
+    *)
+      if [ -z "$TARGET" ]; then TARGET="$1"; shift
+      else printf 'meta-substrate-sync: unexpected extra argument %q\n' "$1" >&2; exit 2; fi
+      ;;
+  esac
+done
+
+[ -n "$TARGET" ] || { printf 'meta-substrate-sync: missing <target-repo-path>\n\n' >&2; usage >&2; exit 2; }
+
+# --- resolve SOURCE (this script's repo unless overridden) -------------------------------
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -z "$SOURCE" ]; then
+  SOURCE="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
+  [ -n "$SOURCE" ] || SOURCE="$(cd "$SCRIPT_DIR/.." && pwd)"   # fall back to tools/..
+fi
+[ -d "$SOURCE" ] || { printf 'meta-substrate-sync: --source %q is not a directory\n' "$SOURCE" >&2; exit 2; }
+# Sanity: SOURCE must actually be an Evolve-shaped checkout carrying the substrate files.
+if [ ! -f "$SOURCE/docs/META-bootstrap.md" ] || [ ! -f "$SOURCE/tools/meta_config.py" ]; then
+  printf 'meta-substrate-sync: %q does not look like an Evolve checkout (no docs/META-bootstrap.md / tools/meta_config.py)\n' "$SOURCE" >&2
+  exit 2
+fi
+
+# --- resolve TARGET ----------------------------------------------------------------------
+[ -d "$TARGET" ] || { printf 'meta-substrate-sync: target %q is not a directory\n' "$TARGET" >&2; exit 2; }
+TARGET="$(cd "$TARGET" && pwd)"
+if [ "$TARGET" = "$SOURCE" ]; then
+  printf 'meta-substrate-sync: refusing to sync a checkout into itself (%q)\n' "$TARGET" >&2
+  exit 2
+fi
+
+# --- helpers -----------------------------------------------------------------------------
+# Extract a flat string field from a JSON file (best-effort; enough for our scaffold + a
+# hand-authored flat meta.json). Empty output => absent/unreadable.
+read_json_field() {  # <file> <key>
+  [ -f "$1" ] || return 0
+  sed -nE "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\1/p" "$1" 2>/dev/null | head -n1
+}
+
+# Infer OWNER/REPO from a target's origin remote (github SSH or HTTPS forms). Empty on miss.
+infer_slug() {  # <target>
+  local url
+  url="$(git -C "$1" remote get-url origin 2>/dev/null || true)"
+  [ -n "$url" ] || return 0
+  url="${url%.git}"
+  case "$url" in
+    git@*:*/*)                 printf '%s\n' "${url#*:}" ;;
+    ssh://*)                   printf '%s\n' "$url" | sed -E 's#^ssh://[^/]+/##' ;;
+    https://*|http://*)        printf '%s\n' "$url" | sed -E 's#^https?://[^/]+/##' ;;
+    *) return 0 ;;
+  esac
+}
+
+# Copy src->dst atomically (temp + mv), creating parent dirs. Returns non-zero on failure.
+copy_file() {  # <src> <dst> <make-executable 0|1>
+  local src="$1" dst="$2" exe="$3" dir tmp
+  dir="$(dirname "$dst")"
+  mkdir -p "$dir" || return 1
+  tmp="$dir/.meta-substrate-sync.tmp.$$"
+  cp "$src" "$tmp" || { rm -f "$tmp" 2>/dev/null || true; return 1; }
+  [ "$exe" -eq 1 ] && chmod +x "$tmp" 2>/dev/null || true
+  mv -f "$tmp" "$dst" || { rm -f "$tmp" 2>/dev/null || true; return 1; }
+  return 0
+}
+
+created=0; updated=0; unchanged=0; scaffolded=0; kept=0; failures=0; registry_misconfig=0
+created_names=(); updated_names=(); scaffold_names=(); kept_names=()
+
+# --- sync one manifest group -------------------------------------------------------------
+sync_group() {  # <subdir> <make-executable 0|1> <file...>
+  local subdir="$1" exe="$2"; shift 2
+  local rel src dst
+  for rel in "$@"; do
+    src="$SOURCE/$subdir/$rel"
+    dst="$TARGET/$subdir/$rel"
+    if [ ! -f "$src" ]; then
+      printf '  WARNING: source missing %s/%s — skipped\n' "$subdir" "$rel" >&2
+      failures=$((failures + 1)); continue
+    fi
+    if [ -f "$dst" ] && [ "$FORCE" -eq 0 ] && cmp -s "$src" "$dst"; then
+      unchanged=$((unchanged + 1)); continue
+    fi
+    local exists=0; [ -f "$dst" ] && exists=1
+    if [ "$DRY_RUN" -eq 1 ]; then
+      if [ "$exists" -eq 1 ]; then updated=$((updated + 1)); updated_names+=("$subdir/$rel")
+      else created=$((created + 1)); created_names+=("$subdir/$rel"); fi
+      continue
+    fi
+    if copy_file "$src" "$dst" "$exe"; then
+      if [ "$exists" -eq 1 ]; then updated=$((updated + 1)); updated_names+=("$subdir/$rel")
+      else created=$((created + 1)); created_names+=("$subdir/$rel"); fi
+    else
+      printf '  WARNING: failed to write %s/%s\n' "$subdir" "$rel" >&2
+      failures=$((failures + 1))
+    fi
+  done
+}
+
+sync_group docs  0 "${SUBSTRATE_DOCS[@]}"
+sync_group tools 1 "${SUBSTRATE_TOOLS[@]}"
+
+# --- scaffold .claude/meta.json (create-if-absent) ---------------------------------------
+META_DST="$TARGET/.claude/meta.json"
+meta_preexisting=0; [ -f "$META_DST" ] && meta_preexisting=1
+slug=""
+if [ "$meta_preexisting" -eq 1 ]; then
+  kept=$((kept + 1)); kept_names+=(".claude/meta.json")
+else
+  slug="$(infer_slug "$TARGET" || true)"
+  [ -n "$slug" ] || slug="OWNER/REPO-REPLACE-ME"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    scaffolded=$((scaffolded + 1)); scaffold_names+=(".claude/meta.json (repo_slug=$slug)")
+  else
+    if mkdir -p "$TARGET/.claude" 2>/dev/null; then
+      mtmp="$TARGET/.claude/.meta.json.tmp.$$"
+      # Written as a flat object matching the A-config schema (tools/meta_config.py, #3370).
+      # Scaffold ONLY the load-bearing fields + the one field whose default is wrong here:
+      #   * repo_slug / registry_path — load-bearing (gh calls, the registry doc must exist).
+      #   * deploy_model=ship-on-merge — EXPLICIT: a freshly-scaffolded project has no pod, and
+      #     the resolver DEFAULT is "pod-canary" (Evolve's model), which would keep the pod-only
+      #     `live` bucket as the terminal state and strand every chip. ship-on-merge makes `merged`
+      #     terminal — the correct model for a pod-less consumer.
+      # OMIT the OPTIONAL fields on purpose (their empty-default IS the correct fresh-project state):
+      #   * preflight_cmd — a fresh project has no `tools/preflight` (that's Evolve's, and it is
+      #     never synced); an empty value degrades the chip DoD to "push, then poll gh pr checks"
+      #     until the project authors its own. Hardcoding "tools/preflight" would make its chips
+      #     invoke a nonexistent Evolve command — exactly the coupling A-config's degrade fixes.
+      #   * flaky_jobs_doc — a fresh project has no known-flaky-jobs doc; empty drops the DoD's
+      #     flaky-rerun line.
+      # OMIT memory_slug too: the resolver's middle rung derives `*<checkout-basename>*` for a
+      # normal top-level clone (== the repo name), which is exactly what we'd scaffold — no need
+      # to pin it. (A project later worked from a nested/worktree dir can declare it explicitly.)
+      if printf '{\n  "repo_slug": "%s",\n  "registry_path": "%s",\n  "deploy_model": "ship-on-merge"\n}\n' \
+           "$slug" "$STARTER_REGISTRY_REL" > "$mtmp" 2>/dev/null \
+         && mv -f "$mtmp" "$META_DST" 2>/dev/null; then
+        scaffolded=$((scaffolded + 1)); scaffold_names+=(".claude/meta.json (repo_slug=$slug)")
+      else
+        rm -f "$mtmp" 2>/dev/null || true
+        printf '  WARNING: failed to scaffold .claude/meta.json\n' >&2
+        failures=$((failures + 1))
+      fi
+    else
+      printf '  WARNING: failed to create %s/.claude\n' "$TARGET" >&2
+      failures=$((failures + 1))
+    fi
+  fi
+fi
+
+# --- resolve the registry path EXACTLY as the skills will --------------------------------
+# For a freshly-scaffolded meta.json we KNOW the path (we just wrote registry_path=STARTER).
+# For a pre-existing target meta.json we must resolve through the SYNCED meta_config resolver
+# itself — never a bespoke parser — so the path the tool scaffolds can never diverge from the
+# path the skills read (a sed reader misses split-across-lines JSON; and an ABSENT registry_path
+# falls back to meta_config's DEFAULT, the guide — both traps land the target on Evolve's table).
+registry_rel="$STARTER_REGISTRY_REL"
+if [ "$meta_preexisting" -eq 1 ]; then
+  resolved=""
+  if command -v python3 >/dev/null 2>&1; then
+    resolved="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[2] + "/tools"); import meta_config; print(meta_config.registry_path(sys.argv[1]))' "$TARGET" "$SOURCE" 2>/dev/null || true)"
+  fi
+  # Degrade to the flat-JSON reader only if python3 is somehow unavailable.
+  [ -n "$resolved" ] || resolved="$(read_json_field "$META_DST" registry_path || true)"
+  [ -n "$resolved" ] && registry_rel="$resolved"
+fi
+
+# GUARD (the load-bearing invariant): if the resolved registry path is one of the doctrine docs
+# we just synced, it is NOT a project registry — the target's meta.json omitted registry_path
+# (⇒ meta_config's guide default) or points at inert doctrine. Scaffolding there is impossible
+# (the file exists) and would leave the skills reading Evolve's aspect table. Warn loudly and
+# do NOT scaffold an orphan; the operator must set registry_path to their own file.
+registry_is_doctrine=0
+for _d in "${SUBSTRATE_DOCS[@]}"; do
+  if [ "$registry_rel" = "docs/$_d" ]; then registry_is_doctrine=1; break; fi
+done
+
+# --- scaffold the fresh starter registry (create-if-absent) ------------------------------
+REG_DST="$TARGET/$registry_rel"
+if [ "$registry_is_doctrine" -eq 1 ]; then
+  printf '  WARNING: target .claude/meta.json resolves registry_path to %q — a synced doctrine\n' "$registry_rel" >&2
+  printf '           doc, NOT a project registry (its registry_path is unset or points at doctrine).\n' >&2
+  printf '           The skills would read Evolve'"'"'s aspect table. Set registry_path in\n' >&2
+  printf '           %s/.claude/meta.json to your own file (e.g. %s) and re-run.\n' "$TARGET" "$STARTER_REGISTRY_REL" >&2
+  registry_misconfig=1
+elif [ -f "$REG_DST" ]; then
+  kept=$((kept + 1)); kept_names+=("$registry_rel")
+elif [ "$DRY_RUN" -eq 1 ]; then
+  scaffolded=$((scaffolded + 1)); scaffold_names+=("$registry_rel (fresh aspect registry)")
+else
+  reg_dir="$(dirname "$REG_DST")"
+  if mkdir -p "$reg_dir" 2>/dev/null; then
+    rtmp="$reg_dir/.meta-aspect-registry.tmp.$$"
+    if cat > "$rtmp" 2>/dev/null <<'REGISTRY'
+# Aspect registry — this project
+
+> **This is THIS project's OWN aspect registry.** The META substrate resolves it via
+> `registry_path` in `.claude/meta.json`, so the `/meta` `/status` `/design` skills read
+> the rows below — NOT the registry table embedded in the synced
+> [`docs/META-session-guide.md`](META-session-guide.md), which carries Evolve's own
+> aspects as inert reference doctrine. Keep this file's rows to THIS project's aspects.
+>
+> To add an aspect, append a row. The columns and the new-aspect protocol are the doctrine
+> in [`docs/META-session-guide.md`](META-session-guide.md) (§ "Adding a new META (aspect)").
+
+| Aspect | Spec | Memory | Deploy |
+|---|---|---|---|
+<!-- Add one row per aspect. Example (delete this comment once you add real rows):
+| `example` — one-line mission | `docs/spec-example.md` | `[[example-mission]]` | how a change reaches production |
+-->
+REGISTRY
+    then
+      if mv -f "$rtmp" "$REG_DST" 2>/dev/null; then
+        scaffolded=$((scaffolded + 1)); scaffold_names+=("$registry_rel (fresh aspect registry)")
+      else
+        rm -f "$rtmp" 2>/dev/null || true
+        printf '  WARNING: failed to scaffold %s\n' "$registry_rel" >&2
+        failures=$((failures + 1))
+      fi
+    else
+      rm -f "$rtmp" 2>/dev/null || true
+      printf '  WARNING: failed to write %s\n' "$registry_rel" >&2
+      failures=$((failures + 1))
+    fi
+  else
+    printf '  WARNING: failed to create %s\n' "$reg_dir" >&2
+    failures=$((failures + 1))
+  fi
+fi
+
+# --- summary -----------------------------------------------------------------------------
+verb="synced"; [ "$DRY_RUN" -eq 1 ] && verb="would sync"
+printf 'meta-substrate-sync (%s): %d created, %d updated, %d unchanged, %d scaffolded, %d kept  [%s -> %s]\n' \
+  "$verb" "$created" "$updated" "$unchanged" "$scaffolded" "$kept" "$SOURCE" "$TARGET"
+# Guard empty-array expansions so `set -u` can't trip on bash 3.2 (macOS).
+if [ "${#created_names[@]}"   -gt 0 ]; then printf '  created:   %s\n' "${created_names[*]}"; fi
+if [ "${#updated_names[@]}"   -gt 0 ]; then printf '  updated:   %s\n' "${updated_names[*]}"; fi
+if [ "${#scaffold_names[@]}"  -gt 0 ]; then printf '  scaffolded: %s\n' "${scaffold_names[*]}"; fi
+if [ "${#kept_names[@]}"      -gt 0 ]; then printf '  kept (untouched): %s\n' "${kept_names[*]}"; fi
+if printf '%s' "${scaffold_names[*]:-}" | grep -q 'REPLACE-ME'; then
+  printf '  NOTE: could not infer repo_slug from the target — edit .claude/meta.json and set it.\n' >&2
+fi
+if [ "$registry_misconfig" -eq 1 ]; then
+  printf '  ACTION NEEDED: the target reads Evolve'"'"'s aspect table — set registry_path (see WARNING above).\n' >&2
+fi
+if [ "$failures" -gt 0 ]; then
+  printf '  WARNING: %d item(s) failed\n' "$failures" >&2
+  exit 1
+fi
+exit 0

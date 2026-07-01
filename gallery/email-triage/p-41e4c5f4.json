@@ -1,0 +1,272 @@
+{
+  "pkg_id": "p-41e4c5f4",
+  "pkg_version": "2026.06.11-1.1",
+  "gallery_version": "2026.06.11-1.1",
+  "schema_version": 5,
+  "manifest_type": "evolve_application",
+  "display_name": "Email Triage",
+  "author": "evolve",
+  "description": "Reads your recent unread email twice a day, classifies each message by urgency and category, and delivers a triage summary via your bot's primary channel.",
+  "application_tags": [
+    "personal-productivity",
+    "email-summary",
+    "email-triage",
+    "daily-digest",
+    "daily-brief-suite",
+    "email",
+    "productivity"
+  ],
+  "objective": "Surface the emails worth your time — twice a day, automatically — so nothing urgent slips through and you're not wading through promotional noise.",
+  "id": "app_email_triage",
+  "name": "Email Triage",
+  "status": "active",
+  "dependencies": [],
+  "app_dependencies": [],
+  "requirements": {
+    "integrations": [
+      {
+        "id": "gmail",
+        "display_name": "Gmail",
+        "required": true,
+        "check_path": "openclaw.json → integrations.gmail",
+        "setup_doc": "docs/integrations/gmail.md",
+        "reason": "Reads recent unread email via the Gmail API for classification",
+        "alternatives": [
+          {
+            "id": "google_path_c",
+            "display_name": "Google (path-C: service-account + DwD)",
+            "required": true,
+            "check_path": "network.json → bots[bot].google_integration",
+            "required_scopes": [
+              "https://www.googleapis.com/auth/gmail.readonly"
+            ],
+            "setup_doc": "docs/spec-google-integration-paths-2026-05-30.md",
+            "reason": "Path-C service-account auth from PR #1862. Bot uses MCP tools server-side instead of legacy bearer-token HTTP."
+          }
+        ]
+      }
+    ],
+    "secrets": [],
+    "system": [],
+    "python_packages": []
+  },
+  "interface_contract": {
+    "populated_by_forge": false,
+    "extracted_at": null,
+    "data_files": [
+      {
+        "path": "workspace/email_triage/config.json",
+        "description": "Runtime configuration: schedule times, email limit, urgent senders, category overrides.",
+        "schema": {
+          "storage_format": "JSON object",
+          "fields": {
+            "schedule_times": "array of HH:MM strings — run times (default [\"07:30\", \"13:00\"])",
+            "max_emails_per_run": "integer — max unread emails to classify per run (default 25)",
+            "archive_promotional": "boolean — auto-archive promotional emails after triage (default false)",
+            "urgent_senders": "array of email addresses always classified as urgent",
+            "category_overrides": "object mapping sender-pattern → category string"
+          }
+        }
+      },
+      {
+        "path": "workspace/email_triage/runs/YYYY-MM-DD-HHMM.json",
+        "description": "Per-run triage results: classified email list + summary stats. One file per run.",
+        "schema": {
+          "storage_format": "JSON object",
+          "fields": {
+            "run_at": "ISO 8601 datetime",
+            "email_count": "integer — total emails classified",
+            "urgent_count": "integer",
+            "important_count": "integer",
+            "routine_count": "integer",
+            "promotional_count": "integer",
+            "emails": "array of classified email objects (id, from_addr, subject, urgency, category, action)"
+          }
+        }
+      }
+    ],
+    "cli": [
+      {
+        "command": "python3 scripts/email_triage.py run",
+        "key_flags": [
+          "--max-emails N",
+          "--dry-run"
+        ],
+        "output_signals": [
+          "TRIAGE_SENT:",
+          "TRIAGE_FAILED:",
+          "TRIAGE_PARTIAL:"
+        ]
+      },
+      {
+        "command": "python3 scripts/email_triage.py status",
+        "key_flags": [],
+        "output_signals": []
+      }
+    ],
+    "key_paths": {
+      "cli": "scripts/email_triage.py",
+      "cron_trigger": "scripts/email-triage-cron.sh",
+      "config": "workspace/email_triage/config.json",
+      "runs_dir": "workspace/email_triage/runs/",
+      "launchd_plist_morning": "/Library/LaunchDaemons/com.{bot_id}.email-triage-morning.plist",
+      "launchd_plist_afternoon": "/Library/LaunchDaemons/com.{bot_id}.email-triage-afternoon.plist"
+    },
+    "signal_prefixes": [
+      "TRIAGE_SENT:",
+      "TRIAGE_FAILED:",
+      "TRIAGE_PARTIAL:"
+    ],
+    "cron_schedule": "{morning_time} and {afternoon_time} daily (local timezone)"
+  },
+  "files": [],
+  "install_job": null,
+  "improvement_history": [],
+  "identity": {
+    "purpose": "Classify recent unread email by urgency and category using a quick LLM pass, then deliver a human-readable triage summary to the operator's configured channel twice a day.",
+    "scope_includes": [
+      "Read recent unread emails via Gmail API (subject + sender + first 200 chars of body)",
+      "Classify each email: urgency (urgent/important/routine/promotional/spam-likely) + category (financial, legal, family, work-project, vendor, news, personal, other) + suggested action (reply-now/reply-today/can-wait/can-ignore/archive)",
+      "Respect urgent_senders and category_overrides from config",
+      "Compose a short triage summary message",
+      "Send summary via `openclaw message send` to the user's recorded channel",
+      "Write per-run result to workspace/email_triage/runs/",
+      "Emit TRIAGE_SENT: or TRIAGE_FAILED: signal for the verify daemon",
+      "Skip a run if fewer than 2 unread emails (nothing worth triaging)"
+    ],
+    "scope_excludes": [
+      "Sending, forwarding, deleting, or labeling any emails",
+      "Fetching full email bodies (subject + sender + first 200 chars only)",
+      "Cross-bot data sharing",
+      "Storing email content beyond classification metadata"
+    ],
+    "user": "The bot operator — triage summary delivered to their messaging channel."
+  },
+  "success_criteria": {
+    "observable_outcomes": [
+      "Triage summary arrives twice a day at configured times",
+      "Summary correctly counts urgent/important/routine emails",
+      "Urgent emails (from urgent_senders or LLM-classified urgent) are named in the summary",
+      "Run result written to workspace/email_triage/runs/ after each run",
+      "TRIAGE_SENT: signal emitted (parsed by verify daemon)"
+    ],
+    "failure_signals": [
+      "TRIAGE_FAILED: signal — check Gmail OAuth token",
+      "TRIAGE_PARTIAL: — classifier failed; summary based on heuristics only",
+      "No run file for today by 10am — cron may not have fired",
+      "Multiple summaries per window — cron misconfigured"
+    ],
+    "quality_bar": {
+      "minimum": "Operator gets a message at configured times listing how many emails are urgent/important/routine, with urgent senders named",
+      "excellent": "Operator can skim the summary in 10 seconds and know exactly which emails to open first — without opening Gmail"
+    }
+  },
+  "build_spec": "# Email Triage — Build Specification\n\n## Overview\n\nBuild a twice-daily email triage daemon. The core deliverable is a short classification summary delivered to the operator's channel — no full email bodies, no storage of content, read-only Gmail access.\n\nThis is a scheduled script (not a persistent daemon). LaunchDaemons fire it at two configured times per day; the script fetches, classifies, summarises, and exits.\n\n---\n\n## File Layout\n\n```\nscripts/\n  email_triage.py          ← main CLI: run | status\n  email-triage-cron.sh     ← cron trigger (calls email_triage.py run)\nworkspace/\n  email_triage/\n    config.json            ← operator config (created on first run if absent)\n    runs/                  ← per-run result files\n      YYYY-MM-DD-HHMM.json\n```\n\nAll paths are relative to the bot's workspace root (~/.openclaw/workspace/).\n\n---\n\n## Default config (workspace/email_triage/config.json)\n\nCreated on first run if absent:\n\n```json\n{\n  \"schedule_times\": [\"07:30\", \"13:00\"],\n  \"max_emails_per_run\": 25,\n  \"archive_promotional\": false,\n  \"urgent_senders\": [],\n  \"category_overrides\": {}\n}\n```\n\n---\n\n## Auth: reading Gmail token\n\nRead from openclaw.json → integrations.gmail.token OR the legacy GOG path (openclaw.json → auth.profiles[\"google_workspace:*\"].token).  The email-integration app (p-341576fa) documents the canonical read path; mirror it.\n\n```python\noc = json.loads(Path(\"/Users/{bot_id}/.openclaw/openclaw.json\").read_text())\n# New gmail skill path (post-V2.1-3):\ngmail_cfg = oc.get(\"integrations\", {}).get(\"gmail\", {})\ntoken_dict = gmail_cfg.get(\"token\") or {}\naccess_token = token_dict.get(\"access_token\", \"\")\n# Fallback: GOG auth profile\nif not access_token:\n    profiles = (oc.get(\"auth\") or {}).get(\"profiles\") or {}\n    for k, v in profiles.items():\n        if k.startswith(\"google_workspace:\") and isinstance(v, dict):\n            inner = v.get(\"token\") or {}\n            access_token = inner.get(\"access_token\", \"\")\n            if access_token:\n                break\n```\n\nIf no token after both paths: emit TRIAGE_FAILED: gmail-not-configured and exit 1.\n\n---\n\n## Fetching unread emails\n\nGmail API v1: list messages, fetch metadata for each.\n\n```python\nimport base64, urllib.request, json\n\nLIST_URL = \"https://gmail.googleapis.com/gmail/v1/users/me/messages\"\nMSG_URL  = \"https://gmail.googleapis.com/gmail/v1/users/me/messages/{id}\"\n\ndef gmail_get(url, token):\n    req = urllib.request.Request(url, headers={\"Authorization\": f\"Bearer {token}\"})\n    with urllib.request.urlopen(req, timeout=10) as resp:\n        return json.loads(resp.read())\n\ndef fetch_unread(token, max_emails):\n    params = urllib.parse.urlencode({\"q\": \"is:unread in:inbox\", \"maxResults\": max_emails})\n    data = gmail_get(f\"{LIST_URL}?{params}\", token)\n    ids = [m[\"id\"] for m in data.get(\"messages\", [])]\n    emails = []\n    for msg_id in ids:\n        msg = gmail_get(f\"{MSG_URL.format(id=msg_id)}?format=metadata&metadataHeaders=From&metadataHeaders=Subject\", token)\n        headers = {h[\"name\"].lower(): h[\"value\"] for h in msg.get(\"payload\", {}).get(\"headers\", [])}\n        # Body snippet — first 200 chars\n        snippet = msg.get(\"snippet\", \"\")[:200]\n        emails.append({\n            \"id\": msg_id,\n            \"from_addr\": headers.get(\"from\", \"\"),\n            \"subject\": headers.get(\"subject\", \"\"),\n            \"snippet\": snippet,\n        })\n    return emails\n```\n\n---\n\n## Classification\n\nSend to the Anthropic API using the bot's key (read from openclaw.json → auth.profiles or env ANTHROPIC_API_KEY).\n\nModel: claude-haiku-3-5 (low cost; classification is simple).\nMax tokens: 1024.\n\n### Classifier prompt\n\n```\nYou are an email triage assistant. Given a list of emails (sender, subject, snippet), classify each one.\n\nFor each email return a JSON array where each object has:\n  \"id\": the email id (exact string, unchanged)\n  \"urgency\": one of urgent | important | routine | promotional | spam-likely\n  \"category\": one of financial | legal | family | work-project | vendor | news | personal | other\n  \"action\": one of reply-now | reply-today | can-wait | can-ignore | archive\n\nUrgency rules:\n- urgent: needs a response today or involves time-sensitive action\n- important: worth reading soon but not blocking\n- routine: normal correspondence, no time pressure\n- promotional: marketing, newsletters, offers\n- spam-likely: unsolicited, suspicious, or clearly junk\n\nReturn ONLY the JSON array. No prose, no markdown fences.\n```\n\nUser message: JSON array of {id, from_addr, subject, snippet} for all emails in this run.\n\n### Parsing\n\nExpect a JSON array. If parsing fails: fall back to heuristic classification (see below) and emit TRIAGE_PARTIAL:.\n\n### Heuristic fallback (used when LLM fails or API key missing)\n\n- promotional if subject contains: unsubscribe, newsletter, % off, deal, sale, offer\n- spam-likely if subject/from contains: noreply@, no-reply@, donotreply@\n- urgent if from_addr is in urgent_senders config\n- important if subject contains: urgent, action required, deadline, invoice, payment due\n- routine otherwise\n\ncategory: financial if sender domain or subject matches: bank, invoice, payment, receipt, statement, tax\nlegal: contract, agreement, legal, attorney, counsel\nfamily: from urgent_senders (non-vendor) or personal email domains\nothers: use other as default\n\n---\n\n## Config override application\n\nApply after LLM classification:\n1. If from_addr is in config.urgent_senders → override urgency to urgent, action to reply-now\n2. If any key in config.category_overrides matches from_addr (substring match, case-insensitive) → override category\n\n---\n\n## Message composition\n\n```\nEmail triage — {date} {time}\n\n{N} emails | {urgent_count} urgent, {important_count} important, {routine_count} routine, {promo_count} promotional\n\nUrgent\n• {sender_name} — {subject}\n• {sender_name} — {subject}\n\nImportant\n• {sender_name} — {subject}\n```\n\nRules:\n- Only show sections with at least one email\n- If urgent_count == 0: show \"Nothing urgent.\"\n- If total <= 1: \"Only 1 unread email. No triage needed.\"\n- sender_name: extract display name from \"Name <email>\" format; fall back to domain only\n- Omit routine/promotional/spam sections from the message (operator doesn't need to act on them)\n\n---\n\n## Delivery\n\nUse the canonical delivery pattern (docs/spec-gallery-delivery-convention-2026-06-11.md; reference implementation in docs/reference/capabilities/template/scripts/example_script.py): resolve (channel, target) from the pod network.json — which lives ONLY at the canonical shared path `/Users/Shared/evolve/network.json` (read it there; it is NOT at `/Users/<bot>/.openclaw/network.json` and NOT in the workspace — copy the `SHARED_DIR = Path('/Users/Shared/evolve')` constant and `load_network()` helper from docs/reference/capabilities/template/scripts/example_script.py verbatim) — reading `bots.<bot_id>.primary_user.external_ids` (channel priority: telegram, whatsapp, signal, imessage, slack, discord, sms, matrix — intersected with the bot's own enabled channels from its openclaw.json `channels.<name>.enabled`, falling back to the best recorded id when there is no overlap so the send fails loudly), then run `openclaw message send --channel=<ch> --target=<target> --message=<text> --json` as the bot user (binary: `shutil.which(\"openclaw\")`, falling back to /opt/homebrew/bin, /usr/local/bin, /usr/bin; cwd = the executing account's pwd-database home, NOT $HOME, so node can resolve its CWD even under sudo-without--H; child PATH prefixed with the CLI's own bin dir so the `#!/usr/bin/env node` entrypoint resolves under launchd's minimal PATH; timeout 60s). Exit code 0 = the channel accepted the send. Never read gateway port/token; never POST to the gateway. On send failure: emit `TRIAGE_FAILED: {date} delivery-error` and exit 1 without writing the run result. If the bot has no recorded delivery route: emit `TRIAGE_SKIPPED: {date} no-delivery-route` and exit 0 without writing the run result.\n\n---\n\n## Run result file\n\nWrite to workspace/email_triage/runs/YYYY-MM-DD-HHMM.json atomically (temp file + rename).\n\n```json\n{\n  \"run_at\": \"2026-05-13T07:30:00\",\n  \"email_count\": 8,\n  \"urgent_count\": 2,\n  \"important_count\": 3,\n  \"routine_count\": 2,\n  \"promotional_count\": 1,\n  \"classifier\": \"llm\",\n  \"emails\": [\n    {\n      \"id\": \"18f2a3b4c5d6e7f8\",\n      \"from_addr\": \"alice@example.com\",\n      \"subject\": \"Q2 contract ready for review\",\n      \"urgency\": \"urgent\",\n      \"category\": \"legal\",\n      \"action\": \"reply-now\"\n    }\n  ]\n}\n```\n\n---\n\n## email-triage-cron.sh\n\n```bash\n#!/bin/bash\n# email-triage-cron.sh — email triage cron trigger\n# Fired by LaunchDaemon at each configured schedule time.\n\nWORKSPACE=\"/Users/{bot_id}/.openclaw/workspace\"\nLOGFILE=\"/tmp/{bot_id}-email-triage.log\"\n\npython3 \"$WORKSPACE/scripts/email_triage.py\" run \\\n  >> \"$LOGFILE\" 2>&1\n\nexit 0\n```\n\nMake executable. Register two LaunchDaemons (morning + afternoon).\n\n---\n\n## LaunchDaemon plists\n\nTwo plists — one per run time. Write to:\n  /Library/LaunchDaemons/com.{bot_id}.email-triage-morning.plist\n  /Library/LaunchDaemons/com.{bot_id}.email-triage-afternoon.plist\n\n```xml\n<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\"\n  \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key>\n  <string>com.{bot_id}.email-triage-morning</string>\n  <key>UserName</key>\n  <string>{bot_id}</string>\n  <key>GroupName</key>\n  <string>staff</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>/bin/bash</string>\n    <string>/Users/{bot_id}/.openclaw/workspace/scripts/email-triage-cron.sh</string>\n  </array>\n  <key>EnvironmentVariables</key>\n  <dict>\n    <key>TZ</key>\n    <string>{time_zone}</string>\n  </dict>\n  <key>StartCalendarInterval</key>\n  <dict>\n    <key>Hour</key>\n    <integer>{morning_hour}</integer>\n    <key>Minute</key>\n    <integer>{morning_minute}</integer>\n  </dict>\n  <key>StandardOutPath</key>\n  <string>/tmp/{bot_id}-email-triage-out.log</string>\n  <key>StandardErrorPath</key>\n  <string>/tmp/{bot_id}-email-triage-err.log</string>\n  <key>RunAtLoad</key>\n  <false/>\n</dict>\n</plist>\n```\n\nThe afternoon plist mirrors this with Label = email-triage-afternoon and the afternoon Hour/Minute.\n\n---\n\n## Template variables\n\n| Variable | Required | Default | Description |\n|---|---|---|---|\n| `{bot_id}` | yes | — | The bot's macOS user ID |\n| `{time_zone}` | no | America/Los_Angeles | IANA timezone for LaunchDaemon TZ env |\n| `{morning_hour}` | no | 7 | Hour for morning run (derived from schedule_times[0]) |\n| `{morning_minute}` | no | 30 | Minute for morning run |\n| `{afternoon_hour}` | no | 13 | Hour for afternoon run (derived from schedule_times[1]) |\n| `{afternoon_minute}` | no | 0 | Minute for afternoon run |\n\n---\n\n## Test sequence\n\nAfter building:\n\n```bash\n# 1. Syntax check\npython3 -m py_compile scripts/email_triage.py\n\n# 2. Status (before first run)\npython3 scripts/email_triage.py status\n# Expected: 'No triage run logged today yet.' or similar\n\n# 3. Dry run (no network, no send — uses heuristic fallback on empty)\npython3 scripts/email_triage.py run --dry-run\n# Expected: exits 0, prints summary or 'no unread emails'\n\n# 4. Executable\ntest -x scripts/email-triage-cron.sh && echo 'OK: cron script executable'\n\n# 5. Config exists after first run --dry-run\ntest -f workspace/email_triage/config.json && echo 'OK: config created'\n```\n\nAll steps must exit 0.\n",
+  "example_triggers": [
+    "What emails need my attention?",
+    "Run an email triage",
+    "Any urgent emails today?",
+    "Check my inbox",
+    "Did the email triage run this morning?",
+    "What's in my inbox?"
+  ],
+  "test_cases": [
+    {
+      "trigger": "What emails need my attention?",
+      "expected": "Run email_triage.py run --dry-run, return triage summary with urgency breakdown"
+    },
+    {
+      "trigger": "Did the email triage run this morning?",
+      "expected": "Call email_triage.py status, report last run time and email count from today's run file, or 'not yet' if before scheduled time"
+    },
+    {
+      "trigger": "Any urgent emails?",
+      "expected": "Read most recent run file, surface urgent-classified emails with sender and subject"
+    }
+  ],
+  "constraints": {
+    "safety": [
+      "Works entirely within the email autonomy setting \"Drafts only\" (autonomy posture rung draft_only, docs/spec-autonomy-ladder-2026-06-10.md) — it never performs an outward email action, so the shipped default posture needs no widening for this app",
+      "Read-only Gmail access only — no send, no delete, no label changes",
+      "Only subject + sender + first 200 chars of snippet are sent to the classifier",
+      "No full email bodies stored in run result files",
+      "LLM call is haiku-tier to keep cost minimal",
+      "No cross-bot data sharing"
+    ],
+    "dependencies": [
+      "gmail (required) — Gmail API read access via OAuth token in openclaw.json",
+      "Anthropic API key (from bot's auth-profiles.json or ANTHROPIC_API_KEY env var) — optional; falls back to heuristic classification if absent"
+    ],
+    "boundaries": [
+      "Two runs per day — cron fires twice; each run is idempotent",
+      "Does not infer action items beyond the classification; operator decides what to do",
+      "Does not auto-archive promotional emails unless archive_promotional=true in config"
+    ]
+  },
+  "scheduled_actions": [
+    {
+      "id": "email-triage-morning",
+      "mechanism": "launchd",
+      "trigger": {
+        "kind": "launchd"
+      },
+      "install": {
+        "plist_label": "ai.evolve.${bot_id}.email-triage-morning",
+        "command": "/bin/bash ${workspace}/scripts/email-triage-cron.sh morning",
+        "cwd": "${workspace}",
+        "schedule": {
+          "cron": {
+            "Hour": 7,
+            "Minute": 0
+          }
+        },
+        "exec_policy": "inherit"
+      },
+      "summary": "Morning triage — edit install.schedule.cron to change the time."
+    },
+    {
+      "id": "email-triage-afternoon",
+      "mechanism": "launchd",
+      "trigger": {
+        "kind": "launchd"
+      },
+      "install": {
+        "plist_label": "ai.evolve.${bot_id}.email-triage-afternoon",
+        "command": "/bin/bash ${workspace}/scripts/email-triage-cron.sh afternoon",
+        "cwd": "${workspace}",
+        "schedule": {
+          "cron": {
+            "Hour": 13,
+            "Minute": 0
+          }
+        },
+        "exec_policy": "inherit"
+      },
+      "summary": "Afternoon triage — edit install.schedule.cron to change the time."
+    }
+  ],
+  "usage": {
+    "model": "scheduled",
+    "trigger_recognition": {
+      "pattern": "Triage runs automatically twice a day. When the user asks for an off-cycle triage, run it; otherwise, just relay results when they arrive.",
+      "hint_words": [
+        "email triage",
+        "what emails need attention",
+        "urgent email",
+        "triage my inbox",
+        "what's important"
+      ],
+      "requires_keyword": false
+    },
+    "auto_capture": {
+      "enabled": false,
+      "sources": []
+    },
+    "how_to_use": "When the user wants an on-demand triage (e.g. mid-day), call `run`. To check whether the scheduled run completed, call `status`. Relay the triage output verbatim — the script formats it for the channel.",
+    "bot_voice_examples": [
+      "Two urgent: contract from Alice (response needed today), Q2 review from your CEO. Five not-urgent. Eleven newsletters auto-archived.",
+      "Triage hasn't run since 7am — let me run it now.",
+      "Nothing urgent in this batch — three things to look at, none on fire."
+    ]
+  }
+}

@@ -1,0 +1,715 @@
+#!/usr/bin/env python3
+"""meta-inflight — dispatch-time "who's already on this?" overlap check.
+
+META:substrate Initiative 6 (docs/spec-substrate-2026-06-15.md §11). Cross-session
+collision detection used to be after-the-fact and partial: `/coherence` runs once a
+day and is CROSS-ASPECT-only + read-and-recommend; `/launch` and `/design` spawn work
+with NO pre-dispatch in-flight check; and children write nothing to shared state
+(race-avoidance by schema), so mid-flight scope is invisible until the PR lands. The
+result is sessions launched at cross purposes / redundantly.
+
+This tool is the **dispatch-time** check: given the aspect + keywords + file-globs of
+work you are ABOUT to spawn, it answers "is anyone already on this?" by scanning what
+is already in flight and printing the overlaps ranked by match strength (or a clean
+"no overlap found"). It is ADVISORY — the dispatch skills run it before any spawn and
+surface its output confirm-first; it never blocks, merges, or edits anything.
+
+It scans four signals:
+
+  (a) NON-TERMINAL chips in every ledger — `bucket` not in {done, live, merged}
+      (the same terminal set `tools/meta-queue` uses). Each chip's declared `scope`
+      globs (Initiative 6 schema field), title, note, `pr`, and `task_id` feed the
+      match. Un-dispatched `backlog[]` strings are scanned too (a queued bite is also
+      "already on it").
+  (b) Open fleet PRs — a SINGLE `gh pr list --json` call (never text-parsed). "Fleet"
+      = head branch `claude/*` OR a `[META:<id>]` title prefix (real fleet PRs land on
+      non-`claude/` branches too — e.g. `[META:platform]` on `pr-w10d-capstone`). The
+      `files` field gives file-level overlap; the title gives aspect + keywords.
+  (c) Live `[META:*]` sessions — only if supplied via `--sessions-json` (a JSON list of
+      `{"title": ...}` or bare title strings). This script is stdlib-only and cannot
+      call the session-listing MCP tool, so the dispatch SKILL gathers live `META …` /
+      `[META:*]` session titles and passes them in; omitted ⇒ that signal is skipped
+      (reported as "not supplied"). Same split `tools/meta-queue` uses — the script does
+      the ledger + `gh` work, live-session liveness is the skill's to feed.
+  (d) ACTIVE dispatch claims — the `~/.claude/meta-state/claims/` registry (spec §17 /
+      Initiative 12, B4). The record-dispatch-claim.sh PreToolUse hook writes a claim the
+      instant a chip/subagent spawns, so this signal SEES work that has no PR yet AND is
+      not in any ledger yet — the invisible mid-flight window (a) and (b) miss. A claim
+      carries {aspect, title, time, ttl_seconds, ...}; matched on aspect + title keywords
+      (it has no structured scope — the spawn input can't carry one). Expired claims
+      (now − time > ttl_seconds) are ignored AND pruned on read, so a dead chip's claim
+      self-expires and never warns forever. THIS is where the "warn" lands: an active
+      claim that keyword/aspect-overlaps the about-to-dispatch work surfaces as an
+      overlap, so the pre-dispatch check now catches a just-dispatched sibling.
+
+The ledger-dir resolver, ledger loader, terminal-bucket set, and date parser are
+REUSED from `tools/meta-queue` (loaded as a sibling module) so the two never drift.
+
+Matching & ranking (highest signal first — file-level precision is the point):
+
+  * scope overlap (strong) — a candidate file/glob that fnmatch-overlaps a query glob.
+    File-level; the strongest signal. Surfaces ACROSS aspects (two aspects touching one
+    file is exactly the collision to catch).
+  * scope overlap (dir)    — only a shared/nested literal directory prefix.
+  * aspect match           — candidate's aspect == the query aspect.
+  * keyword hit            — a query keyword found (case-insensitive) in the candidate's
+    title / note / scope / branch / files.
+
+A candidate surfaces when it has any scope or keyword overlap, OR (when the query gave
+no keywords/scope) when it merely shares the aspect — so an aspect-only query still
+answers "what's already running in this aspect?" without an aspect-wide flood when the
+query is specific. Results are ranked by a weighted score (scope ≫ aspect ≈ keyword).
+
+Usage:
+    tools/meta-inflight --aspect <id> [--keywords kw1,kw2] [--scope glob1,glob2]
+                        [--dir DIR] [--repo OWNER/REPO] [--sessions-json PATH]
+                        [--no-prs] [--pr-limit N] [--today YYYY-MM-DD] [--json]
+
+At least one of --aspect / --keywords / --scope is required (otherwise nothing to
+match). `--no-prs` skips the `gh` call (offline / tests). A `gh` failure degrades to a
+note — the ledger + session results still print (this is advisory; a `gh` hiccup must
+never block a dispatch).
+
+Exit codes: 0 ran ok (whether or not overlaps were found — inspect the count / JSON);
+2 bad usage / ledger dir could not be resolved.
+"""
+
+from __future__ import annotations
+
+import argparse
+import fnmatch
+import importlib.machinery
+import importlib.util
+import json
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+# Ensure this script's own dir (tools/) is importable so the sibling `meta_config`
+# module resolves regardless of the caller's cwd (shebang run or SourceFileLoader test).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import meta_config  # noqa: E402  (path insert must precede the import)
+
+# Per-project repo slug from `.claude/meta.json` (falls back to Evolve's own when absent).
+DEFAULT_REPO = meta_config.repo_slug()
+
+# The dispatch-claim registry (META:substrate spec §17 / Initiative 12, B4). Home-scoped,
+# NOT under the project-memory ledger dir — a claim is operator-machine-local transient
+# runtime state (the same category as the active-aspect marker at
+# ~/.claude/meta-state/active-aspect/), written by the record-dispatch-claim.sh PreToolUse
+# hook the instant a chip/subagent spawns. It makes no-PR-yet, not-in-a-ledger-yet work
+# visible to this check. Overridable with --claims-dir for tests.
+DEFAULT_CLAIMS_DIR = Path("~/.claude/meta-state/claims").expanduser()
+
+# Score weights — scope (file-level) dominates aspect and keyword, per the deliverable.
+W_SCOPE_STRONG = 100  # per distinct candidate item that fnmatch-overlaps a query glob
+W_SCOPE_DIR = 30      # a shared/nested literal directory prefix only
+W_ASPECT = 20         # same aspect as the query
+W_KEYWORD = 10        # per distinct query keyword found in the candidate text
+
+# Tier = the most specific signal that fired, strongest first. A file-level scope
+# overlap is most specific; a topical keyword hit is stronger evidence of "same work"
+# than merely sharing an aspect, so keyword outranks aspect. This ordering also drives
+# the surface rule: only scope/dir/keyword are "substantive" (aspect-only is broad).
+TIER_ORDER = {"scope": 0, "dir": 1, "keyword": 2, "aspect": 3}
+SUBSTANTIVE_TIERS = ("scope", "dir", "keyword")
+TIER_LABEL = {"scope": "scope", "dir": "dir", "aspect": "aspect", "keyword": "keyword"}
+
+_META_TITLE_RE = re.compile(r"\[META:([a-z0-9][a-z0-9-]*)\]", re.IGNORECASE)
+_META_BARE_RE = re.compile(r"^\s*META\s+([a-z0-9][a-z0-9-]*)\b", re.IGNORECASE)
+
+
+# ── reuse meta-queue (sibling script) for the ledger-dir resolver + loader ──────
+
+
+def _load_meta_queue():
+    """Load `tools/meta-queue` as a module so we REUSE (not re-derive) its
+    `resolve_ledger_dir`, `load_ledgers`, `is_terminal_bucket`, and `_parse_date`.
+    meta-queue's body is import-safe (guarded by `if __name__ == '__main__'`)."""
+    path = Path(__file__).resolve().parent / "meta-queue"
+    loader = importlib.machinery.SourceFileLoader("meta_queue_inflight", str(path))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+_mq = _load_meta_queue()
+resolve_ledger_dir = _mq.resolve_ledger_dir
+load_ledgers = _mq.load_ledgers
+# A chip past a terminal bucket is not in flight. Reuse meta-queue's TOLERANT
+# predicate, not the bare {merged,live,done} set, so the same bucket-vocabulary
+# drift (`merged-deployed`, `MERGED`, `closed_superseded`, …) that phantomed the
+# decision queue doesn't here flag a long-merged chip as an in-flight collision.
+is_terminal_bucket = _mq.is_terminal_bucket
+_parse_date = _mq._parse_date
+
+
+# ── small helpers ──────────────────────────────────────────────────────────
+
+
+def _as_list(v):
+    """Coerce None | "a,b" | ["a", "b,c"] to a flat list of trimmed non-empty strings."""
+    if v is None:
+        return []
+    if isinstance(v, str):
+        return [p.strip() for p in v.split(",") if p.strip()]
+    if isinstance(v, (list, tuple)):
+        out = []
+        for x in v:
+            out.extend(_as_list(x))
+        return out
+    s = str(v).strip()
+    return [s] if s else []
+
+
+def _aspect_from_title(title):
+    """Extract `<id>` from a `[META:<id>]` or leading `META <id>` title; None if absent."""
+    if not title:
+        return None
+    m = _META_TITLE_RE.search(title)
+    if m:
+        return m.group(1).lower()
+    m = _META_BARE_RE.match(title)
+    return m.group(1).lower() if m else None
+
+
+def _literal_prefix(glob):
+    """The leading run of `glob` before the first wildcard char (* ? [)."""
+    out = []
+    for ch in glob:
+        if ch in "*?[":
+            break
+        out.append(ch)
+    return "".join(out)
+
+
+def globs_overlap(a, b):
+    """How two path-globs relate: 'strong' (could match a common path), 'dir' (only a
+    shared/nested literal directory), or '' (no overlap).
+
+    fnmatch's `*` spans `/`, which is what we want: a query glob `packages/admin/**`
+    overlaps a concrete file `packages/admin/web/x.css`. When neither pattern matches
+    the other, fall back to comparing literal directory prefixes on segment boundaries
+    so two distinct patterns in the same dir register as a softer 'dir' overlap.
+    """
+    a, b = (a or "").strip(), (b or "").strip()
+    if not a or not b:
+        return ""
+    if a == b or fnmatch.fnmatch(a, b) or fnmatch.fnmatch(b, a):
+        return "strong"
+    pa, pb = _literal_prefix(a).rstrip("/"), _literal_prefix(b).rstrip("/")
+    if pa and pb and (pa == pb or pa.startswith(pb + "/") or pb.startswith(pa + "/")):
+        return "dir"
+    return ""
+
+
+# ── query ────────────────────────────────────────────────────────────────────
+
+
+def make_query(aspect=None, keywords=None, scope=None):
+    """Normalize the dispatch query: lowercased aspect/keywords, scope as a glob list."""
+    return {
+        "aspect": (aspect or "").strip().lower() or None,
+        "keywords": [k.lower() for k in _as_list(keywords)],
+        "scope": _as_list(scope),
+    }
+
+
+def query_is_specific(query):
+    """True iff the query carries keywords or scope (not just an aspect)."""
+    return bool(query["keywords"] or query["scope"])
+
+
+# ── candidate collection ──────────────────────────────────────────────────────
+# A candidate is a dict: {kind, aspect, title, scope[], note, pr, task_id, url, bucket}.
+
+
+def iter_chip_candidates(ledgers):
+    """Every NON-TERMINAL chip across all ledgers, plus each un-dispatched backlog[]
+    string (also work someone's "on")."""
+    out = []
+    for d in ledgers:
+        aspect = (d.get("aspect") or Path(d.get("_file", "")).stem) or None
+        if aspect:
+            aspect = aspect.lower()
+        for chip in d.get("chips") or []:
+            if not isinstance(chip, dict):
+                continue
+            if is_terminal_bucket(chip.get("bucket")):
+                continue
+            out.append({
+                "kind": "chip",
+                "aspect": aspect,
+                "title": str(chip.get("title") or chip.get("id") or "(untitled chip)"),
+                "scope": _as_list(chip.get("scope")),
+                "note": str(chip.get("note") or ""),
+                "pr": chip.get("pr"),
+                "task_id": chip.get("task_id"),
+                "branch": str(chip.get("branch") or ""),
+                "url": None,
+                "bucket": chip.get("bucket"),
+                "id": chip.get("id"),
+            })
+        for item in d.get("backlog") or []:
+            text = item if isinstance(item, str) else json.dumps(item, ensure_ascii=False)
+            out.append({
+                "kind": "backlog",
+                "aspect": aspect,
+                "title": text,
+                "scope": [],
+                "note": "",
+                "pr": None,
+                "task_id": None,
+                "branch": "",
+                "url": None,
+                "bucket": "backlog",
+                "id": None,
+            })
+    return out
+
+
+def _is_fleet_pr(pr):
+    """A META-fleet PR: `claude/*` head branch OR a `[META:<id>]` title prefix."""
+    head = str(pr.get("headRefName") or "")
+    if head.startswith("claude/"):
+        return True
+    return _aspect_from_title(pr.get("title")) is not None
+
+
+def pr_candidates(prs):
+    """Map fleet PRs to candidates. `files` (a single `gh pr list --json` field) gives
+    file-level scope; the title gives aspect + keywords."""
+    out = []
+    for pr in prs or []:
+        if not _is_fleet_pr(pr):
+            continue
+        files = [f.get("path") for f in (pr.get("files") or []) if isinstance(f, dict) and f.get("path")]
+        out.append({
+            "kind": "pr",
+            "aspect": _aspect_from_title(pr.get("title")),
+            "title": str(pr.get("title") or "(untitled PR)"),
+            "scope": files,
+            "note": "",
+            "pr": pr.get("number"),
+            "task_id": None,
+            "branch": str(pr.get("headRefName") or ""),
+            "url": pr.get("url"),
+            "bucket": "draft" if pr.get("isDraft") else "open",
+            "id": None,
+        })
+    return out
+
+
+def session_candidates(sessions):
+    """Map supplied live-session entries ({title} dicts or bare strings) to candidates."""
+    out = []
+    for s in sessions or []:
+        title = s.get("title") if isinstance(s, dict) else s
+        title = str(title or "").strip()
+        if not title:
+            continue
+        out.append({
+            "kind": "session",
+            "aspect": _aspect_from_title(title),
+            "title": title,
+            "scope": [],
+            "note": "",
+            "pr": None,
+            "task_id": (s.get("id") if isinstance(s, dict) else None),
+            "branch": "",
+            "url": None,
+            "bucket": "live",
+            "id": (s.get("id") if isinstance(s, dict) else None),
+        })
+    return out
+
+
+# ── dispatch-claim registry (the FOURTH signal) ─────────────────────────────────
+# A claim is a JSON file the record-dispatch-claim.sh PreToolUse hook writes at spawn
+# time: {aspect, title, time (epoch s), ttl_seconds, tool, scope[], session?}. It exists
+# to bridge the window between a chip's dispatch and its becoming visible another way
+# (its PR listed, or a coordinator recording it in a ledger).
+
+
+def _claim_is_expired(claim, now_epoch):
+    """True iff now_epoch − claim.time > ttl_seconds. A malformed/absent time or ttl is
+    treated as expired (fail-safe: a claim we can't age out is dropped, never surfaced
+    forever)."""
+    try:
+        t = float(claim.get("time"))
+        ttl = float(claim.get("ttl_seconds"))
+    except (TypeError, ValueError):
+        return True
+    if ttl <= 0:
+        return True
+    return (now_epoch - t) > ttl
+
+
+def load_claims(claims_dir, now_epoch=None, prune=True):
+    """Read the active (non-expired) claims from `claims_dir`. Returns a list of parsed
+    claim dicts, each with an added `_file` (the source path) and `_id` (the file stem).
+
+    Expired or unparseable claim files are skipped AND, when `prune` is set, unlinked —
+    the cheap self-expiry that keeps a dead chip's claim from lingering (best-effort; a
+    failed unlink is ignored, the claim is still not surfaced). Any FS error degrades to
+    an empty list — this is an advisory check; a claims-dir hiccup must never block a
+    dispatch."""
+    if now_epoch is None:
+        now_epoch = time.time()
+    d = Path(claims_dir)
+    out = []
+    try:
+        entries = sorted(d.glob("*.json"))
+    except OSError:
+        return out
+    for f in entries:
+        try:
+            claim = json.loads(f.read_text())
+        except (OSError, ValueError):
+            claim = None
+        # short-circuit: _claim_is_expired only runs when claim is a dict.
+        if not isinstance(claim, dict) or _claim_is_expired(claim, now_epoch):
+            if prune:
+                try:
+                    f.unlink()
+                except OSError:
+                    pass
+            continue
+        claim = dict(claim)
+        claim["_file"] = str(f)
+        claim["_id"] = f.stem
+        out.append(claim)
+    return out
+
+
+def claim_candidates(claims):
+    """Map active claims to candidates. A claim has no structured scope (the spawn input
+    can't carry one), so it matches on aspect + title keywords only — `scope` stays []."""
+    out = []
+    for c in claims or []:
+        aspect = (c.get("aspect") or "").strip().lower() or None
+        out.append({
+            "kind": "claim",
+            "aspect": aspect,
+            "title": str(c.get("title") or "(untitled claim)"),
+            "scope": _as_list(c.get("scope")),
+            "note": "",
+            "pr": None,
+            "task_id": c.get("session"),
+            "branch": "",
+            "url": None,
+            "bucket": "claimed",
+            "id": c.get("_id"),
+        })
+    return out
+
+
+def assemble_candidates(ledgers, prs, sessions, claims=None):
+    """All candidates, with a PR deduped away when a chip already carries its number
+    (the chip row is richer — it has the aspect + declared scope)."""
+    chips = iter_chip_candidates(ledgers)
+    chip_prs = {c["pr"] for c in chips if c.get("pr")}
+    prs_kept = [p for p in pr_candidates(prs) if p.get("pr") not in chip_prs]
+    return chips + prs_kept + session_candidates(sessions) + claim_candidates(claims)
+
+
+# ── scoring ────────────────────────────────────────────────────────────────────
+
+
+def _searchable_text(cand):
+    return " ".join([
+        cand.get("title") or "",
+        cand.get("note") or "",
+        cand.get("branch") or "",
+        " ".join(cand.get("scope") or []),
+    ]).lower()
+
+
+def score_candidate(cand, query):
+    """Return (score, tier, reasons). tier is the most specific signal that fired
+    (scope > dir > keyword > aspect, per TIER_ORDER); reasons is a list of short
+    strings. score==0 ⇒ no overlap (caller drops it via the surface rule below)."""
+    reasons = []
+    score = 0
+    fired = set()
+
+    # scope overlap — strongest, file-level, cross-aspect.
+    strong_hits, dir_hit = 0, False
+    for cg in cand.get("scope") or []:
+        rel = ""
+        for qg in query["scope"]:
+            r = globs_overlap(cg, qg)
+            if r == "strong":
+                rel, matched_q = "strong", qg
+                break
+            if r == "dir" and not rel:
+                rel, matched_q = "dir", qg
+        if rel == "strong":
+            strong_hits += 1
+            reasons.append("scope: %s ~ %s (strong)" % (cg, matched_q))
+        elif rel == "dir":
+            dir_hit = True
+            reasons.append("scope: %s ~ %s (dir)" % (cg, matched_q))
+    if strong_hits:
+        score += W_SCOPE_STRONG * strong_hits
+        fired.add("scope")
+    if dir_hit:
+        score += W_SCOPE_DIR
+        fired.add("dir")
+
+    # aspect match.
+    aspect_match = bool(query["aspect"] and cand.get("aspect") == query["aspect"])
+    if aspect_match:
+        score += W_ASPECT
+        fired.add("aspect")
+        reasons.append("aspect: %s" % query["aspect"])
+
+    # keyword hits.
+    text = _searchable_text(cand)
+    kw_hits = [k for k in query["keywords"] if k and k in text]
+    if kw_hits:
+        score += W_KEYWORD * len(kw_hits)
+        fired.add("keyword")
+        reasons.append("kw: %s" % ", ".join(kw_hits))
+
+    tier = next((t for t in ("scope", "dir", "keyword", "aspect") if t in fired), None)
+    return score, tier, reasons
+
+
+def find_overlaps(candidates, query):
+    """Score every candidate, apply the surface rule, and return them ranked.
+
+    Surface rule: a candidate surfaces if it has scope/keyword overlap, OR — only when
+    the query is NOT specific (no keywords/scope) — if it merely shares the aspect. This
+    answers an aspect-only query ("what's running in `apps`?") without letting an
+    aspect-wide match flood a specific query.
+    """
+    specific = query_is_specific(query)
+    scored = []
+    for cand in candidates:
+        score, tier, reasons = score_candidate(cand, query)
+        if score <= 0:
+            continue
+        substantive = tier in SUBSTANTIVE_TIERS
+        if not substantive and specific:
+            continue  # aspect-only match on a specific query → suppress (no flood)
+        c = dict(cand)
+        c["score"], c["tier"], c["reasons"] = score, tier, reasons
+        scored.append(c)
+    scored.sort(key=lambda c: (-c["score"], TIER_ORDER.get(c["tier"], 9),
+                               c["kind"], c.get("aspect") or "", str(c.get("pr") or ""),
+                               c["title"]))
+    return scored
+
+
+# ── open-PR fetch (the single gh call) ──────────────────────────────────────────
+
+
+def fetch_open_prs(repo, limit):
+    """One `gh pr list --json` call. Returns (prs, error_note). On any failure returns
+    ([], note) so the caller degrades gracefully instead of blocking a dispatch."""
+    fields = "number,title,headRefName,url,isDraft,files"
+    try:
+        r = subprocess.run(
+            ["gh", "pr", "list", "--repo", repo, "--state", "open",
+             "--limit", str(limit), "--json", fields],
+            capture_output=True, text=True,
+        )
+    except FileNotFoundError:
+        return [], "open-PR scan skipped (`gh` not on PATH)"
+    if r.returncode != 0:
+        return [], "open-PR scan skipped (gh failed: %s)" % (r.stderr.strip()[:120] or "unknown")
+    try:
+        data = json.loads(r.stdout)
+    except ValueError:
+        return [], "open-PR scan skipped (gh returned unparseable JSON)"
+    return (data if isinstance(data, list) else []), None
+
+
+# ── run ──────────────────────────────────────────────────────────────────────
+
+
+def run(ledger_dir, query, repo, sessions, scan_prs, pr_limit,
+        claims_dir=None, now_epoch=None, prune_claims=True):
+    ledgers = load_ledgers(ledger_dir)
+    chip_count = sum(1 for c in iter_chip_candidates(ledgers) if c["kind"] == "chip")
+    if scan_prs:
+        prs, pr_note = fetch_open_prs(repo, pr_limit)
+    else:
+        prs, pr_note = [], "open-PR scan skipped (--no-prs)"
+    fleet_prs = [p for p in prs if _is_fleet_pr(p)]
+    scan_claims = claims_dir is not None
+    claims = load_claims(claims_dir, now_epoch=now_epoch, prune=prune_claims) \
+        if scan_claims else []
+    candidates = assemble_candidates(ledgers, prs, sessions, claims)
+    overlaps = find_overlaps(candidates, query)
+    return {
+        "query": query,
+        "overlaps": overlaps,
+        "count": len(overlaps),
+        "scanned": {
+            "ledgers": len(ledgers),
+            "nonterminal_chips": chip_count,
+            "fleet_prs": len(fleet_prs),
+            "pr_note": pr_note,
+            "sessions": (len(sessions) if sessions is not None else None),
+            "active_claims": (len(claims) if scan_claims else None),
+        },
+    }
+
+
+# ── render ────────────────────────────────────────────────────────────────────
+
+
+def _query_label(query):
+    parts = []
+    if query["aspect"]:
+        parts.append("aspect=%s" % query["aspect"])
+    if query["keywords"]:
+        parts.append("keywords=[%s]" % ", ".join(query["keywords"]))
+    if query["scope"]:
+        parts.append("scope=[%s]" % ", ".join(query["scope"]))
+    return " ".join(parts) or "(empty query)"
+
+
+def _scanned_line(scanned):
+    sess = ("%d live session(s)" % scanned["sessions"]) if scanned["sessions"] is not None \
+        else "live sessions: not supplied"
+    claims = scanned.get("active_claims")
+    claims_txt = ("%d active claim(s)" % claims) if claims is not None else "claims: not scanned"
+    line = "Scanned: %d ledger(s) (%d non-terminal chip(s)), %d open fleet PR(s), %s, %s." % (
+        scanned["ledgers"], scanned["nonterminal_chips"], scanned["fleet_prs"], sess, claims_txt)
+    if scanned["pr_note"]:
+        line += "\n  note: %s" % scanned["pr_note"]
+    return line
+
+
+def _clip(s, n=110):
+    """One-line clip — backlog/notes can be multi-hundred-char prose walls."""
+    s = " ".join(str(s or "").split())
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def render_text(result, limit=12):
+    q = _query_label(result["query"])
+    lines = ["meta-inflight — who's already on: %s" % q]
+    if result["count"] == 0:
+        lines.append("")
+        lines.append("✅ No in-flight overlap found.")
+        lines.append("")
+        lines.append(_scanned_line(result["scanned"]))
+        return "\n".join(lines) + "\n"
+    lines.append("")
+    lines.append("⚠ %d possible overlap(s) — ADVISORY (confirm before dispatching):"
+                 % result["count"])
+    shown = result["overlaps"] if limit is None else result["overlaps"][:limit]
+    for it in shown:
+        loc = "%s · %s" % (it["kind"], it.get("aspect") or "?")
+        ref = ("PR #%s" % it["pr"]) if it.get("pr") else (
+            ("task %s" % it["task_id"]) if it.get("task_id") else "no PR")
+        lines.append("  [%s] [%s] %s (%s, %s)" % (
+            TIER_LABEL.get(it["tier"], it["tier"]), loc, _clip(it["title"]),
+            ref, it.get("bucket")))
+        if it.get("reasons"):
+            lines.append("        %s" % _clip("; ".join(it["reasons"]), 160))
+        if it.get("url"):
+            lines.append("        %s" % it["url"])
+    hidden = result["count"] - len(shown)
+    if hidden > 0:
+        lines.append("  … +%d more lower-ranked match(es) — `--limit 0` or `--json` for all."
+                     % hidden)
+    lines.append("")
+    lines.append(_scanned_line(result["scanned"]))
+    return "\n".join(lines) + "\n"
+
+
+def render_json(result):
+    return json.dumps(result, indent=2, ensure_ascii=False, sort_keys=False) + "\n"
+
+
+# ── cli ────────────────────────────────────────────────────────────────────────
+
+
+def _load_sessions(path):
+    """Read --sessions-json: a JSON list of {title,...} dicts or bare title strings."""
+    try:
+        data = json.loads(Path(path).expanduser().read_text())
+    except (OSError, ValueError) as e:
+        raise SystemExit("meta-inflight: --sessions-json unreadable: %s" % e)
+    if not isinstance(data, list):
+        raise SystemExit("meta-inflight: --sessions-json must be a JSON list")
+    return data
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(
+        prog="meta-inflight",
+        description="Dispatch-time overlap check: who is already on this aspect/keywords/scope?",
+    )
+    ap.add_argument("--aspect", help="the work's aspect id")
+    ap.add_argument("--keywords", help="comma-separated keywords")
+    ap.add_argument("--scope", help="comma-separated file globs the work intends to touch")
+    ap.add_argument("--dir", help="ledger dir override (default: glob under $HOME/.claude/projects)")
+    ap.add_argument("--repo", default=DEFAULT_REPO, help="GitHub repo OWNER/REPO for the PR scan")
+    ap.add_argument("--sessions-json", help="path to a JSON list of live session titles/objects")
+    ap.add_argument("--no-prs", action="store_true", help="skip the gh open-PR scan")
+    ap.add_argument("--pr-limit", type=int, default=80, help="max open PRs to list (default 80)")
+    ap.add_argument("--limit", type=int, default=12,
+                    help="max overlaps to show in text mode (0 = all; --json always returns all)")
+    ap.add_argument("--claims-dir", help="dispatch-claim registry dir override "
+                    "(default: ~/.claude/meta-state/claims)")
+    ap.add_argument("--no-claims", action="store_true", help="skip the dispatch-claim scan")
+    ap.add_argument("--prune", action="store_true",
+                    help="prune expired claims and exit (no overlap scan)")
+    ap.add_argument("--today", help="reference date YYYY-MM-DD (reserved; default today)")
+    ap.add_argument("--json", action="store_true", help="emit the result as JSON")
+    args = ap.parse_args(argv)
+
+    claims_dir = Path(args.claims_dir).expanduser() if args.claims_dir else DEFAULT_CLAIMS_DIR
+
+    # --prune: a maintenance path — age out expired claims and report, no overlap scan.
+    if args.prune:
+        before = len(list(claims_dir.glob("*.json"))) if claims_dir.exists() else 0
+        kept = load_claims(claims_dir, prune=True)
+        pruned = before - len(kept)
+        if args.json:
+            sys.stdout.write(json.dumps(
+                {"claims_dir": str(claims_dir), "pruned": pruned, "active": len(kept)},
+                indent=2) + "\n")
+        else:
+            sys.stdout.write("Pruned %d expired claim(s); %d active remain (%s).\n"
+                             % (pruned, len(kept), claims_dir))
+        return 0
+
+    if not (args.aspect or args.keywords or args.scope):
+        print("meta-inflight: give at least one of --aspect / --keywords / --scope",
+              file=sys.stderr)
+        return 2
+    if args.today and _parse_date(args.today) is None:
+        print("meta-inflight: --today must be YYYY-MM-DD", file=sys.stderr)
+        return 2
+
+    ledger_dir = resolve_ledger_dir(args.dir)
+    if ledger_dir is None:
+        where = args.dir or ("$HOME/.claude/projects/%s/memory/meta-state"
+                             % meta_config.memory_slug())
+        print("meta-inflight: could not resolve ledger dir (%s)" % where, file=sys.stderr)
+        return 2
+
+    sessions = _load_sessions(args.sessions_json) if args.sessions_json else None
+    query = make_query(args.aspect, args.keywords, args.scope)
+    result = run(ledger_dir, query, args.repo, sessions,
+                 scan_prs=not args.no_prs, pr_limit=args.pr_limit,
+                 claims_dir=(None if args.no_claims else claims_dir))
+    if args.json:
+        sys.stdout.write(render_json(result))
+    else:
+        sys.stdout.write(render_text(result, limit=(None if args.limit == 0 else args.limit)))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

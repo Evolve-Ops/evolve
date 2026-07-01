@@ -1,0 +1,21 @@
+{
+  "_comment": "Community defaults for daily metrics computation thresholds. This file ships with Evolve. Local overrides live in /Users/Shared/evolve/calibration/measure.json.",
+  "schema_version": 1,
+  "measure": {
+    "status_thresholds": {
+      "critical_maintenance_ratio": 0.50,
+      "warning_maintenance_ratio": 0.20,
+      "critical_api_key_turns": 1
+    },
+    "unresolved_keywords": [
+      "couldn't",
+      "failed",
+      "partial",
+      "gave up",
+      "unclear",
+      "not completed",
+      "no resolution"
+    ],
+    "unresolved_keywords_remove": []
+  }
+}

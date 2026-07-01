@@ -1,0 +1,276 @@
+{
+  "pkg_id": "p-1d3e8f47",
+  "pkg_version": "2026.06.11-1.1",
+  "gallery_version": "2026.06.11-1.1",
+  "schema_version": 5,
+  "manifest_type": "evolve_application",
+  "display_name": "Evening Sweep",
+  "author": "evolve",
+  "description": "Once-per-day end-of-day review delivered via the bot's primary channel. Reads the local Task Manager registry, surfaces what was completed today and what is still open or overdue, and optionally folds in commitment follow-ups produced by the Contacts app. Configurable delivery time (default 18:00 local).",
+  "application_tags": [
+    "personal-productivity",
+    "executive-assistant",
+    "ea-suite",
+    "evening-routine",
+    "task-management",
+    "productivity",
+    "contacts"
+  ],
+  "id": "app_evening_sweep",
+  "name": "Evening Sweep",
+  "status": "active",
+  "dependencies": [],
+  "app_dependencies": [
+    {
+      "pkg_id": "p-9bfa1c84",
+      "display_name": "Task Manager",
+      "required": true,
+      "reason": "Evening Sweep reads tasks.json (via the Task Manager schema) to compute today's completions and open / overdue items. Without Task Manager installed there is nothing to sweep over."
+    },
+    {
+      "pkg_id": "p-4136a932",
+      "display_name": "Contacts",
+      "required": false,
+      "reason": "If Contacts is installed, Evening Sweep folds its FOLLOWUP_DUE: signals into the sweep so commitments that came due today are surfaced alongside task overdue items. Without Contacts the sweep simply omits that section."
+    }
+  ],
+  "requirements": {
+    "integrations": [],
+    "secrets": [],
+    "system": [],
+    "python_packages": []
+  },
+  "interface_contract": {
+    "populated_by_forge": false,
+    "extracted_at": null,
+    "data_files": [
+      {
+        "path": "memory/evening-sweep-last.json",
+        "description": "Audit record of the most recent sweep — the date, the counts surfaced, and the timestamp the message was sent. Used by the heartbeat-availability backstop to detect missed days.",
+        "schema": {
+          "storage_format": "JSON object",
+          "fields": {
+            "date": "ISO date YYYY-MM-DD — the local date the sweep covered",
+            "sent_at": "ISO datetime with offset — when the channel accepted the send",
+            "counts": {
+              "completed_today": "integer",
+              "overdue": "integer",
+              "still_open": "integer",
+              "followups_due": "integer (0 if Contacts not installed or no due commitments)"
+            },
+            "delivery": {
+              "channel": "string — e.g. 'telegram', 'slack', 'primary'",
+              "status": "enum — sent | failed | dry_run"
+            }
+          }
+        }
+      }
+    ],
+    "cli": [
+      {
+        "command": "python3 scripts/evening_sweep.py run",
+        "key_flags": [
+          "--bot BOT_ID",
+          "--dry-run"
+        ],
+        "output_signals": [
+          "SWEEP_SENT:",
+          "SWEEP_FAILED:",
+          "SWEEP_EMPTY:"
+        ]
+      },
+      {
+        "command": "python3 scripts/evening_sweep.py preview",
+        "key_flags": [
+          "--bot BOT_ID"
+        ],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/evening_sweep.py status",
+        "key_flags": [],
+        "output_signals": []
+      }
+    ],
+    "key_paths": {
+      "cli": "scripts/evening_sweep.py",
+      "audit_record": "memory/evening-sweep-last.json"
+    },
+    "signal_prefixes": [
+      "SWEEP_SENT:",
+      "SWEEP_FAILED:",
+      "SWEEP_EMPTY:"
+    ],
+    "output_signal_formats": {
+      "SWEEP_SENT:": "SWEEP_SENT: {YYYY-MM-DD} completed={N} overdue={N} open={N} followups={N}",
+      "SWEEP_FAILED:": "SWEEP_FAILED: {YYYY-MM-DD} {reason}",
+      "SWEEP_EMPTY:": "SWEEP_EMPTY: {YYYY-MM-DD} (no completions, no overdue, no open)"
+    }
+  },
+  "files": [],
+  "install_job": null,
+  "improvement_history": [],
+  "identity": {
+    "purpose": "Close the operator's day with a single, scannable summary of what was completed, what's still open, and what's slipping. The sweep is the symmetric counterpart to the morning brief — instead of looking ahead at urgency, it looks back at the day's actual completions and forward only as far as the work that didn't get done.",
+    "scope_includes": [
+      "Run once per day at the configured local time (default 18:00) via launchd",
+      "Read the active Task Manager registry (tasks.json) — never mutate it",
+      "Compute three buckets — completed_today, overdue, still_open — and a top-3 / top-5 preview per bucket",
+      "If the Contacts app is installed, run `contacts.py list-due` and fold any FOLLOWUP_DUE: lines into a 'Commitments due' section",
+      "Compose a concise message (~10–15 lines) and deliver via `openclaw message send` to the user's recorded channel",
+      "Write an audit record to memory/evening-sweep-last.json with the counts and delivery status",
+      "Support `--dry-run` for both `run` and explicit `preview` (no delivery; print to stdout)",
+      "Emit SWEEP_SENT: / SWEEP_FAILED: / SWEEP_EMPTY: signals for the delivery monitor"
+    ],
+    "scope_excludes": [
+      "Creating, completing, or modifying tasks (delegates entirely to Task Manager)",
+      "Sending messages to anyone other than the operator's primary channel (no external recipients)",
+      "Multiple sweeps per day (one sweep per configured time; the daemon does not retry on transient failure beyond launchd's default behavior)",
+      "Looking further ahead than 'still open today' — the morning brief owns the forward look",
+      "Calendar awareness (Pre-Meeting Brief is the calendar-driven surface)",
+      "Persisting any state beyond the audit record and the optional sent-at timestamp"
+    ],
+    "bot_interaction_pattern": "Cron-driven daemon. The bot is not invoked as a session — launchd runs the script directly, which delivers via `openclaw message send`. The bot can also be asked 'preview my evening sweep' in conversation, which runs the preview subcommand.",
+    "user": "The primary bot operator. The sweep is private to the operator's primary channel and never references the admin UI."
+  },
+  "success_criteria": {
+    "observable_outcomes": [
+      "A sweep message arrives in the operator's primary channel within 2 minutes of the configured local time, every day",
+      "The 'Completed today' section accurately reflects tasks whose status_history shows a transition to `complete` with today's local date",
+      "The 'Overdue' section lists tasks with a `due_date` strictly before today and status not in {complete, cancelled}",
+      "The 'Still open' section shows top-3 by priority, never duplicating items already in 'Overdue'",
+      "memory/evening-sweep-last.json updates after every run, including dry-run (with delivery.status='dry_run')",
+      "SWEEP_SENT: signal emitted on success; SWEEP_FAILED: on delivery failure; SWEEP_EMPTY: when all three buckets are empty"
+    ],
+    "failure_signals": [
+      "No SWEEP_SENT: in 36+ hours — daemon not loaded or task data missing",
+      "Sweep is sent but 'Completed today' counts disagree with `task_manager list --completed-after <today>`",
+      "Overdue items also appear under 'Still open' (double counting)",
+      "Audit record stops updating but launchd plist is still loaded — silent crash inside the script",
+      "Delivery send hangs and the script does not time out within 60 seconds"
+    ],
+    "quality_bar": {
+      "minimum": "A sweep arrives once per day with accurate completed_today / overdue / still_open counts pulled from the live Task Manager registry. Dry-run mode works without gateway access.",
+      "excellent": "Sweep also surfaces commitment follow-ups from Contacts. Items completed today are recognized even if their status_history entries were authored in different timezones. The operator can scan the whole sweep in under 15 seconds and knows exactly what to address tomorrow."
+    }
+  },
+  "constraints": {
+    "privacy": [
+      "Task titles and commitment text may include sensitive information — the sweep message is sent only to the configured primary channel, never to shared or audit logs",
+      "memory/evening-sweep-last.json stores counts and delivery status only, never the underlying task or commitment text"
+    ],
+    "safety": [
+      "Read-only against tasks.json — all writes are still routed through Task Manager's CLI",
+      "Delivery send must time out within 60 seconds and exit cleanly on failure rather than hanging the launchd job",
+      "The script must never raise unhandled exceptions in production — every failure path emits SWEEP_FAILED: and exits non-zero so launchd surfaces the error in StandardErrorPath"
+    ],
+    "dependencies": [
+      "Task Manager (p-9bfa1c84) — REQUIRED. tasks.json schema (`tasks: []` with `status`, `due_date`, `status_history`) is the contract.",
+      "Contacts (p-4136a932) — OPTIONAL. If `scripts/contacts.py` exists, sweep invokes `list-due` and includes FOLLOWUP_DUE: lines.",
+      "openclaw CLI — REQUIRED. The script delivers via `openclaw message send`; the route comes from network.json primary_user.external_ids."
+    ],
+    "boundaries": [
+      "One sweep per day per configured time. If launchd fires the job twice in the same local day (e.g. clock change), the audit record's date guard skips the second run.",
+      "Sweep never modifies the source data it reads — it is a pure read+compose+send.",
+      "Sweep refuses to send if `tasks.json` is missing or unreadable; it emits SWEEP_FAILED: and exits non-zero (does not silently send a blank sweep)."
+    ]
+  },
+  "build_spec": "# Evening Sweep — Build Specification\n\n## Overview\n\nA single launchd-driven script that runs once per day at the configured local time, reads the local Task Manager registry, composes a concise end-of-day summary, and delivers it via `openclaw message send` to the user's recorded channel.\n\nNo new data is generated beyond an audit record. The script is a pure read+compose+send and delegates all task mutation to Task Manager.\n\n**Prerequisite:** Task Manager (p-9bfa1c84) must already be installed — `scripts/unified_task_system.py` is the read source. Verify it exists before composing the sweep; if missing, emit `SWEEP_FAILED: <date> task_manager_missing` and exit non-zero.\n\n**Optional:** Contacts (p-4136a932). If `scripts/contacts.py` exists, run `contacts.py list-due` and include FOLLOWUP_DUE: lines as a 'Commitments due' section.\n\n## Python invocation\n\nUse `python3` (let the deploy environment resolve the binary). Do not hardcode venv paths.\n\n## File layout\n\n```\nscripts/\n  evening_sweep.py            ← main CLI (subcommands: run | preview | status)\n  evening-sweep-cron.sh       ← launchd trigger (rendered below)\nmemory/\n  evening-sweep-last.json     ← audit record (created on first run)\n```\n\n## scripts/evening_sweep.py\n\n### Subcommands\n\n```\nevening_sweep.py run     --bot BOT_ID [--dry-run]\nevening_sweep.py preview --bot BOT_ID\nevening_sweep.py status\n```\n\n- `run` — compute, compose, send (or skip send if --dry-run), write audit record, emit signal.\n- `preview` — compute + compose + print to stdout. Equivalent to `run --dry-run` but with no audit record update.\n- `status` — print the contents of memory/evening-sweep-last.json (or 'no sweep recorded yet').\n\n### Reading Task Manager\n\nResolve the workspace from `openclaw.json → agents.defaults.workspace` (fallback `/Users/{bot_id}/.openclaw/workspace`). Read `{workspace}/tasks.json` as a `{version, last_updated, tasks: [...]}` array.\n\n```python\nfrom datetime import date\nfrom pathlib import Path\nimport json\n\ndef analyze_tasks(workspace: Path, today: date) -> dict:\n    tasks_file = workspace / \"tasks.json\"\n    if not tasks_file.exists():\n        raise FileNotFoundError(\"tasks.json missing — Task Manager not installed?\")\n    data = json.loads(tasks_file.read_text())\n    tasks = data.get(\"tasks\", [])\n    completed_today, overdue, still_open = [], [], []\n    terminal = {\"complete\", \"cancelled\"}\n    for task in tasks:\n        title = task.get(\"title\") or task.get(\"name\") or task.get(\"id\", \"\")\n        status = task.get(\"status\", \"open\")\n        if status == \"complete\":\n            for entry in reversed(task.get(\"status_history\", []) or task.get(\"status_log\", [])):\n                if entry.get(\"status\") != \"complete\":\n                    continue\n                at = entry.get(\"at\") or entry.get(\"date\")\n                if not at:\n                    break\n                try:\n                    if date.fromisoformat(at[:10]) == today:\n                        completed_today.append(title)\n                except ValueError:\n                    pass\n                break\n            continue\n        if status in terminal:\n            continue\n        due_raw = task.get(\"due_date\")\n        if due_raw:\n            try:\n                if date.fromisoformat(due_raw[:10]) < today:\n                    overdue.append(title)\n                    continue\n            except ValueError:\n                pass\n        still_open.append((task.get(\"priority\", \"normal\"), title))\n    # Sort still_open by priority\n    priority_rank = {\"critical\": 0, \"high\": 1, \"normal\": 2, \"low\": 3}\n    still_open.sort(key=lambda x: priority_rank.get(x[0], 2))\n    return {\n        \"completed_today\": completed_today,\n        \"overdue\": overdue,\n        \"still_open\": [t for _, t in still_open],\n    }\n```\n\n### Reading Contacts followups (optional)\n\n```python\nimport subprocess, shlex\n\ndef list_due_commitments(workspace: Path) -> list[str]:\n    script = workspace / \"scripts\" / \"contacts.py\"\n    if not script.exists():\n        return []\n    try:\n        result = subprocess.run(\n            [\"python3\", str(script), \"list-due\"],\n            cwd=str(workspace), capture_output=True, text=True, timeout=10,\n        )\n    except (subprocess.TimeoutExpired, OSError):\n        return []\n    if result.returncode != 0:\n        return []\n    return [line.removeprefix(\"FOLLOWUP_DUE: \").strip()\n            for line in result.stdout.splitlines()\n            if line.startswith(\"FOLLOWUP_DUE:\")]\n```\n\n### Composition\n\n```python\ndef compose(buckets: dict, followups: list[str], today: date) -> str:\n    nice = today.strftime(\"%A, %B %-d\")\n    lines = [f\"Evening sweep — {nice}.\", \"\"]\n    completed = buckets[\"completed_today\"]\n    overdue   = buckets[\"overdue\"]\n    open_     = buckets[\"still_open\"]\n    if completed:\n        lines.append(f\"Completed today ({len(completed)}):\")\n        for t in completed[:5]:\n            lines.append(f\"  - {t}\")\n        if len(completed) > 5:\n            lines.append(f\"  ...and {len(completed) - 5} more\")\n        lines.append(\"\")\n    else:\n        lines += [\"No tasks marked complete today.\", \"\"]\n    if overdue:\n        lines.append(f\"Overdue ({len(overdue)}):\")\n        for t in overdue[:5]:\n            lines.append(f\"  - {t}\")\n        if len(overdue) > 5:\n            lines.append(f\"  ...and {len(overdue) - 5} more\")\n        lines.append(\"\")\n    if open_:\n        lines.append(f\"Still open ({len(open_)}) — top by priority:\")\n        for t in open_[:3]:\n            lines.append(f\"  - {t}\")\n        lines.append(\"\")\n    if followups:\n        lines.append(f\"Commitments due ({len(followups)}):\")\n        for f in followups[:5]:\n            lines.append(f\"  - {f}\")\n        if len(followups) > 5:\n            lines.append(f\"  ...and {len(followups) - 5} more\")\n        lines.append(\"\")\n    if not completed and not overdue and not open_ and not followups:\n        lines += [\"All clear. Nothing completed, nothing overdue, nothing open.\", \"\"]\n    return \"\\n\".join(lines).rstrip() + \"\\n\"\n```\n\n### Delivery\n\nReuse the canonical delivery pattern (docs/spec-gallery-delivery-convention-2026-06-11.md; reference implementation in docs/reference/capabilities/template/scripts/example_script.py): resolve (channel, target) from the pod network.json — which lives ONLY at the canonical shared path `/Users/Shared/evolve/network.json` (read it there; it is NOT at `/Users/<bot>/.openclaw/network.json` and NOT in the workspace — copy the `SHARED_DIR = Path('/Users/Shared/evolve')` constant and `load_network()` helper from docs/reference/capabilities/template/scripts/example_script.py verbatim) — reading `bots.<bot_id>.primary_user.external_ids` (channel priority: telegram, whatsapp, signal, imessage, slack, discord, sms, matrix — intersected with the bot's own enabled channels from its openclaw.json `channels.<name>.enabled`, falling back to the best recorded id when there is no overlap so the send fails loudly), then run `openclaw message send --channel=<ch> --target=<target> --message=<text> --json` as the bot user (binary: `shutil.which(\"openclaw\")`, falling back to /opt/homebrew/bin, /usr/local/bin, /usr/bin; cwd = the executing account's pwd-database home, NOT $HOME, so node can resolve its CWD even under sudo-without--H; child PATH prefixed with the CLI's own bin dir so the `#!/usr/bin/env node` entrypoint resolves under launchd's minimal PATH; timeout 60s). Exit code 0 = the channel accepted the send. Never read gateway port/token; never POST to the gateway.\n\nOn send failure (non-zero exit or timeout): emit `SWEEP_FAILED: <date> delivery-error` and exit 2. If the bot has no recorded delivery route (`external_ids` empty): emit `SWEEP_SKIPPED: <date> no-delivery-route` and exit 0 — nothing was delivered, so nothing may claim it was.\n\nAfter (and ONLY after) an accepted send, atomically write the delivery run file `memory/sweep-runs/{date}.json` (temp file + rename) with `{\"date\": ..., \"sent_at\": <ISO offset datetime>}` — this is the delivery monitor's declared run_file evidence. The audit record below is written for every outcome and is NOT delivery proof; never point delivery evidence at it.\n\n### Audit record\n\nAfter `run` (including --dry-run), atomically write `memory/evening-sweep-last.json`:\n\n```json\n{\n  \"date\": \"2026-06-05\",\n  \"sent_at\": \"2026-06-05T18:00:14-07:00\",\n  \"counts\": {\n    \"completed_today\": 3,\n    \"overdue\": 1,\n    \"still_open\": 7,\n    \"followups_due\": 2\n  },\n  \"delivery\": { \"channel\": \"primary\", \"status\": \"sent\" }\n}\n```\n\n`delivery.status` is `sent` | `failed` | `dry_run`. Atomic via tempfile + `os.replace`.\n\n### Once-per-day guard\n\nBefore composing, read the existing audit record. If `audit.date == today` AND `audit.delivery.status == 'sent'`, emit `SWEEP_SENT: <today> already_sent` and exit 0 — do not re-send. This protects against a launchd misfire or clock change.\n\n### Configuration (network.json)\n\n```json\n\"capabilities\": {\n  \"evening_sweep\": {\n    \"enabled\": true,\n    \"time\": \"18:00\",\n    \"channel\": \"primary\"\n  }\n}\n```\n\nDefaults if absent: time=18:00, channel=primary. The launchd plist is rendered with the configured Hour/Minute at install; if the operator later changes the time, the plist must be re-rendered (the daemon does not re-read network.json mid-flight).\n\n## scripts/evening-sweep-cron.sh\n\n```bash\n#!/bin/bash\n# evening-sweep-cron.sh — launchd trigger for evening_sweep.\nWORKSPACE=\"/Users/{bot_id}/.openclaw/workspace\"\nexec python3 \"$WORKSPACE/scripts/evening_sweep.py\" run --bot \"{bot_id}\" \\\n  >> \"/tmp/{bot_id}-evening-sweep.log\" 2>&1\n```\n\nReplace `{bot_id}` at install time. Make executable (0755).\n\n## Test surface\n\n```bash\npython3 -m py_compile scripts/evening_sweep.py\npython3 scripts/evening_sweep.py preview --bot {bot_id}\n# Expected: prints sweep to stdout, no audit record update\npython3 scripts/evening_sweep.py run --bot {bot_id} --dry-run\n# Expected: prints sweep, updates audit with delivery.status='dry_run'\npython3 scripts/evening_sweep.py status\n# Expected: prints last audit record\n```\n\n## Provenance marker\n\n```python\n# evolve: pkg=p-1d3e8f47 file=f-XXXXXXXX@<version>\n```\n\n## What NOT to include\n\n- No HEARTBEAT.md sections (Phase 4.5 territory, not Build).\n- No openclaw.json mutation.\n- No background daemons or sleep loops — the launchd plist is the only scheduler.\n- No retry-with-sleep loops on delivery failure (one attempt, fail, emit SWEEP_FAILED:, exit non-zero).\n",
+  "example_triggers": [
+    "Preview my evening sweep",
+    "What did I get done today?",
+    "Did the evening sweep run?",
+    "When does the sweep go out?",
+    "Run the sweep now"
+  ],
+  "test_cases": [
+    {
+      "trigger": "Preview my evening sweep",
+      "expected": "Run evening_sweep.py preview --bot {bot_id}. Stdout contains a header, a 'Completed today' or 'No tasks marked complete today' line, and a 'Still open' section if tasks exist. Exit 0."
+    },
+    {
+      "trigger": "Did the evening sweep run today?",
+      "expected": "Run evening_sweep.py status. If memory/evening-sweep-last.json shows today's date and delivery.status='sent', report yes with timestamp. Otherwise report 'not yet today'."
+    },
+    {
+      "trigger": "Run the evening sweep now",
+      "expected": "Run evening_sweep.py run --bot {bot_id}. If today's audit already shows status='sent', report 'already sent today' without re-sending. Otherwise compose and send."
+    }
+  ],
+  "scheduled_actions": [
+    {
+      "id": "evening-sweep-daily",
+      "mechanism": "launchd",
+      "trigger": {
+        "kind": "launchd",
+        "schedule": "Hour=18 Minute=00",
+        "evidence_path": "scripts/evening-sweep-cron.sh",
+        "evidence_locator": "evening-sweep entrypoint"
+      },
+      "install": {
+        "plist_label": "ai.evolve.${bot_id}.evening-sweep",
+        "command": "/bin/bash ${workspace}/scripts/evening-sweep-cron.sh",
+        "cwd": "${workspace}",
+        "schedule": {
+          "cron": {
+            "Hour": 18,
+            "Minute": 0
+          }
+        },
+        "exec_policy": "inherit"
+      },
+      "inputs": [
+        {
+          "path": "tasks.json",
+          "kind": "dependency",
+          "from_dependency": "p-9bfa1c84"
+        }
+      ],
+      "outputs": [
+        {
+          "kind": "session_message",
+          "channel": "primary"
+        }
+      ],
+      "delivery_contract": {
+        "user_facing": true,
+        "window_minutes": 30,
+        "evidence": {
+          "ran": {
+            "kind": "scheduler_state"
+          },
+          "delivered": {
+            "kind": "run_file",
+            "path": "memory/sweep-runs/{date}.json"
+          }
+        },
+        "heal": "rerun"
+      },
+      "summary": "Daily end-of-day task summary at the configured local time (default 18:00). Edit install.schedule.cron to change the time. heal:rerun is safe: the audit record's once-per-day guard makes a forced re-run after a successful send a no-op (SWEEP_SENT: already_sent)."
+    }
+  ],
+  "usage": {
+    "model": "scheduled",
+    "trigger_recognition": {
+      "pattern": "Evening Sweep runs once at end-of-day. If the user asks before the scheduled time, run `preview`.",
+      "hint_words": [
+        "evening sweep",
+        "end of day",
+        "what did I get done",
+        "did the sweep run",
+        "today's recap"
+      ],
+      "requires_keyword": false
+    },
+    "auto_capture": {
+      "enabled": false,
+      "sources": []
+    },
+    "how_to_use": "Use `preview` for a dry-run before the scheduled time. `status` reports whether the scheduled run already completed. The sweep reads Task Manager state; if a user asks why something didn't appear, check that Task Manager has the task.",
+    "bot_voice_examples": [
+      "Today: 4 tasks done, 3 open, 1 slipping (vendor follow-up — 3 days overdue).",
+      "The sweep ran at 6pm — nothing slipping, three carryovers for tomorrow.",
+      "Quiet day on the task side — two done, nothing new."
+    ]
+  }
+}

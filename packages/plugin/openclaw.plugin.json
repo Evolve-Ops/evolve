@@ -1,0 +1,110 @@
+{
+  "id": "evolve",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "name": "Evolve",
+  "description": "Pod-wide adaptation for OpenClaw bot networks — measures, analyzes, and proposes behavioral improvements",
+  "hooks": {
+    "allowConversationAccess": true
+  },
+  "contracts": {
+    "agentToolResultMiddleware": ["openclaw"],
+    "tools": [
+      "defer",
+      "session_set_tier",
+      "record_application",
+      "evolve_help_search",
+      "evolve_help_read",
+      "submit_intake",
+      "pod_status",
+      "list_signals",
+      "list_proposals",
+      "recent_watchdog",
+      "spend_rollup",
+      "recent_turns",
+      "describe_bot",
+      "list_audits",
+      "roster_set_role",
+      "roster_block",
+      "roster_unblock",
+      "channel_set_newcomer_mode",
+      "directory_lookup",
+      "directory_upsert",
+      "expand_app",
+      "gmail_list_messages",
+      "gmail_get_message",
+      "gmail_list_labels",
+      "gmail_send",
+      "gmail_label_message",
+      "gmail_archive_message",
+      "gmail_mark_read",
+      "gmail_mark_unread",
+      "gmail_delete_message",
+      "gmail_trash_message",
+      "calendar_list_events",
+      "calendar_create_event",
+      "drive_list_files",
+      "drive_read_file",
+      "drive_write_file",
+      "drive_search"
+    ]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "botId": {
+        "type": "string",
+        "description": "Unique identifier for this bot in the network (e.g. 'mybot')"
+      },
+      "role": {
+        "type": "string",
+        "enum": ["primary", "member"],
+        "description": "Role in the network. 'primary' consolidates and alerts, 'member' measures and reports."
+      },
+      "networkId": {
+        "type": "string",
+        "description": "Network identifier — all bots in the same network share this value"
+      },
+      "sharedDir": {
+        "type": "string",
+        "description": "Path to shared directory readable/writable by all bots (default: /Users/Shared/evolve)"
+      },
+      "repoRoot": {
+        "type": "string",
+        "description": "Absolute path to the deploy checkout (the read-only repo daemons load from), used to locate packages/analyzer scripts. Injected by deploy from platform_profile.deploy_checkout_default — /Users/Shared/evolve-repo on macOS, /var/lib/evolve/repo on Linux. When absent (bot not yet redeployed), the plugin falls back to the legacy dirname(sharedDir)/evolve-repo derivation."
+      },
+      "classifierModel": {
+        "type": "string",
+        "description": "Model to use for tier classification (default: anthropic/claude-haiku-4-5)"
+      },
+      "tierClassification": {
+        "type": "string",
+        "enum": ["session", "turn"],
+        "description": "Granularity of tier classification. Start with 'session'. (default: session)"
+      },
+      "dashboardEnabled": {
+        "type": "boolean",
+        "description": "Whether to serve the dashboard HTTP route (default: true for primary, false for others)"
+      },
+      "summarizerMinTurns": {
+        "type": "number",
+        "description": "Minimum turns before SessionSummarizer runs LLM outcome extraction. Sessions with fewer turns skip the summarizer. (default: 2)"
+      },
+      "classifierKeywordConfidenceFloor": {
+        "type": "number",
+        "description": "Minimum keyword-classifier confidence below which LLMTierClassifier escalates to the LLM tier model. (default: 0.80)"
+      },
+      "costLedgerEnabled": {
+        "type": "boolean",
+        "description": "Whether TurnObserver writes per-turn cost ledger entries. (default: true)"
+      },
+      "tier": {
+        "type": "string",
+        "enum": ["off", "monitor", "manage", "full"],
+        "description": "Per-bot Evolve integration tier. Controls intrusive features like conduct injection, defer tool, and recommendation injection. (default: full)"
+      }
+    },
+    "required": ["botId", "role", "networkId"]
+  }
+}

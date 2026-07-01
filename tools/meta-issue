@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""meta-issue — fetch a GitHub issue and emit a normalized intake record.
+
+Foundation for META:substrate Initiative 1 (GitHub-issue intake;
+docs/spec-substrate-2026-06-15.md §4.4). Used by `/design <issue>` (Phase 1)
+and the `/triage` sweep (Phase 2) so both share one deterministic fetch+normalize
+step instead of each re-deriving issue shape from raw `gh` output.
+
+Repo-pure on purpose: it only talks to GitHub via `gh`. It does NOT know the aspect
+registry — routing/validation against the registry is the caller's (skill's) job.
+It surfaces the raw signal the caller needs: every label, plus the high-precision
+`aspect_hints` (label prefixes before ':', generalizing the `edr:agent-able`
+convention), `agent_able`, and the `Proof:` line.
+
+Usage:
+    tools/meta-issue <ref> [--repo OWNER/REPO]
+
+<ref> may be a bare number (123), a hash (#123), or a full issue URL
+(https://github.com/owner/repo/issues/123 — repo is parsed from the URL and wins
+over --repo). For bare/hash refs the repo is --repo or the default below.
+
+Emits one JSON object on stdout:
+    {number, url, state, title, body, author, created_at, age_days,
+     labels[], aspect_hints[], agent_able, proof, comments[{author, body}]}
+
+Exit codes: 0 ok; 2 bad usage / unparseable ref; 3 `gh` failure (not authed,
+issue not found, etc.).
+"""
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+# Ensure this script's own dir (tools/) is importable so the sibling `meta_config`
+# module resolves regardless of the caller's cwd (shebang run or SourceFileLoader test).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import meta_config  # noqa: E402  (path insert must precede the import)
+
+# Per-project repo slug from `.claude/meta.json` (falls back to Evolve's own when absent).
+DEFAULT_REPO = meta_config.repo_slug()
+
+_URL_RE = re.compile(
+    r"github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/issues/(?P<num>\d+)"
+)
+
+
+def _die(code, msg):
+    print(f"meta-issue: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def parse_ref(ref, repo_flag):
+    """Return (repo, number). A URL's repo wins over --repo."""
+    m = _URL_RE.search(ref)
+    if m:
+        return f"{m['owner']}/{m['repo']}", int(m["num"])
+    bare = ref.lstrip("#").strip()
+    if not bare.isdigit():
+        _die(2, f"cannot parse issue ref {ref!r} (want 123, #123, or an issue URL)")
+    return (repo_flag or DEFAULT_REPO), int(bare)
+
+
+def fetch(repo, number):
+    fields = "number,url,state,title,body,labels,author,createdAt,comments"
+    try:
+        r = subprocess.run(
+            ["gh", "issue", "view", str(number), "--repo", repo, "--json", fields],
+            capture_output=True, text=True,
+        )
+    except FileNotFoundError:
+        _die(3, "`gh` not found on PATH")
+    if r.returncode != 0:
+        _die(3, f"gh issue view {repo}#{number} failed: {r.stderr.strip()}")
+    return json.loads(r.stdout)
+
+
+def aspect_hints(labels):
+    """High-precision hints: the '<aspect>' prefix of any '<aspect>:<suffix>' label
+    (the convention generalized from `edr:agent-able`). Bare labels are NOT treated
+    as hints here — the caller matches those against the live aspect registry."""
+    hints = {name.split(":", 1)[0] for name in labels if ":" in name}
+    return sorted(hints)
+
+
+def find_proof(body):
+    """First 'Proof:' line in the body — the EDR convention for an auto-dispatchable
+    fix (a falsifiable acceptance test). None if absent."""
+    for line in (body or "").splitlines():
+        s = line.strip().lstrip("*-> ").strip()
+        if s.lower().startswith("proof:"):
+            return s.split(":", 1)[1].strip()
+    return None
+
+
+def age_days(created_at):
+    try:
+        created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
+    return (datetime.now(timezone.utc) - created).days
+
+
+def normalize(raw):
+    labels = [lab["name"] for lab in raw.get("labels", [])]
+    author = (raw.get("author") or {}).get("login", "")
+    comments = [
+        {"author": (c.get("author") or {}).get("login", ""), "body": c.get("body", "")}
+        for c in raw.get("comments", [])
+    ]
+    return {
+        "number": raw["number"],
+        "url": raw.get("url", ""),
+        "state": raw.get("state", ""),
+        "title": raw.get("title", ""),
+        "body": raw.get("body", ""),
+        "author": author,
+        "created_at": raw.get("createdAt", ""),
+        "age_days": age_days(raw.get("createdAt", "")),
+        "labels": labels,
+        "aspect_hints": aspect_hints(labels),
+        "agent_able": any(lab.endswith(":agent-able") or lab == "agent-able" for lab in labels),
+        "proof": find_proof(raw.get("body", "")),
+        "comments": comments,
+    }
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="meta-issue", add_help=True)
+    ap.add_argument("ref", help="issue number, #number, or full issue URL")
+    ap.add_argument("--repo", help=f"OWNER/REPO (default {DEFAULT_REPO}; a URL ref overrides)")
+    args = ap.parse_args()
+
+    repo, number = parse_ref(args.ref, args.repo)
+    record = normalize(fetch(repo, number))
+    json.dump(record, sys.stdout, indent=2)
+    print()
+
+
+if __name__ == "__main__":
+    main()

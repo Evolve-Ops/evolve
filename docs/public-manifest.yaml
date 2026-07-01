@@ -1,0 +1,49 @@
+# Source of truth for the public/private cut line when publishing to
+# evolve-ops/evolve. Everything tracked is PUBLIC unless it matches a
+# glob here. Consumed by tools/publish-public and the CI guard
+# (tools/check-public-manifest). Spec: docs/spec-public-2026-06-18.md §4.
+#
+# The model is PUBLIC-BY-DEFAULT minus this denylist. The cut line is an
+# explicit, small list of PRIVATE paths — NOT an allowlist of public ones.
+# Adding a path here removes it from the published output.
+#
+# DO NOT add these here — they are intentionally PUBLIC (sanitized by a
+# separate scrub task, not withheld): CLAUDE.md, AGENTS.md, ONBOARDING.md,
+# .claude/, edr/, docs/meta-*, docs/dispatch/, docs/routines/, docs/system/,
+# tools/meta-*. The META coordinator system ships with the public repo.
+#
+# The operator-local meta-state/ ledgers and per-aspect memory files are
+# NOT tracked in this repo at all (they live under the operator's
+# ~/.claude/.../memory and a gitignored meta-state/), so they need no glob
+# here — git ls-files never surfaces them to the publisher.
+private:
+  - docs/private/**          # already gitignored; defensive
+  - issues/**                # internal issue tracker
+  - docs/market-intelligence/**   # competitive strategy
+  - docs/incidents/**        # reference-deployment ops incidents (billing/transcripts)
+  - docs/forensic-*          # security incidents naming real bots
+  - docs/diagnosis-*         # reference-deployment operational diagnoses
+  - docs/diag-*
+
+  # Token-bearing test fixtures. These embed the reserved bot/account
+  # tokens BY DESIGN (they assert the scrub catches them, keep an
+  # authoritative RESERVED_TOKENS copy, or use real names as fixtures).
+  # They are exempt from the private-CI scrub via ALLOWLISTED_PATHS in
+  # packages/admin/tests/test_public_launch_scrub.py, but that exemption
+  # must NOT carry into the public output — denylist them so the public
+  # repo never ships the embedded tokens. (PUBLIC-3)
+  - packages/admin/tests/test_files_pack_integrity.py
+  - packages/admin/tests/test_no_personal_pii_in_source.py
+  - packages/admin/tests/test_public_launch_scrub.py
+  - packages/analyzer/tests/test_oc_cli_dedup.py
+  - packages/plugin/tests/turnObserver.chosenBy.test.mjs
+  - tools/test_publish_public.py
+
+  # Reference-deployment operational runbooks. These document operator
+  # commands against the live reference pod (real bot names, ssh targets,
+  # /Users/<admin>/ paths) — same class as docs/incidents/**. They are
+  # ops for THIS deployment, not reusable product docs. (PUBLIC-3)
+  - docs/runbook-scanned-export-2026-06-03.md
+  - docs/runbook-snapshot-install-to-gallery-2026-06-03.md
+  - docs/runbook-signing-community-packages-2026-06-04.md
+  - scripts/decommission_sentry_watchdog.sh

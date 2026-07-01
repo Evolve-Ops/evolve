@@ -1,0 +1,178 @@
+{
+  "pkg_id": "p-3a7d52c9",
+  "pkg_version": "2026.06.11-1.1",
+  "gallery_version": "2026.06.11-1.1",
+  "schema_version": 5,
+  "manifest_type": "evolve_application",
+  "display_name": "Project Pack",
+  "author": "evolve",
+  "description": "Curated bundle for a project-manager bot. Installs the four behaviors that keep a project's threads from dropping — Task Manager, Meeting Note-taker, Commitment Tracker, Pre-Meeting Brief — along with their data-layer foundations (Contacts, Calendar Sync). Meta-spec only: installs the six dependencies, ships no scripts of its own. This is the project-manager archetype's starter pack for the add-bot wizard (starter-pack + archetype-project-manager tags).",
+  "application_tags": [
+    "starter-pack",
+    "archetype-project-manager",
+    "project-management",
+    "task-management",
+    "meeting-prep",
+    "meeting-notes",
+    "contacts",
+    "calendar",
+    "follow-up",
+    "productivity",
+    "executive-assistant",
+    "integration",
+    "notes"
+  ],
+  "id": "app_project_pack",
+  "name": "Project Pack",
+  "status": "active",
+  "dependencies": [],
+  "app_dependencies": [
+    {
+      "pkg_id": "p-9bfa1c84",
+      "display_name": "Task Manager",
+      "required": true,
+      "reason": "Foundation data layer. Persistent task registry with owners, priorities, and approval states — the project's source of truth for open work."
+    },
+    {
+      "pkg_id": "p-4136a932",
+      "display_name": "Contacts",
+      "required": true,
+      "reason": "Foundation data layer. Per-person relationship memory; Commitment Tracker stores commitments here and Pre-Meeting Brief draws attendee context from it."
+    },
+    {
+      "pkg_id": "p-fe9acef3",
+      "display_name": "Calendar Sync",
+      "required": true,
+      "reason": "Foundation data layer. Local calendar cache; Pre-Meeting Brief reads its memory/calendar-today.json and memory/calendar-upcoming.json."
+    },
+    {
+      "pkg_id": "p-f14e9562",
+      "display_name": "Meeting Note-taker",
+      "required": true,
+      "reason": "Behavior: capture surface. Turns meeting conversations into structured notes and action items the project can act on."
+    },
+    {
+      "pkg_id": "p-3b4f5d29",
+      "display_name": "Commitment Tracker",
+      "required": true,
+      "reason": "Behavior: conversation-driven surface. Captures commitments made in conversation into Contacts memory and surfaces overdue ones once per day."
+    },
+    {
+      "pkg_id": "p-2c7a9b6e",
+      "display_name": "Pre-Meeting Brief",
+      "required": true,
+      "reason": "Behavior: calendar-driven surface. Briefing ~60 minutes before each external meeting, with attendee context drawn from Contacts."
+    }
+  ],
+  "requirements": {
+    "integrations": [],
+    "secrets": [],
+    "system": [],
+    "python_packages": []
+  },
+  "interface_contract": {
+    "populated_by_forge": false,
+    "extracted_at": null,
+    "data_files": [],
+    "cli": [],
+    "key_paths": {},
+    "signal_prefixes": [],
+    "output_signal_formats": {}
+  },
+  "files": [],
+  "install_job": null,
+  "improvement_history": [],
+  "identity": {
+    "purpose": "Package the four project-manager behaviors plus their two data-layer foundations as one installable unit, so an operator (or the add-bot wizard) can choose 'the project bundle' instead of picking six apps individually. The meta-spec itself has no behavior — every note, brief, and follow-up belongs to a downstream app. Removing this meta-spec would not remove any capability; it would only require installing the six dependencies one at a time.",
+    "scope_includes": [
+      "Declare a strict app_dependencies graph that the installer resolves into the six underlying apps, foundations before behaviors",
+      "Carry the starter-pack tags (starter-pack, archetype-project-manager) that let the add-bot wizard discover this bundle for the project-manager role",
+      "Carry the operator-facing description for the bundle (its name, blurb, and tag set), nothing more"
+    ],
+    "scope_excludes": [
+      "Installing any script of its own — every script lives in a downstream app",
+      "Declaring scheduled_actions of its own — every cron / heartbeat instruction belongs to a downstream app",
+      "Declaring integrations of its own — every integration is required transitively through Calendar Sync (Google Calendar)",
+      "Overriding configuration of downstream apps — each downstream app reads its own network.json::capabilities block"
+    ],
+    "bot_interaction_pattern": "None — this is a meta-package, not a runtime app. The bot never invokes anything labeled 'project-pack'; it invokes the underlying behavior apps directly.",
+    "user": "The operator at install time (directly or via the add-bot wizard's starter-pack proposal). After install completes, Project Pack is invisible at runtime — every actual note, brief, and follow-up is surfaced by one of the downstream apps."
+  },
+  "success_criteria": {
+    "observable_outcomes": [
+      "Selecting Project Pack installs all six dependencies in the correct order (foundations before behaviors)",
+      "After install, each of the four behavior apps shows as `status: active` in the bot's apps list with its own scheduled_actions and interface_contract",
+      "The add-bot wizard's project-manager proposal resolves this bundle's dependency list as the proposed starter set",
+      "Uninstalling Project Pack only removes the meta-spec from the bot's apps list — downstream apps remain installed and continue to function"
+    ],
+    "failure_signals": [
+      "Project Pack installs but only N of 6 dependencies appear in the bot's apps list — installer dependency resolution is incomplete",
+      "Two downstream apps disagree on a shared file's format — the contract between behaviors and foundations has drifted",
+      "Behavior apps install but their scheduled_actions don't fire — plists or HEARTBEAT.md sections were not materialized"
+    ],
+    "quality_bar": {
+      "minimum": "Project Pack is a strict superset of its dependencies — installing it produces exactly the same bot capability set as installing the six apps manually, in the same order.",
+      "excellent": "An operator who knows nothing about Evolve's apps-as-contracts framing can pick 'Project Pack' (or accept the wizard's proposal) and within one day have meeting notes captured, commitments tracked, and pre-meeting briefs arriving with attendee context."
+    }
+  },
+  "constraints": {
+    "privacy": [
+      "Project Pack carries no data of its own — every privacy obligation passes through to a downstream app. See the Contacts spec for relationship-memory privacy, Calendar Sync for calendar-data handling, and Meeting Note-taker for conversation-capture boundaries."
+    ],
+    "safety": [
+      "The meta-spec declares no scripts and no scheduled actions, so it cannot fail at runtime. The downstream apps' safety constraints apply individually.",
+      "Installer must resolve dependencies in topological order: data-layer apps (Task Manager, Contacts, Calendar Sync) before behavior apps. A behavior app installed without its foundation will emit a *_FAILED: signal on its first run."
+    ],
+    "dependencies": [
+      "All six dependencies above are REQUIRED. There is no degraded mode where Project Pack works without one of them — the bundle's value is the full project rhythm in one install.",
+      "If an operator wants only a subset (e.g. task tracking without meeting prep), they should install those apps individually — or trim the set in the add-bot wizard's proposal, which installs the apps directly rather than this bundle."
+    ],
+    "boundaries": [
+      "Project Pack does not introduce a network.json::capabilities.project_pack config block — each downstream app reads its own capabilities block.",
+      "Project Pack does not own any HEARTBEAT.md section — every heartbeat instruction belongs to a downstream app's scheduled_actions.",
+      "Project Pack version bumps are only required when the dependency graph changes (a behavior added, a dependency renamed, a required→optional flip)."
+    ]
+  },
+  "build_spec": "# Project Pack — Build Specification\n\n## Overview\n\nThis is a **meta-package**. It declares no files of its own; the installer is expected to resolve `app_dependencies` and install each downstream app independently.\n\nThere is nothing for forge to build at install time. The Build phase is a no-op:\n\n- No scripts to write.\n- No data files to seed.\n- No plists or HEARTBEAT.md sections to materialize.\n- No openclaw.json mutations.\n\nIf the installer ships Project Pack to a bot and the six dependencies are already installed, the bot's apps list gains an `app_project_pack` entry whose only content is the metadata above (description, tags, identity, dependency list). Removing the Project Pack entry removes only that metadata.\n\n## Dependency graph\n\n```\n  Meeting Note-taker ─┐\n  Commitment Tracker ─┼── depend on ──┐\n  Pre-Meeting Brief ──┘                ├── Task Manager  (foundation)\n                                       ├── Contacts      (foundation)\n                                       └── Calendar Sync (foundation)\n```\n\n- **Foundation apps** (Task Manager, Contacts, Calendar Sync) own data formats and CLIs.\n- **Behavior apps** (Meeting Note-taker, Commitment Tracker, Pre-Meeting Brief) own the captures and briefs that read the foundation data and deliver via `openclaw message send`.\n\n## Install order (installer responsibility)\n\nThe installer must apply dependencies in topological order — foundations first, then behaviors:\n\n```\n1. Task Manager (p-9bfa1c84)\n2. Contacts (p-4136a932)\n3. Calendar Sync (p-fe9acef3)\n4. Meeting Note-taker (p-f14e9562)\n5. Commitment Tracker (p-3b4f5d29)\n6. Pre-Meeting Brief (p-2c7a9b6e)\n```\n\n## Starter-pack role\n\nThis bundle is the **project-manager archetype's starter pack** for the conversational add-bot wizard (docs/spec-add-bot-wizard-build-delta-2026-06-10.md §5). The wizard discovers it via the `starter-pack` + `archetype-project-manager` tags, proposes the dependency list as the new bot's starter set, lets the operator trim it in conversation, and queues the surviving apps as install jobs at finalize — foundations first, same order as above.\n\n## What NOT to include\n\n- No scripts.\n- No scheduled_actions.\n- No HEARTBEAT.md content.\n- No openclaw.json fields.\n- No requirements.integrations[] — integrations are required transitively through Calendar Sync.\n",
+  "example_triggers": [
+    "Install the project pack",
+    "What's in the project bundle?",
+    "Set up task tracking + meeting notes + pre-meeting briefs",
+    "Give me the full project-manager toolkit"
+  ],
+  "test_cases": [
+    {
+      "trigger": "Install the project pack",
+      "expected": "Admin UI / installer resolves app_dependencies and installs all six downstream apps in topological order. After install, all six appear in the bot's apps list with status=active."
+    },
+    {
+      "trigger": "What does the Project Pack include?",
+      "expected": "Bot reads this manifest's app_dependencies and reports: Meeting Note-taker, Commitment Tracker, Pre-Meeting Brief (behaviors) + Task Manager, Contacts, Calendar Sync (foundations)."
+    }
+  ],
+  "scheduled_actions": [],
+  "usage": {
+    "model": "user-initiated",
+    "trigger_recognition": {
+      "pattern": "Project Pack is a one-time installer. Mention it only when the user asks how to set up the project-manager toolkit, or when they ask which apps are bundled.",
+      "hint_words": [
+        "project pack",
+        "project bundle",
+        "project manager setup",
+        "task tracking and meeting notes",
+        "pm toolkit"
+      ],
+      "requires_keyword": true
+    },
+    "auto_capture": {
+      "enabled": false,
+      "sources": []
+    },
+    "how_to_use": "Project Pack has no day-to-day runtime — it's an installer that brings in Meeting Note-taker, Commitment Tracker, Pre-Meeting Brief, plus the data-layer foundations. When the user asks about Project Pack, describe what's inside; direct them to the gallery install if they haven't installed yet.",
+    "bot_voice_examples": [
+      "Project Pack bundles Task Manager, Meeting Note-taker, Commitment Tracker, and Pre-Meeting Brief — all installable as one.",
+      "You already have the project pack's apps installed.",
+      "To install Project Pack, run the gallery install from the Apps page."
+    ]
+  }
+}

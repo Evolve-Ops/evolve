@@ -1,0 +1,67 @@
+{
+  "format_version": "1.0",
+  "snapshot_source": {
+    "pkg_id": "p-aab5e569",
+    "pkg_version": "2026.06.11-2.1",
+    "snapshot_at": "2026-06-11T00:00:00Z",
+    "snapshot_by": "delivery-convention migration (spec-gallery-delivery-convention-2026-06-11)"
+  },
+  "files": [
+    {
+      "path": "scripts/morning_brief.py",
+      "mode": "0644",
+      "sha256": "380ed6dc28209bf2ceff1721446769436b4f897a4785bed63690bf4e7cffb296",
+      "size_bytes": 11700,
+      "placeholders": [
+        "bot_id"
+      ]
+    },
+    {
+      "path": "scripts/evening_sweep.py",
+      "mode": "0644",
+      "sha256": "120c0cb60e2d2ee9bdffaa43a8f51b06d7333e8a3fb6d508ed657db3497677cc",
+      "size_bytes": 11854,
+      "placeholders": [
+        "bot_id"
+      ]
+    },
+    {
+      "path": "scripts/pre_meeting_brief.py",
+      "mode": "0644",
+      "sha256": "00fd374f17b25b570f551e2d4871f6bcf79ad66e84fc878176226856903e54f4",
+      "size_bytes": 13759,
+      "placeholders": [
+        "bot_id"
+      ]
+    },
+    {
+      "path": "scripts/commitment_tracker.py",
+      "mode": "0644",
+      "sha256": "58d737fa5486e1ef91eccdcc0664242818656bc2fa9a05b277f056029671c298",
+      "size_bytes": 5836,
+      "placeholders": [
+        "bot_id"
+      ]
+    },
+    {
+      "path": "scripts/ea-morning.sh",
+      "mode": "0755",
+      "sha256": "2ff8c21197aeebb4e900c82b811f4fea26607afa71b6697d3fe31a30d2f42969",
+      "size_bytes": 264,
+      "placeholders": [
+        "bot_id",
+        "workspace"
+      ]
+    },
+    {
+      "path": "scripts/ea-evening.sh",
+      "mode": "0755",
+      "sha256": "ddbcfc008c4a451648d65ee8c8d7dd7c66e47eda08d8d207d665857acd59fb74",
+      "size_bytes": 264,
+      "placeholders": [
+        "bot_id",
+        "workspace"
+      ]
+    }
+  ]
+}

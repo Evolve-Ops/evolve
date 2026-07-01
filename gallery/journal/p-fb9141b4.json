@@ -1,0 +1,175 @@
+{
+  "pkg_id": "p-fb9141b4",
+  "pkg_version": "2026.04.16-1.0",
+  "gallery_version": "2026.04.16-1.0",
+  "schema_version": 5,
+  "manifest_type": "evolve_application",
+  "display_name": "Journal",
+  "author": "evolve",
+  "description": "Daily log with morning intentions, end-of-day notes, and freeform entries. One file per day. Foundation for evening sweep, monthly summaries, and reflection apps.",
+  "application_tags": [
+    "personal-productivity",
+    "reflection",
+    "journaling",
+    "daily-routine",
+    "productivity"
+  ],
+  "id": "app_journal",
+  "name": "Journal",
+  "status": "active",
+  "dependencies": [],
+  "app_dependencies": [],
+  "requirements": {
+    "integrations": [],
+    "secrets": [],
+    "system": [],
+    "python_packages": []
+  },
+  "interface_contract": {
+    "populated_by_forge": false,
+    "extracted_at": null,
+    "data_files": [
+      {
+        "path": "memory/journal/YYYY-MM-DD.md",
+        "description": "One markdown file per day. Filename is the date. Contains canonical Morning, EOD, and Notes sections.",
+        "schema": {
+          "storage_format": "Markdown with canonical section headers",
+          "file_header": "# Journal: YYYY-MM-DD\n\n## Morning\n\n## EOD\n\n## Notes\n",
+          "sections": {
+            "Morning": "CANONICAL — must not vary. Morning intentions and plans.",
+            "EOD": "CANONICAL — must not vary. End-of-day reflections and wrap-up.",
+            "Notes": "CANONICAL — must not vary. Freeform entries throughout the day."
+          },
+          "entry_format": "- HH:MM — {text}",
+          "entry_format_description": "Dash, space, 24h time (HH:MM), space, em-dash (—), space, text"
+        }
+      }
+    ],
+    "cli": [
+      {
+        "command": "python3 scripts/journal.py add",
+        "key_flags": ["--section morning|eod|notes", "--text TEXT"],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/journal.py today",
+        "key_flags": [],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/journal.py show",
+        "key_flags": ["--date YYYY-MM-DD"],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/journal.py recent",
+        "key_flags": ["--days N (default 7)"],
+        "output_signals": []
+      }
+    ],
+    "key_paths": {
+      "cli": "scripts/journal.py",
+      "journal_dir": "memory/journal/"
+    }
+  },
+  "files": [],
+  "install_job": null,
+  "improvement_history": [],
+  "identity": {
+    "purpose": "Daily structured log for the bot. Records morning intentions, end-of-day wrap-up, and freeform notes in a consistent per-day file. Provides the raw material for evening sweep, reflection, and monthly summary apps.",
+    "scope_includes": [
+      "Create one markdown file per day in memory/journal/ on first write",
+      "Append timestamped entries to morning, eod, or notes sections",
+      "Display today's journal file via the today command",
+      "Display a specific day's file via show --date",
+      "Concatenate and display the last N days via the recent command",
+      "Maintain consistent entry format: '- HH:MM — {text}' in all sections"
+    ],
+    "scope_excludes": [
+      "Searching or querying across journal entries by keyword",
+      "Summarizing or analyzing journal content — that belongs to reflection/summary apps",
+      "Calendar integration or scheduling",
+      "Syncing journal files externally"
+    ],
+    "user": "The bot and human operators who want a structured daily log. The bot appends entries throughout the day; the human reads today's or recent entries to review context."
+  },
+  "success_criteria": {
+    "observable_outcomes": [
+      "today returns the current day's file, creating it if it doesn't exist",
+      "add appends an entry with correct HH:MM timestamp to the specified section",
+      "recent concatenates the last N days in reverse-chronological order",
+      "All section headers remain exactly canonical across all files"
+    ],
+    "failure_signals": [
+      "Journal file is overwritten rather than appended to, losing prior entries",
+      "Section headers drift from canonical names (e.g. 'Morning Intentions' vs 'Morning')",
+      "Entry timestamps use wrong format or are missing entirely",
+      "today creates a new file when one already exists for the day"
+    ],
+    "quality_bar": {
+      "minimum": "Operator can call 'journal.py today' at end of day and see a complete log of what was recorded, with correct timestamps in all sections.",
+      "excellent": "EA Pack's evening sweep reads today's journal and uses it as context for the end-of-day summary. Morning intentions are consistently logged before 9am. recent --days 7 provides a useful week-in-review view."
+    }
+  },
+  "build_spec": "# Journal — Build Specification\n\n## Overview\n\nBuild a daily journal system. One markdown file per day. Three canonical sections. Timestamped append-only entries. A CLI for adding entries and reading today's or recent logs.\n\n---\n\n## File Layout\n\n```\nscripts/\n  journal.py         ← main CLI\nmemory/\n  journal/           ← one .md file per day, named YYYY-MM-DD.md\n```\n\n---\n\n## Journal File Format\n\nFilename: `YYYY-MM-DD.md` (date in local timezone, zero-padded)\n\nFile header (written once on creation):\n```\n# Journal: YYYY-MM-DD\n\n## Morning\n\n## EOD\n\n## Notes\n```\n\nSection headers are CANONICAL. They must be exactly:\n- `## Morning`\n- `## EOD`\n- `## Notes`\n\nNever vary the header text. Other apps depend on parsing these exact strings.\n\n---\n\n## Entry Format\n\nEvery entry appended to any section must follow this format:\n```\n- HH:MM — {text}\n```\n\n- Leading `- ` (dash space)\n- Time in 24-hour format HH:MM (local timezone)\n- Space, em-dash (`—`, U+2014), space\n- The text\n\nExample:\n```\n- 08:32 — Review morning task queue and set priorities for the day\n```\n\nThis format applies to all three sections without exception.\n\n---\n\n## CLI: scripts/journal.py\n\n### `add`\n```\njournal.py add --section SECTION --text TEXT\n```\n- `--section` accepts: `morning`, `eod`, `notes` (case-insensitive)\n- Resolve today's date in local timezone → filename `memory/journal/YYYY-MM-DD.md`\n- If file doesn't exist: create it with the canonical header\n- Append the formatted entry line under the matching section header\n- All writes are append-only — never rewrite the file\n\n### `today`\n```\njournal.py today\n```\n- Print today's journal file to stdout\n- If file doesn't exist: create it with the header, then print it\n\n### `show`\n```\njournal.py show --date YYYY-MM-DD\n```\n- Print the journal file for the given date\n- If file doesn't exist: print \"No journal entry for {date}\" and exit 0\n\n### `recent`\n```\njournal.py recent [--days N]\n```\n- Default N = 7\n- Find the last N days (today and N-1 prior days) that have journal files\n- Print them in reverse-chronological order (most recent first), separated by a blank line\n- If a day has no file, skip it silently\n\n---\n\n## Append-Only Rule\n\nAll writes MUST append. Never truncate or rewrite. Use `open(path, 'a')` mode.\n\nFor `add`, append the entry line directly under the relevant section header. The simplest robust approach: read the file to find the section, then rewrite only if needed. Preferred: maintain sections in strict order (Morning, EOD, Notes) and append entries at the appropriate position by scanning.\n\nIf the section header is missing from an existing file (shouldn't happen but handle defensively): append the missing header and entry at end of file.\n\n---\n\n## Timezone Handling\n\nUse the system local timezone for all date and time operations:\n```python\nfrom datetime import datetime\nfrom zoneinfo import ZoneInfo\nimport subprocess\n\ndef _local_tz() -> ZoneInfo:\n    try:\n        r = subprocess.run([\"systemsetup\", \"-gettimezone\"], capture_output=True, text=True)\n        tz_str = r.stdout.strip().split(\": \", 1)[-1].strip()\n        return ZoneInfo(tz_str)\n    except Exception:\n        return ZoneInfo(\"UTC\")\n\nLOCAL_TZ = _local_tz()\n\ndef today_date() -> str:\n    return datetime.now(LOCAL_TZ).strftime(\"%Y-%m-%d\")\n\ndef current_time() -> str:\n    return datetime.now(LOCAL_TZ).strftime(\"%H:%M\")\n```\n\n---\n\n## Test Suite\n\n```bash\n# 1. Add a morning entry\npython3 scripts/journal.py add --section morning --text \"Review priorities and set top 3 tasks\"\n# Expected: memory/journal/YYYY-MM-DD.md created with header + morning entry\n\n# 2. today — should show file with morning entry\npython3 scripts/journal.py today\n# Expected: file printed, Morning section has the entry with HH:MM timestamp\n\n# 3. Add an EOD entry\npython3 scripts/journal.py add --section eod --text \"Completed task queue review, deferred two items\"\n\n# 4. Add a notes entry\npython3 scripts/journal.py add --section notes --text \"Follow up with Alice on proposal\"\n\n# 5. today — all three sections should have entries\npython3 scripts/journal.py today\n# Expected: Morning, EOD, Notes all populated\n\n# 6. show --date with today's date\npython3 scripts/journal.py show --date $(date +%Y-%m-%d)\n# Expected: same as today output\n\n# 7. show --date with non-existent date\npython3 scripts/journal.py show --date 2020-01-01\n# Expected: \"No journal entry for 2020-01-01\"\n\n# 8. recent --days 1\npython3 scripts/journal.py recent --days 1\n# Expected: today's file printed\n```\n\nAll steps must exit 0. Step 5 must show entries in all three sections.",
+  "example_triggers": [
+    "Log my morning intentions: focus on the product roadmap and clear my inbox",
+    "What did I do today?",
+    "Add an EOD note: wrapped up Q2 planning, deferred vendor calls to next week",
+    "Show me the last 7 days of journal entries",
+    "Show my journal for 2026-04-14",
+    "Add a note: don't forget to follow up with the contractor"
+  ],
+  "test_cases": [
+    {
+      "trigger": "Log morning intentions: review backlog and prioritize top 3 items",
+      "expected": "Call journal.py add --section morning --text 'review backlog and prioritize top 3 items'; confirm entry added with HH:MM timestamp"
+    },
+    {
+      "trigger": "What did I log today?",
+      "expected": "Call journal.py today; return full contents of today's journal file"
+    },
+    {
+      "trigger": "Show me the last 3 days",
+      "expected": "Call journal.py recent --days 3; return files for last 3 days in reverse-chronological order"
+    }
+  ],
+  "constraints": {
+    "safety": [
+      "All writes are append-only — never rewrite or truncate journal files",
+      "Section headers must be exactly canonical — never vary the text",
+      "Entry format must always include the HH:MM timestamp"
+    ],
+    "boundaries": [
+      "Journal is a local store — files are never synced externally by this app",
+      "Do not search or analyze journal content — that belongs to summary/reflection apps",
+      "Do not infer past entries or backfill timestamps"
+    ]
+  },
+  "usage": {
+    "model": "user-initiated",
+    "trigger_recognition": {
+      "pattern": "When the user wants to capture a thought, an intention, or an end-of-day note, log it. When the user asks what they did or what they were working on, retrieve.",
+      "hint_words": [
+        "journal",
+        "log",
+        "log my",
+        "morning intention",
+        "EOD note",
+        "what did I do today",
+        "remember that"
+      ],
+      "requires_keyword": false
+    },
+    "auto_capture": {
+      "enabled": false,
+      "sources": []
+    },
+    "how_to_use": "Use `add` to record a freeform entry; the script timestamps and files it under today's date. Use `today` to retrieve today's entries; `show <date>` for a specific day; `recent` for the last few days. Don't paraphrase — record what the user actually said.",
+    "bot_voice_examples": [
+      "Logged.",
+      "Today so far: morning intention about the product roadmap, two freeform notes at 11am and 2pm, no EOD note yet.",
+      "Last three days had three entries each — quiet stretch."
+    ]
+  }
+}

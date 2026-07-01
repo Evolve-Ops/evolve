@@ -1,0 +1,52 @@
+name: Bug report
+description: Something in Evolve isn't working as expected
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Most fields below will already be filled in
+        if this issue was opened from the Evolve admin UI's "Send feedback" button. If you're
+        attaching a diagnostic snapshot, drag the file from `~/.evolve/reports/` into the
+        comment box below and post the issue once it uploads.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What were you doing, what did you expect, and what did you see instead?
+      placeholder: |
+        - Steps to reproduce
+        - Expected behavior
+        - Actual behavior
+    validations:
+      required: true
+
+  - type: input
+    id: evolve-version
+    attributes:
+      label: Evolve version
+      description: From the admin UI footer or `evolve-admin --version`.
+      placeholder: "e.g. 2026.5.5"
+
+  - type: input
+    id: host
+    attributes:
+      label: Host / pod
+      description: Hostname of the machine running the admin server, plus the affected bot if relevant.
+      placeholder: "mac-mini-evolve / team_bot_a"
+
+  - type: textarea
+    id: errors
+    attributes:
+      label: Recent errors
+      description: Last few ERROR/CRITICAL log lines. Auto-filled from the in-app reporter.
+      render: text
+
+  - type: input
+    id: snapshot
+    attributes:
+      label: Diagnostic snapshot path
+      description: Local path to the saved diagnostic JSON. Drag-drop the file into the comment box below to attach it.
+      placeholder: "~/.evolve/reports/report-YYYYMMDDTHHMMSS.json"

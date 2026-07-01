@@ -1,0 +1,219 @@
+#!/bin/bash
+# tools/meta-skills-sync — refresh the operator-global ~/.claude/skills/<name>/SKILL.md
+# mirror from origin/main:.claude/skills/<name>/SKILL.md, idempotently and WITHOUT network.
+#
+# WHY THIS EXISTS (the live defect, 2026-06-22): the operator-global
+# ~/.claude/skills/<name>/SKILL.md mirror is the copy that loads across ALL branches /
+# worktrees and ALL Claude Code accounts (a repo .claude/skills/ copy only loads on a
+# branch whose tree contains it — see memory [[project-skills-load-per-branch]]). That
+# mirror had exactly ONE refresh path: a manual
+#   git show origin/main:.claude/skills/<n>/SKILL.md > ~/.claude/skills/<n>/SKILL.md
+# loop. There was NO auto-sync, so the mirror went stale for 8 days — long enough that a
+# merged mechanism (the Initiative-4 [META:<id>] prefix, whose marker-write step lived only
+# in the stale skills) was a SILENT NO-OP the whole time. This tool is the auto-sync; the
+# companion SessionStart hook (tools/hooks/meta-skills-sync-on-start.sh) runs it.
+#
+# CONTRACT:
+#   - Reads the LOCALLY-KNOWN origin/main ref (refs/remotes/origin/main) — it NEVER fetches.
+#     Network on session start is banned; the mirror tracks whatever the local origin/main
+#     already says main is (exactly what the manual `git show origin/main:…` loop did).
+#   - ADDITIVE / overwrite-from-origin ONLY. It writes a mirror file when, and only when,
+#     its bytes differ from origin/main's; it is byte-exact and idempotent. It NEVER deletes
+#     a skill that is in the mirror but absent on origin/main (could be a local-only /
+#     operator skill).
+#   - HEAD-unchanged fast path: when origin/main HEAD == the last successfully-synced ref
+#     (cached at ~/.claude/meta-state/skills-sync-last-ref) the common case costs a couple
+#     of `git` calls (repo validation + one `git rev-parse`) and exits, skipping the ~N
+#     `git show`s. --force bypasses it; --dry-run never reads or writes the cache.
+#   - No usable repo / no resolvable origin/main / no HOME => clean no-op, exit 0. (The only
+#     non-zero exit is a usage error: an unknown flag.)
+#
+# Usage:
+#   tools/meta-skills-sync [--repo <path>] [--cwd <dir>] [--dry-run] [--force]
+#     --repo <path>   force the Evolve checkout to read origin/main from (skips discovery)
+#     --cwd  <dir>    starting dir for repo discovery (default: $PWD) — the session's cwd
+#     --dry-run       report what WOULD change; write nothing (no files, no ref cache)
+#     --force         bypass the HEAD-unchanged fast path (still byte-exact / idempotent)
+#     -h, --help      print this usage
+#
+# Discovery order (when --repo is absent): the --cwd's git toplevel, then $EVOLVE_REPO,
+# then ~/GitHub/evolve, then /Users/Shared/evolve-repo. The first that is a git repo with a
+# resolvable origin/main carrying at least one .claude/skills/<n>/SKILL.md wins.
+#
+# Maintained by META:substrate (spec-substrate-2026-06-15 §13 Initiative 8).
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+usage: meta-skills-sync [--repo <path>] [--cwd <dir>] [--dry-run] [--force]
+
+Refresh the operator-global ~/.claude/skills/<name>/SKILL.md mirror from
+origin/main:.claude/skills/<name>/SKILL.md (byte-exact, idempotent, no network).
+
+  --repo <path>   force the Evolve checkout to read origin/main from (skips discovery)
+  --cwd  <dir>    starting dir for repo discovery (default: $PWD)
+  --dry-run       report what WOULD change; write nothing
+  --force         bypass the HEAD-unchanged fast path
+  -h, --help      print this usage
+
+Additive/overwrite-from-origin only — it NEVER deletes a mirror-only skill.
+No usable repo / no resolvable origin/main => clean no-op, exit 0.
+USAGE
+}
+
+REPO=""
+START_CWD="$PWD"
+DRY_RUN=0
+FORCE=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo)    REPO="${2:-}"; shift 2 ;;
+    --repo=*)  REPO="${1#--repo=}"; shift ;;
+    --cwd)     START_CWD="${2:-}"; shift 2 ;;
+    --cwd=*)   START_CWD="${1#--cwd=}"; shift ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    --force)   FORCE=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) printf 'meta-skills-sync: unknown argument %q\n' "$1" >&2; exit 2 ;;
+  esac
+done
+
+HOME_DIR="${HOME:-}"
+[ -n "$HOME_DIR" ] || exit 0          # no HOME => nowhere to mirror; clean no-op
+command -v git >/dev/null 2>&1 || exit 0
+
+MIRROR_DIR="$HOME_DIR/.claude/skills"
+REF_CACHE="$HOME_DIR/.claude/meta-state/skills-sync-last-ref"
+
+# A candidate is an Evolve checkout iff it is a git repo with a resolvable origin/main
+# carrying at least one .claude/skills/<n>/SKILL.md. No network — origin/main is the local
+# remote-tracking ref.
+is_evolve_repo() {
+  local d="$1"
+  [ -n "$d" ] || return 1
+  [ -d "$d" ] || return 1
+  git -C "$d" rev-parse --verify --quiet origin/main >/dev/null 2>&1 || return 1
+  git -C "$d" ls-tree -r --name-only origin/main -- .claude/skills/ 2>/dev/null \
+    | grep -Eq '^\.claude/skills/[^/]+/SKILL\.md$' || return 1
+  return 0
+}
+
+# --- resolve the repo --------------------------------------------------------------------
+if [ -n "$REPO" ]; then
+  # An explicit but unusable --repo is a clean no-op, not an error (never break a session).
+  is_evolve_repo "$REPO" || exit 0
+else
+  cand_top=""
+  [ -n "$START_CWD" ] && cand_top="$(git -C "$START_CWD" rev-parse --show-toplevel 2>/dev/null || true)"
+  for c in "$cand_top" "${EVOLVE_REPO:-}" "$HOME_DIR/GitHub/evolve" "/Users/Shared/evolve-repo"; do
+    [ -n "$c" ] || continue
+    if is_evolve_repo "$c"; then REPO="$c"; break; fi
+  done
+  [ -n "$REPO" ] || exit 0            # no usable Evolve checkout => clean no-op
+fi
+
+ref="$(git -C "$REPO" rev-parse --verify --quiet origin/main 2>/dev/null || true)"
+[ -n "$ref" ] || exit 0
+short="$(printf '%s' "$ref" | cut -c1-12)"
+
+# --- HEAD-unchanged fast path ------------------------------------------------------------
+# Skips the per-skill work when nothing has merged since the last successful apply. Never
+# short-circuits --dry-run (we want a true preview) or --force (manual re-sync escape hatch).
+if [ "$DRY_RUN" -eq 0 ] && [ "$FORCE" -eq 0 ] && [ -f "$REF_CACHE" ]; then
+  last="$(head -n1 "$REF_CACHE" 2>/dev/null | tr -d '\r\n' || true)"
+  if [ "$last" = "$ref" ]; then
+    printf 'skills-sync: origin/main unchanged (%s), nothing to do\n' "$short"
+    exit 0
+  fi
+fi
+
+# --- enumerate skills on origin/main -----------------------------------------------------
+skills="$(git -C "$REPO" ls-tree -r --name-only origin/main -- .claude/skills/ 2>/dev/null \
+  | grep -E '^\.claude/skills/[^/]+/SKILL\.md$' || true)"
+[ -n "$skills" ] || exit 0            # nothing to sync (is_evolve_repo already required >=1)
+
+refreshed=0
+unchanged=0
+failures=0
+refreshed_names=()
+
+tmp="$(mktemp "${TMPDIR:-/tmp}/meta-skills-sync.XXXXXX" 2>/dev/null)" || exit 0
+trap 'rm -f "$tmp" 2>/dev/null || true' EXIT
+
+while IFS= read -r relpath; do
+  [ -n "$relpath" ] || continue
+  name="${relpath#.claude/skills/}"
+  name="${name%/SKILL.md}"
+  # Defense in depth: only a single safe path component (no slash, no traversal). The
+  # ls-tree regex already enforces this; this guard means a name can never escape MIRROR_DIR.
+  case "$name" in
+    ""|*/*|.|..) continue ;;
+  esac
+  dest="$MIRROR_DIR/$name/SKILL.md"
+
+  # Byte-exact extraction (preserves trailing newline; command-substitution would strip it).
+  # A read failure here is effectively impossible (the blob is in origin/main's object store)
+  # but if it ever happens, count it as a failure so the ref cache is NOT written and the
+  # next run retries this skill rather than fast-pathing past it forever.
+  if ! git -C "$REPO" show "origin/main:$relpath" > "$tmp" 2>/dev/null; then
+    failures=$((failures + 1))
+    continue
+  fi
+
+  if [ -f "$dest" ] && cmp -s "$tmp" "$dest"; then
+    unchanged=$((unchanged + 1))
+    continue
+  fi
+
+  # Differs (or the mirror copy is missing) => needs a refresh.
+  if [ "$DRY_RUN" -eq 1 ]; then
+    refreshed=$((refreshed + 1))
+    refreshed_names+=("$name")
+    continue
+  fi
+
+  dtmp="$MIRROR_DIR/$name/.SKILL.md.tmp.$$"
+  if mkdir -p "$MIRROR_DIR/$name" 2>/dev/null \
+     && cp "$tmp" "$dtmp" 2>/dev/null \
+     && mv -f "$dtmp" "$dest" 2>/dev/null; then
+    refreshed=$((refreshed + 1))
+    refreshed_names+=("$name")
+  else
+    rm -f "$dtmp" 2>/dev/null || true
+    failures=$((failures + 1))
+  fi
+done <<EOF
+$skills
+EOF
+
+# --- cache the synced ref (only on a clean apply, so a partial failure retries next run) --
+if [ "$DRY_RUN" -eq 0 ] && [ "$failures" -eq 0 ]; then
+  if mkdir -p "$(dirname "$REF_CACHE")" 2>/dev/null; then
+    ctmp="$REF_CACHE.tmp.$$"
+    if printf '%s\n' "$ref" > "$ctmp" 2>/dev/null; then
+      mv -f "$ctmp" "$REF_CACHE" 2>/dev/null || rm -f "$ctmp" 2>/dev/null || true
+    fi
+  fi
+fi
+
+# --- one-line summary --------------------------------------------------------------------
+if [ "$DRY_RUN" -eq 1 ]; then
+  printf 'skills-sync (dry-run): %d would refresh, %d unchanged (origin/main %s)\n' \
+    "$refreshed" "$unchanged" "$short"
+else
+  printf 'skills-sync: %d refreshed, %d unchanged (origin/main %s)\n' \
+    "$refreshed" "$unchanged" "$short"
+fi
+# Guarded so the empty-array expansion can't trip `set -u` on bash 3.2 (macOS).
+if [ "${#refreshed_names[@]}" -gt 0 ]; then
+  if [ "$DRY_RUN" -eq 1 ]; then
+    printf '  would refresh: %s\n' "${refreshed_names[*]}"
+  else
+    printf '  refreshed: %s\n' "${refreshed_names[*]}"
+  fi
+fi
+if [ "$failures" -gt 0 ]; then
+  printf '  WARNING: %d skill(s) failed to write (will retry next run)\n' "$failures" >&2
+fi
+exit 0

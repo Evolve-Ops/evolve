@@ -1,0 +1,64 @@
+version: 2
+
+# Dependabot watches Evolve's dependency manifests and opens PRs when
+# upgrades are available. Three ecosystems map to the project layout:
+#
+#   /                       npm workspace root (no real deps; private:true)
+#   /packages/plugin/       npm package (@openclaw/evolve) — actual TS deps
+#   /                       uv workspace (pyproject.toml + uv.lock) — Python deps for both packages
+#
+# Plus the CI workflows themselves (GitHub Actions) so action versions
+# don't go stale.
+#
+# Weekly cadence on Mondays — frequent enough to catch security advisories
+# without drowning the inbox. Group minor + patch into single PRs; majors
+# stay separate so the human review focuses on real upgrade decisions.
+
+updates:
+  - package-ecosystem: "npm"
+    directory: "/packages/plugin"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "npm"]
+    groups:
+      minor-and-patch:
+        applies-to: version-updates
+        update-types: ["minor", "patch"]
+    ignore:
+      # The mini runs Node.js 22.x LTS — pinned there because Node ≥24 turned
+      # GC-swept FileHandles into a fatal error and crash-looped the OC gateways
+      # (FileHandle crash-loop incident, 2026-05-21). @types/node must track the
+      # *runtime*, not tip, or we'd type-check against APIs that don't exist at
+      # runtime. Block major bumps; 22.x minor/patch still flow through.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+
+  # Phase 6.4: Python deps resolve through the root uv workspace
+  # (pyproject.toml + uv.lock); Dependabot's uv ecosystem updates the
+  # lock alongside the manifests. Replaces the old pip watcher on
+  # /packages/admin, which couldn't see the lock.
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "python"]
+    groups:
+      minor-and-patch:
+        applies-to: version-updates
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "github-actions"]
+    groups:
+      minor-and-patch:
+        applies-to: version-updates
+        update-types: ["minor", "patch"]

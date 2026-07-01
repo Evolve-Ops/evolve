@@ -1,0 +1,124 @@
+{
+  "_meta": {
+    "network_path": "/Users/Shared/evolve/network.json",
+    "target_bots": ["team_bot_a", "team_bot_b", "team_bot_c", "admin_bot", "security_bot", "personal_bot"],
+    "target_services": ["git", "dropbox", "telegram", "slack", "discord", "google"],
+    "all_pod_bots": ["evolve", "team_bot_a", "team_bot_c", "personal_bot", "admin_bot", "security_bot", "team_bot_b"]
+  },
+  "bots": {
+    "team_bot_a": {
+      "bot_id": "team_bot_a",
+      "system_user": "team_bot_a",
+      "home_exists": true,
+      "network_entry": {"role": "member", "port": 18789, "multiUser": false},
+      "openclaw_top_level_keys": ["agents", "auth", "channels", "commands", "gateway", "messages", "meta", "plugins", "tools", "wizard"],
+      "auth_profiles_keys": ["anthropic:api", "brave_api_key", "google:default", "openai:default", "runway:default", "xai:default"],
+      "integrations": {
+        "git": {"ssh_dir_contents": ["known_hosts"], "gh_cli_hosts_yml": "present", "gitconfig_has_credential_section": true, "local_git_dirs": 10},
+        "dropbox": {"workspace_files": ["import_dropbox_specs.py"], "loose_files_count": 22, "summary": "no openclaw integration; macOS Dropbox app installed"},
+        "telegram": {"openclaw_plugins_entry": {"enabled": false}, "env_file_hits": ["~/.openclaw/workspace/.env"]},
+        "slack": {"openclaw_plugins_entry": {"enabled": true}, "openclaw_json_key_paths": ["channels.slack", "plugins.entries.slack"], "env_file_hits": ["~/.openclaw/workspace/.env"]},
+        "discord": {},
+        "google": {
+          "auth_profiles_keys": ["google:default"],
+          "auth_profiles_shapes": {"google:default": ["key", "provider", "type"]},
+          "config_gws_listing": [".encryption_key", "cache", "client_secret.json", "credentials.json", "token_cache.json"],
+          "openclaw_plugin_google": {"enabled": true},
+          "note": "credentials.json (NOT .enc) — newer @googleworkspace/cli release"
+        }
+      }
+    },
+    "team_bot_b": {
+      "bot_id": "team_bot_b",
+      "system_user": "personal_bot_user",
+      "network_entry": {"role": "member", "port": 18790, "multiUser": false, "user": "personal_bot_user"},
+      "auth_profiles_keys": ["anthropic:api", "anthropic:default", "brave_api_key", "openai:default"],
+      "integrations": {
+        "git": {"local_git_dirs": 2},
+        "dropbox": {"loose_files_count": 6, "summary": "macOS Dropbox app only"},
+        "telegram": {},
+        "slack": {},
+        "discord": {"openclaw_json_key_paths": ["channels.discord"]},
+        "google": {}
+      }
+    },
+    "team_bot_c": {
+      "bot_id": "team_bot_c",
+      "system_user": "team_bot_c",
+      "network_entry": {"role": "member", "port": 19020, "multiUser": true},
+      "auth_profiles_keys": ["anthropic:api", "brave_api_key"],
+      "integrations": {
+        "git": {"ssh_dir_contents": ["id_ed25519_team_bot_c", "id_ed25519_team_bot_c.pub"], "gh_cli_hosts_yml": "present", "gitconfig_has_credential_section": true, "local_git_dirs": 1},
+        "dropbox": {"workspace_files": ["legacy-scripts/setup_dropbox_selective_sync.sh", "property/.dropbox_snapshot.txt", "scripts/update_dropbox_index.py"], "summary": "ranch-driven custom scripts; no api integration"},
+        "telegram": {"openclaw_json_key_paths": ["channels.telegram"]},
+        "slack": {"openclaw_json_key_paths": ["channels.slack"]},
+        "discord": {},
+        "google": {
+          "workspace_credentials_listing": ["client_secret_337697658037-...json", "slack.env", "star-springs-ranch-operations-71e5c972.json", "token.json"],
+          "workspace_credentials_shapes": {
+            "client_secret_*.json": "oauth_client_secret_json",
+            "star-springs-ranch-operations-71e5c972.json": "service_account_json",
+            "token.json": "oauth_token_cache"
+          },
+          "openclaw_plugin_google": {"enabled": true},
+          "workspace_manifests": ["google_integration.json"],
+          "note": "ranch plugin pattern — workspace/credentials/ holds both user-OAuth and service-account creds"
+        }
+      }
+    },
+    "admin_bot": {
+      "bot_id": "admin_bot",
+      "system_user": "admin_bot",
+      "network_entry": {"role": "member", "port": 19000, "multiUser": false},
+      "auth_profiles_keys": ["anthropic:api", "brave_api_key", "google:default", "openai:default", "runway:default", "xai:default"],
+      "integrations": {
+        "git": {"ssh_dir_contents": ["known_hosts"], "gitconfig_has_credential_section": true, "local_git_dirs": 3},
+        "dropbox": {"loose_files_count": 21, "summary": "macOS Dropbox app only"},
+        "telegram": {"openclaw_plugins_entry": {"enabled": true}, "openclaw_json_key_paths": ["channels.telegram", "plugins.entries.telegram"]},
+        "slack": {"openclaw_json_key_paths": ["channels.slack"]},
+        "discord": {},
+        "google": {
+          "auth_profiles_keys": ["google:default"],
+          "auth_profiles_shapes": {"google:default": ["key", "provider", "type"]},
+          "config_gws_listing": [".encryption_key", "account_timezone", "cache", "client_secret.json", "credentials.enc", "token_cache.json"],
+          "openclaw_plugin_google": {"enabled": true},
+          "workspace_manifests": ["gmail_fetcher.json"],
+          "note": "older @googleworkspace/cli (.enc); workspace manifest for gmail_fetcher app"
+        }
+      }
+    },
+    "security_bot": {
+      "bot_id": "security_bot",
+      "system_user": "security_bot",
+      "network_entry": {"role": "member", "port": 18800, "multiUser": false},
+      "auth_profiles_keys": ["anthropic:api", "brave_api_key", "google:default", "openai:default", "xai:default"],
+      "integrations": {
+        "git": {"gh_cli_hosts_yml": "present", "local_git_dirs": 1},
+        "dropbox": {"loose_files_count": 6, "summary": "macOS Dropbox app only"},
+        "telegram": {"openclaw_json_key_paths": ["channels.telegram"]},
+        "slack": {},
+        "discord": {},
+        "google": {
+          "auth_profiles_keys": ["google:default"],
+          "auth_profiles_shapes": {"google:default": ["key", "provider", "type"]},
+          "openclaw_plugin_google": {"enabled": true},
+          "note": "Gemini API only — no Workspace credentials anywhere"
+        }
+      }
+    },
+    "personal_bot": {
+      "bot_id": "personal_bot",
+      "system_user": "personal_bot",
+      "network_entry": {"role": "member", "port": 19010, "multiUser": false},
+      "auth_profiles_keys": ["anthropic_api_key", "brave_api_key"],
+      "integrations": {
+        "git": {},
+        "dropbox": {},
+        "telegram": {"openclaw_json_key_paths": ["channels.telegram"]},
+        "slack": {},
+        "discord": {},
+        "google": {}
+      }
+    }
+  }
+}

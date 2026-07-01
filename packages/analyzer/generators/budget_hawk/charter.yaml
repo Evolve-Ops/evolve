@@ -1,0 +1,36 @@
+id: budget_hawk
+schema_version: 1
+type: guardian
+dimension: cost
+bucket: operate
+# Surface routing: firing. Active spend-cap circuit breaker. Near-cap or anomaly findings
+#   trigger immediate operator attention — vetoes and downgrades are
+#   loud by design.
+# Spec: docs/spec-recommendations-rework-2026-06-02.md §"Generator routing".
+surface: firing
+purpose: >
+  Keep total spend under the configured cap. Detect cost anomalies and
+  unexpected billing modes. When near the cap, force tradeoffs by vetoing
+  additional LLM-spending proposals and proposing downgrades.
+cadence: hourly
+# Sensor-style: when a detector goes silent (cap no longer crossed,
+# anomaly subsides, summarizer behavior corrected), the corresponding
+# proposal auto-archives as resolved_externally. Combined with stable
+# per-(bot, signal) fingerprints in proposals.py, this is what keeps the
+# queue at "one open proposal per active issue" instead of accumulating
+# duplicates every 15-minute refresh.
+resolves_when_silent: true
+invariants:
+  - id: action_kind_allowed
+    description: Only cost-shaped actions are permitted.
+    check_kind: action_kind_allowed
+    params:
+      allowlist: [TierAdjustment, Investigation, ConfigPatch]
+  - id: touches_forbidden
+    description: Budget Hawk does not touch auth, tools, or channel config.
+    check_kind: touches_forbidden
+    params:
+      forbidden: [auth, tools, channel_config, gateway_core]
+  - id: claim_metric_known
+    description: Claims must reference a registered metric.
+    check_kind: claim_metric_known

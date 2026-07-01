@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Getting Started with Evolve · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">what-is-evolve</span><span class="chip">install</span><span class="chip">orientation</span><span class="chip">openclaw</span></div><div class="reviewed">Last reviewed 2026-06-05</div></div><h1 id="getting-started-with-evolve">Getting Started with Evolve</h1>
+<p>Welcome to Evolve — the management layer for your OpenClaw bot pod.</p>
+<hr>
+<h2 id="what-evolve-does">What Evolve does</h2>
+<p>OpenClaw gives you powerful AI bots. Evolve answers the questions that come next:
+are they running, what are they costing, are they getting better, and how do you
+manage several of them without living in a terminal window?</p>
+<p>OpenClaw is to AI assistants what Linux is to servers — powerful, open, and
+technically unfriendly. Evolve is what Ubuntu is to Linux: it assembles the stack
+into something a household or small business can actually run. Your data stays on
+your hardware. You approve every meaningful change.</p>
+<hr>
+<h2 id="evo-is-the-front-door">evo is the front door</h2>
+<p>The fastest way to get something done in Evolve is to <strong>ask evo</strong> in chat. The
+floating chat widget at the bottom-right of every page (or the dedicated Chat
+tab) connects you to evo, the pod's primary bot, which can read every page's
+state AND take action on your behalf — restart bots, apply proposals, snooze
+alerts, install apps, rotate credentials, audit security findings, and so on.</p>
+<p>Each page surfaces example prompts in the chat widget's empty state — those
+examples are the operations evo can do for you from that page. They're not the
+only things evo can do; they're starting points for the most common operator
+intent on each page. Try them, then describe what you actually want — evo
+matches your description to the right tool or proposal and does the work.</p>
+<p>What evo can do for you, by surface (see each page's help for details):</p>
+<ul>
+<li><strong>Dashboard</strong> — investigate per-bot issues, restart / redeploy / remove a bot,
+  pause or resume the whole pod.</li>
+<li><strong>Plugins → Credentials</strong> — surface unhealthy integrations, ask about a
+  specific key, file a rotation as a proposal.</li>
+<li><strong>Plugins → Plugins / MCP / Hooks / Activity</strong> — explain drift from the
+  baseline, audit recent permission changes, walk through what's installed.</li>
+<li><strong>Security</strong> — investigate firing findings, run a per-app audit, summarize
+  posture across the pod.</li>
+<li><strong>Recommendations</strong> — list pending proposals, apply / reject / snooze any of
+  them, mark deferred-completion proposals complete.</li>
+<li><strong>Usage</strong> — explain spend, surface the biggest contributors, project month-end.</li>
+<li><strong>Maintenance</strong> — pause / resume the pod, redeploy, check daemon health.</li>
+<li><strong>Backup</strong> — run a backup now, surface the latest size estimate, restore
+  from latest commit, explain classification audit findings.</li>
+<li><strong>Apps</strong> — audit a specific app or all apps on a bot, check a forge job's
+  status, install from the gallery.</li>
+<li><strong>AI Optimization</strong> — change a bot's default tier (<code>evo tier-default …</code>),
+  explain why a session anchored on a particular tier.</li>
+<li><strong>Cost Optimization</strong> — set a daily cap, explain a runaway session, surface
+  premium-models-on-autonomous spotter findings.</li>
+<li><strong>Reports / Alerts</strong> — explain a firing alert, snooze / dismiss / resolve it.</li>
+<li><strong>Users</strong> — approve / reject pending pairing requests, disconnect a user,
+  flip a bot between single-user and multi-user mode.</li>
+<li><strong>Settings</strong> — wipe local evo telemetry, summarize the current config.</li>
+</ul>
+<p>When evo can't do something directly (no tool yet, no proposal yet), it tells
+you so AND records a tool-gap entry so future versions cover the request. The
+operator doesn't have to file feature requests; the system collects them.</p>
+<hr>
+<h2 id="the-three-ways-in">The three ways in</h2>
+<p>You can do nearly anything through any of the three interfaces:</p>
+<table>
+<thead>
+<tr>
+<th>Interface</th>
+<th>Best for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>This dashboard</strong> (localhost:5050)</td>
+<td>Visual inspection, approval queues, one-click installs</td>
+</tr>
+<tr>
+<td><strong><code>evo</code> keyword</strong> (any bot chat)</td>
+<td>Quick status, surfacing suggestions, approvals without opening a browser</td>
+</tr>
+<tr>
+<td><strong><code>evolve-admin</code> CLI</strong></td>
+<td>Scripted ops, deeper config, troubleshooting</td>
+</tr>
+</tbody>
+</table>
+<p>All three share the same state — nothing is hidden in one interface that you can't
+reach from another.</p>
+<hr>
+<h2 id="the-evo-keyword-system">The <code>evo</code> keyword system</h2>
+<p>Type <code>evo</code> (or <code>evolve</code>) as a standalone message to <strong>any bot on your pod</strong>. The
+system intercepts it before the LLM runs — zero AI cost, instant response.</p>
+<p>Verified command list (source:
+<code>packages/admin/evolve_admin/evo/subcommands.py</code>, <code>_REGISTRY</code> — 35 commands as
+of 2026-05-30; selected highlights below — <code>evo help</code> lists every command
+available to you, role-gated):</p>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>What it does</th>
+<th>Who can run it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>evo</code> (bare)</td>
+<td>Shows the top recommendation for this bot</td>
+<td>Primary + Admin</td>
+</tr>
+<tr>
+<td><code>evo better</code></td>
+<td>Same as bare — surfaces the top suggestion</td>
+<td>Primary + Admin</td>
+</tr>
+<tr>
+<td><code>evo summary</code></td>
+<td>Pod-wide summary: alerts, spend, pending suggestions</td>
+<td>Primary + Admin</td>
+</tr>
+<tr>
+<td><code>evo status</code> / <code>evo week</code></td>
+<td>Aliases for <code>evo summary</code></td>
+<td>Primary + Admin</td>
+</tr>
+<tr>
+<td><code>evo cost</code> / <code>evo usage</code></td>
+<td>Spend report</td>
+<td>Primary + Admin</td>
+</tr>
+<tr>
+<td><code>evo alerts</code></td>
+<td>List firing alerts</td>
+<td>Primary + Admin</td>
+</tr>
+<tr>
+<td><code>evo health</code></td>
+<td>Pod health one-liner</td>
+<td>Primary + Admin</td>
+</tr>
+<tr>
+<td><code>evo security</code></td>
+<td>Latest audit findings</td>
+<td>Primary + Admin</td>
+</tr>
+<tr>
+<td><code>evo integrations</code></td>
+<td>Channel + key health</td>
+<td>Primary + Admin</td>
+</tr>
+<tr>
+<td><code>evo apps</code></td>
+<td>List apps installed on this bot</td>
+<td>Primary + Admin</td>
+</tr>
+<tr>
+<td><code>evo app &lt;name&gt;</code></td>
+<td>Detail on one app</td>
+<td>Primary + Admin</td>
+</tr>
+<tr>
+<td><code>evo gallery</code></td>
+<td>Browse the App Gallery</td>
+<td>Primary + Admin</td>
+</tr>
+<tr>
+<td><code>evo install &lt;app&gt;</code></td>
+<td>Install a gallery app on this bot</td>
+<td>Primary + Admin</td>
+</tr>
+<tr>
+<td><code>evo audit [&lt;app&gt;]</code></td>
+<td>Run a per-app audit</td>
+<td>Primary + Admin</td>
+</tr>
+<tr>
+<td><code>evo app-audit &lt;app&gt;</code></td>
+<td>Force one app's audit</td>
+<td>Primary + Admin</td>
+</tr>
+<tr>
+<td><code>evo skills</code></td>
+<td>What skills are installed</td>
+<td>Anyone</td>
+</tr>
+<tr>
+<td><code>evo tier &lt;fast\|standard\|power\|auto&gt;</code></td>
+<td>Set your own default tier on this bot</td>
+<td>Anyone</td>
+</tr>
+<tr>
+<td><code>evo tier-default &lt;fast\|standard\|power\|auto&gt;</code></td>
+<td>Set the bot's default tier</td>
+<td>Primary + Admin</td>
+</tr>
+<tr>
+<td><code>evo mute</code> / <code>evo unmute</code></td>
+<td>Mute / unmute the bot</td>
+<td>Primary + Admin</td>
+</tr>
+<tr>
+<td><code>evo profile</code></td>
+<td>View what this bot has learned about you</td>
+<td>Anyone</td>
+</tr>
+<tr>
+<td><code>evo profile dnt on</code></td>
+<td>Stop learning, wipe existing notes</td>
+<td>Anyone</td>
+</tr>
+<tr>
+<td><code>evo guide</code></td>
+<td>Author the team guide for this bot</td>
+<td>Primary + Admin</td>
+</tr>
+<tr>
+<td><code>evo claim &lt;passphrase&gt;</code></td>
+<td>Claim admin or primary status</td>
+<td>Anyone</td>
+</tr>
+<tr>
+<td><code>evo wizard</code></td>
+<td>Starts the onboarding wizard for this bot</td>
+<td>Anyone</td>
+</tr>
+<tr>
+<td><code>evo continuity</code></td>
+<td>Learn about the Continuity Engine</td>
+<td>Anyone</td>
+</tr>
+<tr>
+<td><code>evo improve</code> / <code>evo revise</code></td>
+<td>Tweak how this bot behaves</td>
+<td>Primary + Admin</td>
+</tr>
+<tr>
+<td><code>evo bug</code> / <code>evo feature</code> / <code>evo intake</code></td>
+<td>File a bug / feature / general intake into the developer Inbox</td>
+<td>Anyone</td>
+</tr>
+<tr>
+<td><code>evo fail</code></td>
+<td>Mark the latest turn as failed (calibration)</td>
+<td>Primary + Admin</td>
+</tr>
+<tr>
+<td><code>evo connect &lt;integration&gt;</code></td>
+<td>Walk through connecting an integration</td>
+<td>Primary + Admin</td>
+</tr>
+<tr>
+<td><code>evo setup-google</code></td>
+<td>Google OAuth wizard</td>
+<td>Primary + Admin</td>
+</tr>
+<tr>
+<td><code>evo default</code></td>
+<td>Show / set your defaults</td>
+<td>Anyone</td>
+</tr>
+<tr>
+<td><code>evo fun</code></td>
+<td>Surprise me</td>
+<td>Anyone</td>
+</tr>
+<tr>
+<td><code>evo help</code></td>
+<td>List every command available to you</td>
+<td>Anyone</td>
+</tr>
+<tr>
+<td><code>evo help &lt;name&gt;</code></td>
+<td>Detail on one command</td>
+<td>Anyone</td>
+</tr>
+</tbody>
+</table>
+<p>Natural-language variants that work (verified in
+<code>packages/admin/evolve_admin/evo/subcommands.py</code>, <code>_PHRASE_ALIASES</code>):
+- "evo, what's on this week?" → <code>evo summary</code>
+- "evo, what's on for this week?" → <code>evo summary</code></p>
+<p>The keyword is matched whenever <code>evo</code> or <code>evolve</code> is the first word of the
+message (case-insensitive, trailing punctuation like <code>evo,</code> or <code>evo.</code> is
+fine). Bare <code>evo</code> returns the top recommendation directly; <code>evo &lt;subcommand&gt;</code>
+routes through the registry above; phrase aliases like "evo, what's on this
+week?" match the full phrase before the LLM is involved. Messages where the
+first word isn't <code>evo</code>/<code>evolve</code> go to the LLM as usual.</p>
+<hr>
+<h2 id="applications-vs-skills">Applications vs. Skills</h2>
+<p><strong>A skill</strong> is a capability primitive — one thing a bot can do.</p>
+<ul>
+<li>"Read my Gmail inbox"</li>
+<li>"Send a Slack message"</li>
+<li>"Save a note to Obsidian"</li>
+</ul>
+<p>OpenClaw ships with thousands of skills. You install them on your bots from the
+Skills page.</p>
+<p><strong>An application</strong> is a goal-shaped contract built from several skills working together.</p>
+<ul>
+<li>"Morning Briefing" — email + calendar + weather, delivered at 7 AM</li>
+<li>"Email Triage" — classifies incoming mail, surfaces the ones that need you</li>
+<li>"Client Intake" — interviews new clients, stores responses, flags red flags</li>
+</ul>
+<p>Evolve maintains each application as a contract: what it claims to do, what success
+looks like, and how to verify it. The system tracks whether each application is
+hitting its contract and proposes improvements when it's not.</p>
+<p>Skills are the building blocks. Applications are the house.</p>
+<p>See also: <a href="../applications-vs-skills.md">docs/applications-vs-skills.md</a></p>
+<hr>
+<h2 id="rsi-and-the-recommendations-queue">RSI and the Recommendations queue</h2>
+<p>The Better Engine watches your pod constantly. When it sees something worth
+improving — a cost spike, a capability gap, a security finding, a voice drift —
+it writes a <strong>Recommendation</strong> (internally: a Proposal).</p>
+<p>Recommendations appear on the <strong>Recommendations</strong> page in the Improve section.
+Each one shows:
+- What it suggests and why
+- The dimension (cost, security, utility, substrate health, etc.)
+- A falsifiable claim ("this reduces gateway restarts ≥30% over 7 days")
+- Act / Snooze / Dismiss buttons</p>
+<p>You approve → the system applies the change and later verifies the claim held.
+You dismiss → the generator records that feedback and learns.</p>
+<p>You can also surface the top recommendation from chat: <code>evo</code> or <code>evo better</code>.</p>
+<p>This is RSI applied to applications, not to skills. The engine improves what your
+bots do, not what they're capable of doing.</p>
+<hr>
+<h2 id="the-continuity-engine">The Continuity Engine</h2>
+<p>The Continuity Engine makes bots work between conversations.</p>
+<p>During a session, a bot might commit to deferred work:
+- "I'll write that to memory tonight"
+- "Remind me to check back in 20 minutes"
+- "Keep an eye on that repository"</p>
+<p>Without the Continuity Engine, these evaporate when the session ends. The engine
+intercepts them, turns them into structured tasks, queues them, and runs them at
+the right time.</p>
+<p>Tasks that only write files or make simple API calls run without asking. Tasks
+that need judgment, send messages, or make changes sit in a queue until you
+approve them — approve from this dashboard (Maintenance → Pending tasks), or
+ask a bot via <code>evo summary</code> to surface the queue.</p>
+<p>The engine runs on a 15-minute cycle. Most of the time it's invisible — tasks
+complete in the background and you see the results next session. A morning digest
+at 8 AM summarizes overnight work.</p>
+<p>Source: <a href="../continuity-engine.md">docs/continuity-engine.md</a></p>
+<hr>
+<h2 id="the-evolve-admin-cli">The <code>evolve-admin</code> CLI</h2>
+<p>The full command-line interface for deeper operations. Privileged actions
+(<code>setup</code>, <code>deploy</code>, <code>add-bot</code>, <code>retire-bot</code>, <code>refresh-sudoers</code>,
+<code>restart-gateways</code>, anything that edits a bot's <code>.openclaw/</code> files) require
+<code>sudo</code> on the deploy box. Read-only operations (<code>status</code>, <code>health</code>, <code>connect</code>,
+<code>keys</code>, most <code>menu</code> subcommands run as the bot's owner) work without it.</p>
+<p>Main command groups (verified from
+<code>packages/admin/evolve_admin/cli.py</code> and
+<code>packages/admin/evolve_admin/ocadmin.py</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Group / Command</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>evolve-admin setup</code></td>
+<td>Initial pod setup wizard</td>
+</tr>
+<tr>
+<td><code>evolve-admin deploy &lt;bot&gt;</code></td>
+<td>Install/update Evolve on a specific bot</td>
+</tr>
+<tr>
+<td><code>evolve-admin add-bot</code></td>
+<td>Register a new bot</td>
+</tr>
+<tr>
+<td><code>evolve-admin retire-bot</code></td>
+<td>Remove a bot from the pod</td>
+</tr>
+<tr>
+<td><code>evolve-admin health</code></td>
+<td>Run a pod health check</td>
+</tr>
+<tr>
+<td><code>evolve-admin status</code></td>
+<td>Pod health summary (one screen)</td>
+</tr>
+<tr>
+<td><code>evolve-admin application scan</code></td>
+<td>Scan bot workspaces for apps</td>
+</tr>
+<tr>
+<td><code>evolve-admin keys</code></td>
+<td>Manage shared and per-bot API keys</td>
+</tr>
+<tr>
+<td><code>evolve-admin models</code></td>
+<td>Manage model tiers (tier1/tier2/tier3/tier0)</td>
+</tr>
+<tr>
+<td><code>evolve-admin menu</code></td>
+<td>Interactive bot-config menu (no flag syntax to memorize)</td>
+</tr>
+<tr>
+<td><code>evolve-admin menu version</code></td>
+<td>Show OpenClaw version</td>
+</tr>
+<tr>
+<td><code>evolve-admin menu upgrade</code></td>
+<td>Upgrade OpenClaw</td>
+</tr>
+<tr>
+<td><code>evolve-admin menu exec-approvals &lt;bot&gt;</code></td>
+<td>Manage per-bot exec allowlists</td>
+</tr>
+<tr>
+<td><code>evolve-admin menu logs &lt;bot&gt;</code></td>
+<td>Tail a bot's gateway logs</td>
+</tr>
+<tr>
+<td><code>evolve-admin menu usage</code></td>
+<td>OpenClaw usage statistics</td>
+</tr>
+<tr>
+<td><code>evolve-admin connect --host mini</code></td>
+<td>Open the admin UI from your laptop via SSH tunnel</td>
+</tr>
+<tr>
+<td><code>evolve-admin service install</code></td>
+<td>Install the admin server as a LaunchDaemon</td>
+</tr>
+<tr>
+<td><code>evolve-admin mcp-bridge install</code></td>
+<td>Install the Claude Desktop MCP bridge</td>
+</tr>
+<tr>
+<td><code>evolve-admin warden suppressions</code></td>
+<td>List security warden suppressions</td>
+</tr>
+<tr>
+<td><code>evolve-admin evo claim-primary</code></td>
+<td>Set a bot's primary user</td>
+</tr>
+<tr>
+<td><code>evolve-admin evo show-identity</code></td>
+<td>Check who is claimed on a bot</td>
+</tr>
+</tbody>
+</table>
+<p>Run <code>evolve-admin --help</code> or <code>evolve-admin &lt;command&gt; --help</code> for full option lists.</p>
+<hr>
+<h2 id="four-features-that-work-in-the-background">Four features that work in the background</h2>
+<p><strong>Continuity Engine</strong> — extracts deferred tasks from sessions and runs them
+autonomously when safe to do so, or surfaces them for approval. Mostly invisible
+unless a task blocks.</p>
+<p><strong>RSI watchdogs</strong> — a portfolio of specialized generators (14 today, in
+<code>packages/analyzer/generators/</code>) monitors spend, security, session quality,
+gateway health, classifier accuracy, app health, and more. They run on
+schedule and write to the Recommendations queue only when they see something
+worth surfacing.</p>
+<p><strong>User profile inferrer</strong> — each bot quietly builds a user model from conversations.
+This feeds Recommendations ("your bot surfaces improvements before you think to ask
+for them"). No approval queue for individual facts — the bot's primary user
+implicitly authorizes inference. Turn it off with <code>evo profile dnt on</code>.</p>
+<p><strong>Security warden</strong> — continuous audit of every bot's configuration, file hashes,
+and exec allowlists. Writes to the Maintenance page (Alerts tab) when something
+changes unexpectedly. Runs independently of the main pod so a compromised bot
+can't silence it.</p>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/getting-started.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>

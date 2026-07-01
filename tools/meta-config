@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+"""meta-config — print a field from this checkout's `.claude/meta.json` (or its default).
+
+Thin CLI over `tools/meta_config.py` so markdown procedures (skills, docs) and shell
+one-liners can resolve the per-project substrate config — chiefly the GitHub repo slug —
+without hardcoding `cjalden/evolve`. When `.claude/meta.json` is absent or malformed it
+prints Evolve's own default, so migration is safe mid-flight.
+
+META:substrate Initiative 11/12 (docs/spec-substrate-2026-06-15.md §16, §17).
+
+Usage:
+    tools/meta-config                 # print repo_slug (the common case)
+    tools/meta-config repo_slug       # print a named field: repo_slug / registry_path /
+                                      #   memory_slug / deploy_model / preflight_cmd / flaky_jobs_doc
+    tools/meta-config --all           # print the whole resolved config as JSON
+
+Exit codes: 0 ok; 2 unknown field / bad usage.
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import meta_config  # noqa: E402  (path insert must precede the import)
+
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if "--all" in argv:
+        json.dump(meta_config.load(), sys.stdout, indent=2)
+        print()
+        return 0
+    field = argv[0] if argv else "repo_slug"
+    cfg = meta_config.load()
+    if field not in cfg:
+        print(
+            "meta-config: unknown field %r (want one of: %s, or --all)"
+            % (field, ", ".join(sorted(cfg))),
+            file=sys.stderr,
+        )
+        return 2
+    print(cfg[field])
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

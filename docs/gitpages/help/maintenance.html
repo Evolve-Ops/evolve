@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Maintenance Page · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">maintenance</span><span class="chip">gateway-status</span><span class="chip">cron-jobs</span><span class="chip">openclaw-version</span><span class="chip">admin-server</span><span class="chip">logs</span></div><div class="reviewed">Last reviewed 2026-06-06</div></div><h1 id="help-maintenance-page">Maintenance Page</h1>
+<p>The Maintenance page is the operational control center for the pod's infrastructure — gateway status, cron jobs, OpenClaw version, logs, and the admin server itself. Use this page when something is broken or you need to check on the health of Evolve's own infrastructure.</p>
+<p><strong>Ask evo to act, not narrate.</strong> This is the page where chat shortcuts pay
+off most:</p>
+<ul>
+<li><em>"pause all bots"</em> / <em>"resume all bots"</em> — pod-wide pause with the
+  destructive-tier confirm gate (you'll be asked to confirm).</li>
+<li><em>"restart team-bot-a"</em> / <em>"redeploy evolve"</em> — single-bot operations without
+  hunting for the right row.</li>
+<li><em>"any infra daemons down?"</em> — evo summarizes <code>pod_state.host</code> for you.</li>
+<li><em>"show team-bot-a's recent errors"</em> — <code>pod_state.errors</code> returns the last raw
+  log lines for triage.</li>
+</ul>
+<p>The destructive operations (pause-all, remove) always require explicit
+<code>confirm: true</code> regardless of authority tier — defense in depth.</p>
+<hr>
+<h2 id="subtabs">Subtabs</h2>
+<h3 id="status">Status</h3>
+<p>Shows the live status of every bot's OC gateway. The table shows:
+- <strong>Bot</strong> — bot name and user
+- <strong>Gateway</strong> — responding / not responding (HTTP health probe)
+- <strong>Port</strong> — the port the gateway is listening on
+- <strong>Last heartbeat</strong> — when the bot last sent a heartbeat (indicating active use)
+- <strong>Uptime</strong> — how long the gateway has been running</p>
+<p><strong>Auto-refresh</strong> checkbox — keeps the table updating every 30 seconds.</p>
+<p><strong>Refresh</strong> button — manual refresh.</p>
+<p>If a gateway is down, you can restart it from this tab. Evolve's <code>heal.py</code> also runs every ~5 minutes and restarts failed gateways automatically.</p>
+<p><em>Note: This page probes each gateway via HTTP. A bot appearing "offline" here doesn't necessarily mean the bot is broken — the gateway process could be healthy but not yet responding (still starting up), or the port configuration could be wrong.</em></p>
+<h3 id="cron-jobs">Cron Jobs</h3>
+<p>All scheduled jobs running on every bot, aggregated in one view. Data comes from <code>openclaw cron list --json</code> on each bot. Shows:
+- Job name and description
+- Schedule (cron expression)
+- Last run time and result
+- Next scheduled run
+- Status (active, disabled, failing)</p>
+<p><strong>Auto-refresh</strong> (60s) keeps this view current.</p>
+<p>Common Evolve cron jobs on each bot:
+- <code>evolve-measure</code> — daily at 01:00, aggregates session metrics
+- <code>evolve-analyze</code> — weekly Sunday 02:00, runs pattern detectors and generates proposals
+- <code>evolve-heal</code> — every 5 minutes, checks gateway health and restarts if needed
+- <code>evolve-audit</code> — every 15 minutes, security audit
+- <code>evolve-task-runner</code> — every 15 minutes, runs the Continuity Engine task queue
+- <code>pod_perms_drift_monitor</code> — hourly, watches for between-deploy ACL / ownership drift on shared directories. Emits a Signal when a managed dir's permissions change outside a deploy. Added <a href="https://github.com/evolve-ops/evolve/pull/2217">PR 2217</a>.</p>
+<h3 id="infra-jobs">Infra Jobs</h3>
+<p>LaunchDaemon plists installed in <code>/Library/LaunchDaemons/</code> — the OS-level services that keep Evolve's own jobs running. The table shows:</p>
+<ul>
+<li><strong>Label</strong> — the launchd service identifier (e.g., <code>ai.evolve.evolve.admin-ui</code>)</li>
+<li><strong>Schedule</strong> — when the job runs: <code>on-demand</code> for manually-triggered jobs, <code>every Ns</code> for interval jobs, or a calendar spec for time-based jobs</li>
+<li><strong>Loaded</strong> — whether the service is currently registered with launchd (✓ loaded / not loaded)</li>
+<li><strong>Enabled</strong> — whether the service will auto-start on reboot; a loaded-but-disabled job will vanish after the next restart</li>
+<li><strong>PID</strong> — the process ID if the job is actively running; <code>—</code> if stopped</li>
+<li><strong>Last Exit</strong> — exit code from the most recent run; <code>0</code> is success, non-zero (shown in red) indicates a failure</li>
+</ul>
+<p>This is distinct from cron jobs (which run inside OC): Infra Jobs are macOS launchd services that run even when OC isn't running.</p>
+<p>If an infra job shows as not loaded, it may have been unloaded by a macOS update or a system restart. Use <code>sudo launchctl bootstrap system &lt;plist-path&gt;</code> to reload it.</p>
+<h3 id="oc-version">OC Version</h3>
+<p>Shows the installed version of OpenClaw on each bot vs. the latest available on the npm registry. If a bot is behind, an upgrade notice appears here.</p>
+<p><strong>Refresh</strong> checks npm for the latest version.</p>
+<p>To upgrade OpenClaw: go to System subtab → Upgrade Evolve Pod.</p>
+<h3 id="gateway-logs">Gateway Logs</h3>
+<p>Live log output from each bot's OC gateway process. Select a bot from the tabs.</p>
+<p><strong>Auto-refresh</strong> (10s) streams new log lines.</p>
+<p>Logs are read from the bot's OC log file (shown at the bottom of the panel). Look here for:
+- Plugin errors (TypeScript errors from the Evolve plugin)
+- Gateway startup/restart events
+- API errors (rate limits, auth failures)
+- Model routing decisions (if debug logging is enabled)</p>
+<h3 id="admin-server">Admin Server</h3>
+<p>Status and controls for the Evolve admin Flask server itself (the server running this UI).</p>
+<p><strong>Service Status Card:</strong>
+- Shows whether the admin server is running as a launchd service
+- <strong>↺ Restart Server</strong> — restarts the Flask process (you'll briefly lose connectivity)
+- <strong>⬇ Install as Service</strong> — installs the admin server as a persistent launchd service (if not already)
+- <strong>✕ Uninstall Service</strong> — removes the launchd service (server won't restart after reboot)
+- <strong>View Logs</strong> — shows the last 100 lines of the admin server log</p>
+<p><strong>Diagnostic Report Card:</strong>
+- Captures system info, configuration summary, and recent error logs into a report
+- <strong>✉ Send Report</strong> — emails the report (requires email configuration)
+- <strong>⬇ Save Report</strong> — downloads the report as a file</p>
+<h3 id="setup">Setup</h3>
+<p>The tunnel setup wizard for accessing the admin UI from your laptop via SSH tunnel (for when the pod host isn't on the same network). Steps:
+1. Install admin server as a persistent service
+2. Set up SSH keys between laptop and the pod host
+3. Configure tunnel parameters (hostname, port, SSH key path)
+4. Download setup scripts
+5. Add a browser URL shortcut
+6. Verify the connection</p>
+<p>This is only needed if you want to access the admin UI remotely. If you're on the same network, just browse to <code>http://&lt;pod-host-ip&gt;:5050</code>.</p>
+<h3 id="claude-access-mcp-bridge">Claude Access (MCP Bridge)</h3>
+<p>Configuration for connecting Claude Desktop to your pod via the MCP Bridge.</p>
+<p><strong>MCP Bridge Card</strong> — shows whether the MCP Bridge is running on port 5051.</p>
+<p><strong>Bot Context Access Card</strong> — shows which bots Claude Desktop can read/write context for.</p>
+<p><strong>Claude Desktop Config Card</strong> — generates the JSON snippet to paste into <code>~/Library/Application Support/Claude/claude_desktop_config.json</code>. Two modes:
+- <strong>Same machine (localhost)</strong> — if Claude Desktop is on the same host as the pod
+- <strong>Remote (Tailscale)</strong> — if Claude Desktop is on your laptop connecting over Tailscale VPN</p>
+<p><strong>Recent Activity</strong> — shows recent MCP Bridge calls (writes only toggle to filter).</p>
+<h3 id="system">System</h3>
+<p><strong>Evolve Version &amp; Sync Status</strong> — shows current Evolve version vs. the latest in the repo. If your install is behind the repo, an upgrade option appears.</p>
+<p><strong>Upgrade Evolve Pod:</strong>
+- <strong>Upgrade All Bots</strong> — updates the Evolve plugin on every bot and restarts their gateways
+- <strong>Upgrade Selected Bot</strong> — single bot upgrade
+- <strong>Skip plugin rebuild</strong> — skips TypeScript compilation (faster, use when only Python code changed)
+- <strong>Dry run</strong> — shows what would happen without making changes</p>
+<p><strong>Danger Zone:</strong>
+- <strong>Uninstall Evolve</strong> — removes Evolve from the pod. This uninstalls the plugin from all bots, removes launchd services, and optionally removes the <code>evolve</code> user. Bot users and their OC config are NOT removed.</p>
+<h3 id="pod-health">Pod Health</h3>
+<p>A comprehensive health scan of the entire pod. Shows a scored checklist of checks per bot:</p>
+<ul>
+<li><strong>Evolve plugin installed and active</strong> — is the TypeScript plugin running?</li>
+<li><strong>Primary model reachable</strong> — can the bot make an API call to its configured model?</li>
+<li><strong>Auth order</strong> — is the most cost-effective auth method listed first?</li>
+<li><strong>Gateway bind address</strong> — should always be <code>127.0.0.1</code>, not <code>0.0.0.0</code></li>
+<li><strong>Evolve plugin installed</strong> — plugin present and responding at <code>/evolve/status</code></li>
+<li><strong>API key presence</strong> — expected providers have keys configured</li>
+</ul>
+<p><strong>Scan Now</strong> — runs a fresh health scan (takes 15–30 seconds for a full pod).</p>
+<p><strong>Fix Issues</strong> — for issues with automatic fixes available, applies them in bulk. Not all issues have automatic fixes — some require manual action (shown with instructions).</p>
+<hr>
+<h2 id="common-questions">Common Questions</h2>
+<p><strong>A bot's gateway is down. How do I restart it?</strong>
+Go to Status subtab, find the bot, and click restart. Alternatively, heal.py runs every 5 minutes and will restart it automatically. If it keeps going down, check Gateway Logs for errors.</p>
+<p><strong>The admin server shows as not running as a service. Should I worry?</strong>
+If you're running the admin server manually (e.g., from a terminal), it won't survive a reboot. Install it as a service from the Admin Server subtab so it auto-starts. This is essential for a production pod.</p>
+<p><strong>How do I access the admin UI from my laptop?</strong>
+Use the Setup subtab to configure an SSH tunnel. You'll download a script that establishes the tunnel and optionally adds a browser shortcut. Requires Tailscale or a direct SSH connection to the pod host.</p>
+<p><strong>Pod Health shows critical issues — where do I start?</strong>
+Start with the highest-severity issues (red ❌). Critical issues usually involve: plugin not installed, gateway binding to 0.0.0.0, or no working API keys. Most have specific fix instructions shown inline. Run Fix Issues for any that have automatic remediation.</p>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/maintenance.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,313 @@
+#!/usr/bin/env python3
+"""meta-verdict-check — does a PR carry an INDEPENDENT two-pass review artifact
+whose overall verdict is pass-equivalent?
+
+META:substrate Initiative 12 / bite B2 (docs/spec-substrate-2026-06-15.md §17).
+The scariest root cause of the 2026-06-30 self-audit was *auto-drive trusts
+self-reported STRINGS as completed facts*: the merge gate reads `two_pass` from
+the ledger — a field a chip can write in the SAME pulse that opened the PR, with
+no review behind it (exactly what stranded #3347 merged-unreviewed with a real
+bug). This tool hardens the gate to a FACT: a verdict only counts when it is
+backed by a review section *in the PR body* — the artifact a chip cannot fake by
+setting a ledger string.
+
+The rule (canon in docs/meta-ledger-schema.md): **auto-merge requires the PR body
+to contain an independent two-pass review section whose overall verdict is
+pass-equivalent; a ledger `two_pass` value with no corresponding PR-body review
+section is NOT sufficient.**
+
+What qualifies:
+  - the body contains a markdown heading whose text mentions "two-pass review"
+    (the convention chips + review chips emit: `## Two-pass review …`,
+    `## Independent two-pass review`), AND
+  - that section's OVERALL verdict is pass-equivalent per `verdict_is_pass`, AND
+  - no such section carries a *blocking* verdict (`verdict_is_blocking`).
+
+The pass/blocking classification of the extracted verdict is done by the EXISTING
+`verdict_is_pass` / `verdict_is_blocking` predicates loaded from `tools/meta-queue`
+(the single canonical reading of a free-prose verdict — see
+docs/meta-ledger-schema.md "The canonical verdict predicate"). This tool only adds
+the PR-BODY artifact requirement on top; it does NOT fork the verdict predicate.
+Consistent with the standing "never parse text for CHECKS — use --json" rule:
+CHECKS stay JSON; only the verdict SECTION is parsed from the body markdown, here,
+centralised + tested.
+
+Fail-safe / conservative (same posture as verdict_is_pass): if the section is
+missing, the overall verdict can't be extracted, or any section is blocking, the
+answer is DOES-NOT-QUALIFY (a false hold is safe; a false merge is not).
+
+Scope / known limitation (by design): this checks the PRESENCE of a review
+artifact in the PR body and its overall verdict — NOT authorship. It closes the
+specific #3347 hole (a ledger `two_pass` string written at dispatch with NOTHING
+in the PR, auto-merged unreviewed) by demanding a visible, git-blamed, reviewable
+artifact in the PR body. It does NOT (and body-text parsing cannot) cryptographically
+prove the section was written by an *independent* reviewer; a determined author
+could still hand-write a passing section. That residual is deliberately out of
+scope — the artifact is a far higher, visible bar than an invisible ledger string,
+and the reconciler's auto-review path dispatches a genuinely-independent review
+chip to write it. Raising the authorship bar further is a separate initiative.
+
+Usage:
+    tools/meta-verdict-check <pr> [--repo OWNER/REPO] [--json]
+    tools/meta-verdict-check <pr> --body-file PATH   # PATH may be '-' for stdin
+                                                     # (skips the gh fetch; testing
+                                                     # / an already-fetched body)
+
+Exit codes: 0 qualifies; 1 does NOT qualify; 2 bad usage; 3 `gh` failure.
+"""
+
+from __future__ import annotations
+
+import argparse
+import importlib.machinery
+import importlib.util
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+DEFAULT_REPO = "cjalden/evolve"
+
+
+# ── reuse meta-queue's canonical verdict predicate (never fork it) ───────────
+
+
+def _load_verdict_predicates():
+    """Load `verdict_is_pass` / `verdict_is_blocking` from the sibling
+    `tools/meta-queue` so the pass/blocking classification is the ONE canonical
+    reading (docs/meta-ledger-schema.md), not a divergent copy. meta-queue's body
+    is import-safe (guarded by `if __name__ == '__main__'`)."""
+    path = Path(__file__).resolve().parent / "meta-queue"
+    loader = importlib.machinery.SourceFileLoader("meta_queue_verdict", str(path))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod.verdict_is_pass, mod.verdict_is_blocking
+
+
+verdict_is_pass, verdict_is_blocking = _load_verdict_predicates()
+
+
+# ── PR-body parsing (the ADDED artifact requirement) ─────────────────────────
+
+# A heading (``#``…``######``) whose text mentions a two-pass review — the
+# convention section chips + review chips emit. "independent" is optional (both
+# ``## Two-pass review`` and ``## Independent two-pass review`` qualify as the
+# artifact); the KEY is that it lives in the PR body, not just a ledger string.
+_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
+_TWO_PASS_RE = re.compile(r"two[-\s]?pass\s+review", re.IGNORECASE)
+
+# An explicit verdict line inside the section: "Verdict: …", "Overall: …",
+# "Overall verdict: …", tolerant of leading markdown markers (>, *, _, -, spaces).
+_VERDICT_LABEL_RE = re.compile(
+    r"^[\s>*_\-]*(?:overall\s+verdict|verdict|overall)\s*[:\-–—]\s*(.+?)\s*$",
+    re.IGNORECASE,
+)
+
+# Fallback: a line that itself OPENS with a verdict token (no explicit label).
+_VERDICT_TOKENS = ("pass", "ship", "approve", "approved", "lgtm",
+                   "fail", "concerns", "concern", "block", "do not merge",
+                   "don't merge", "dont merge")
+
+# Leading markdown emphasis / list / quote noise to strip so the cleaned verdict
+# OPENS with its real first token (verdict_is_pass keys on startswith).
+_STRIP_LEAD = " \t*_`>#-•·"
+
+
+_FENCE_RE = re.compile(r"^(`{3,}|~{3,})")
+
+
+def _clean_verdict(s):
+    """Strip leading/trailing markdown emphasis so the verdict opens with its real
+    token (e.g. ``**SHIP** — no blockers`` → ``SHIP** — no blockers``)."""
+    if s is None:
+        return None
+    s = s.strip().lstrip(_STRIP_LEAD).strip()
+    return s or None
+
+
+def _fence_flags(lines):
+    """Per-line 'inside a fenced code block?' mask (the fence delimiter lines
+    themselves count as inside). Fence-awareness stops a ``## Two-pass review``
+    heading or a ``Verdict:`` line shown as an EXAMPLE inside a ``` / ~~~ fence
+    from being read as a real review artifact. A fence-parse error errs toward
+    marking MORE lines fenced → a real section is skipped → does-not-qualify
+    (a false hold, which is safe)."""
+    flags = []
+    in_fence = False
+    marker = None
+    for line in lines:
+        m = _FENCE_RE.match(line.lstrip())
+        if m:
+            ch = m.group(1)[0]
+            if not in_fence:
+                in_fence, marker = True, ch
+            elif ch == marker:                # close only on the same fence char
+                in_fence, marker = False, None
+            flags.append(True)                # the delimiter line is "inside"
+            continue
+        flags.append(in_fence)
+    return flags
+
+
+def extract_review_sections(body):
+    """Return the text of every two-pass-review section in `body`.
+
+    A section runs from its heading to the next heading of the same-or-higher
+    level (a deeper subheading stays part of the section), or to end of body.
+    Headings inside a fenced code block are ignored (see `_fence_flags`).
+    """
+    if not body:
+        return []
+    lines = body.splitlines()
+    fenced = _fence_flags(lines)
+    # Index every REAL (non-fenced) heading with its level.
+    heads = []  # (line_idx, level, is_two_pass)
+    for i, line in enumerate(lines):
+        if fenced[i]:
+            continue
+        m = _HEADING_RE.match(line)
+        if m:
+            heads.append((i, len(m.group(1)), bool(_TWO_PASS_RE.search(m.group(2)))))
+    sections = []
+    for hi, (idx, level, is_tp) in enumerate(heads):
+        if not is_tp:
+            continue
+        # End at the next heading whose level <= this one; else EOF.
+        end = len(lines)
+        for j in range(hi + 1, len(heads)):
+            if heads[j][1] <= level:
+                end = heads[j][0]
+                break
+        sections.append("\n".join(lines[idx:end]))
+    return sections
+
+
+def extract_verdict(section):
+    """Extract the OVERALL verdict string from a review section, or None.
+
+    Priority: an explicit ``Verdict:``/``Overall:`` labelled line, else the first
+    body line that itself opens with a verdict token. The heading line and any
+    lines inside a fenced code block (an example verdict, not the real one) are
+    ignored.
+    """
+    if not section:
+        return None
+    lines = section.splitlines()
+    fenced = _fence_flags(lines)
+    # 1) explicit label line (skip the heading itself + fenced example lines).
+    for i, line in enumerate(lines[1:], start=1):
+        if fenced[i]:
+            continue
+        m = _VERDICT_LABEL_RE.match(line)
+        if m:
+            v = _clean_verdict(m.group(1))
+            if v:
+                return v
+    # 2) fallback: first non-fenced line opening with a verdict token.
+    for i, line in enumerate(lines[1:], start=1):
+        if fenced[i]:
+            continue
+        c = _clean_verdict(line)
+        if not c:
+            continue
+        low = c.lower()
+        if any(low.startswith(t) for t in _VERDICT_TOKENS):
+            return c
+    return None
+
+
+def verdict_qualifies(body):
+    """(qualifies: bool, verdict: str|None, reason: str).
+
+    Qualifies IFF the body has ≥1 two-pass-review section, some section's overall
+    verdict is pass-equivalent, and NO section carries a blocking verdict.
+    """
+    sections = extract_review_sections(body)
+    if not sections:
+        return (False, None,
+                "no two-pass review section found in the PR body "
+                "(a ledger two_pass string is not sufficient — B2)")
+    verdicts = [extract_verdict(s) for s in sections]
+    # Any blocking verdict holds the whole PR (a reviewer flagged a blocker).
+    for v in verdicts:
+        if v and verdict_is_blocking(v):
+            return (False, v, "a review section carries a blocking verdict")
+    for v in verdicts:
+        if v and verdict_is_pass(v):
+            return (True, v, "pass-equivalent overall verdict in a PR-body review section")
+    # Section(s) present but no extractable pass-equivalent overall verdict.
+    shown = next((v for v in verdicts if v), None)
+    return (False, shown,
+            "review section present but no pass-equivalent overall verdict "
+            "(unverified — e.g. pending / no clear Verdict: line)")
+
+
+# ── gh fetch + cli ───────────────────────────────────────────────────────────
+
+
+def _die(code, msg):
+    print("meta-verdict-check: %s" % msg, file=sys.stderr)
+    sys.exit(code)
+
+
+def fetch_body(pr, repo):
+    """Fetch the PR body via `gh pr view <pr> --json body`. Exit 3 on failure."""
+    try:
+        r = subprocess.run(
+            ["gh", "pr", "view", str(pr), "--repo", repo, "--json", "body"],
+            capture_output=True, text=True, timeout=30,
+        )
+    except FileNotFoundError:
+        _die(3, "gh not found on PATH")
+    except subprocess.TimeoutExpired:
+        _die(3, "gh timed out fetching PR #%s" % pr)
+    if r.returncode != 0:
+        _die(3, "gh pr view #%s failed: %s" % (pr, (r.stderr or "").strip()))
+    try:
+        return json.loads(r.stdout).get("body") or ""
+    except ValueError:
+        _die(3, "gh returned unparseable JSON for PR #%s" % pr)
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(
+        prog="meta-verdict-check",
+        description="Does a PR carry an independent two-pass review artifact whose "
+                    "overall verdict is pass-equivalent? (META:substrate B2)",
+    )
+    ap.add_argument("pr", help="PR number")
+    ap.add_argument("--repo", default=DEFAULT_REPO, help="OWNER/REPO (default %s)" % DEFAULT_REPO)
+    ap.add_argument("--body-file", help="read the PR body from PATH ('-' = stdin) "
+                                        "instead of calling gh (testing / reuse)")
+    ap.add_argument("--json", action="store_true", help="emit the result as JSON")
+    args = ap.parse_args(argv)
+
+    if not re.fullmatch(r"#?\d+", args.pr.strip()):
+        _die(2, "pr must be a number (got %r)" % args.pr)
+    pr = args.pr.strip().lstrip("#")
+
+    if args.body_file:
+        try:
+            body = sys.stdin.read() if args.body_file == "-" else Path(args.body_file).read_text()
+        except OSError as e:
+            _die(2, "cannot read --body-file %s: %s" % (args.body_file, e))
+    else:
+        body = fetch_body(pr, args.repo)
+
+    qualifies, verdict, reason = verdict_qualifies(body)
+    if args.json:
+        print(json.dumps({
+            "pr": int(pr), "qualifies": qualifies,
+            "verdict": verdict, "reason": reason,
+        }, ensure_ascii=False))
+    else:
+        mark = "QUALIFIES" if qualifies else "does NOT qualify"
+        vtxt = (" · verdict=%r" % verdict) if verdict else ""
+        print("PR #%s: %s%s — %s" % (pr, mark, vtxt, reason))
+    return 0 if qualifies else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

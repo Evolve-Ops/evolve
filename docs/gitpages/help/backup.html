@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Backup Page · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">backup</span><span class="chip">cloud-backup</span><span class="chip">local-backup</span><span class="chip">recovery</span><span class="chip">data-classification</span><span class="chip">drift-detection</span></div><div class="reviewed">Last reviewed 2026-06-05</div></div><h1 id="help-backup-page">Backup Page</h1>
+<p>The Backup page (in the <strong>Operate</strong> bucket) is where every "is my data safe" question lives. Cloud backup pushes eligible data to a private GitHub repo so you can recover from drive loss, theft, or a host swap. Local backup (Time Machine) saves snapshots to a disk you own so you can undo accidents fast and keep sensitive data off any cloud service. <strong>Most pods want both.</strong></p>
+<p>Backup used to be a Recovery sub-tab under Maintenance. As more pods came online and the per-bot classification work landed, it earned its own page. Spec: <a href="../spec-backup-and-data-classification-2026-05-28.md">docs/spec-backup-and-data-classification-2026-05-28.md</a>.</p>
+<p><strong>Ask evo from chat.</strong> Common Backup actions are reachable from chat: <em>"run a backup of personal-bot now"</em>, <em>"why isn't this file being backed up?"</em>, <em>"restore atlas to last night's snapshot"</em>, <em>"is my GitHub backup repo public?"</em>, <em>"set team-bot-a's default backup tier to local-only"</em>.</p>
+<hr>
+<h2 id="five-subtabs">Five subtabs</h2>
+<h3 id="status">Status</h3>
+<p>Pod-wide roll-up of cloud and local backup state. Each bot gets a row showing last successful cloud push, last successful Time Machine snapshot, repo health, and any pending classification audits. The page header surfaces a red badge if any bot's most recent push failed or if a public-repo guard tripped.</p>
+<p>For configuration, use Cloud or Local. For restoring data, use Recovery.</p>
+<h3 id="cloud">Cloud</h3>
+<p>Configure per-bot cloud backup. Each bot has a destination URL (private GitHub repo by default), an SSH key path (per-bot deploy key or the shared pod-wide key from Settings → Identity → Backup), and a schedule.</p>
+<p><strong>Public-repo guard</strong> runs before every push. If the configured destination resolves to a public repository, the push is blocked and a Signal fires. The guard reads the GitHub API's <code>private</code> field. Override requires an explicit <code>force=true</code> flag — useful in dev but never the right move on a real bot.</p>
+<p><strong>Size estimate</strong> runs as a pre-flight before every push (Phase 4d). It walks the working tree, applies the bot's path-classification rules, and reports the projected push size. Useful for catching a Forge-generated app that just dumped a 2GB cache directory into the workspace.</p>
+<p><strong>Classification audit</strong> runs <em>after</em> every push (Phase 4a). It reads the just-pushed tree and checks every file against the bot's manifest-derived classification. Any path that shouldn't have been backed up (cloud tier when the manifest says local-only, or any tier when the manifest says none) shows as a finding and emits a Signal.</p>
+<p><strong>Auto-prune</strong> (Phase 4b) reclassifies-then-removes: if a path was previously backed up but is now classified <code>local</code> or <code>none</code>, the next push removes it from the cloud repo as part of the same commit. No manual cleanup.</p>
+<p>All endpoints unified under <code>/api/backup/cloud/*</code> (Phase 4f).</p>
+<h3 id="local">Local</h3>
+<p>Time Machine status — last snapshot, last successful destination check, snapshot count, total size used. Local backup is opt-in per Mac: the page detects whether <code>tmutil</code> reports an active destination and surfaces a "Configure Time Machine" link if not.</p>
+<p><strong>Exclusion sync</strong> (Phase 4c) updates the Time Machine exclusion list from manifest-declared ephemeral paths. Cache directories, scratch dirs, log spools — anything a manifest marks as <code>none</code> tier — gets added to the Time Machine exclusion set so accidental Mac-wide restore doesn't pull stale junk back.</p>
+<p>The <code>local_backup_health</code> generator runs daily and flags pods where the most recent snapshot is over 48 hours old.</p>
+<h3 id="data">Data</h3>
+<p>Per-bot data classification. Each bot has a tile in the rail at the top of this subtab (primary-first, alpha tiebreak). Picking a bot opens its data view below.</p>
+<p><strong>Per-bot default tier</strong> (the headline control): one of <code>cloud</code>, <code>local</code>, <code>none</code>. Sets the fallback classification for any path in this bot's workspace that doesn't match a more-specific rule. Forge stamps this default onto manifests it generates for the bot — so freshly-installed apps adopt the bot's posture automatically. New on the bot? Pick the default once.</p>
+<p><strong>Per-app overrides</strong>: rows for each installed application. Each row carries the app's manifest-declared tier (read-only) plus an override picker that lets you bump an app up or down. Bulk-apply buttons let you push the bot default to every override that's currently set to "inherit," or reset all overrides at once.</p>
+<p><strong>Pod-wide paths</strong>: the rules applied to paths outside any application's scope — <code>.openclaw/</code>, <code>workspace/evolve/</code>, transcripts, MEMORY.md. These are pod-wide invariants; per-bot tier doesn't override them.</p>
+<p>The four-tier UI shortcut: <strong>all cloud / smart (per-manifest) / local-only / none</strong>. Most pods want "smart" once they've installed a few apps.</p>
+<h3 id="recovery">Recovery</h3>
+<p>Two flows:</p>
+<ul>
+<li><strong>Restore from latest backup.</strong> Pick a bot, pick a commit (most recent by default), confirm. The page checks out the chosen commit into a staging directory, runs a dry-run diff against the live workspace, and prompts before overwriting. The actual rollback uses the bot-owned <code>/tmp</code> + <code>sudo /bin/cp</code> pattern documented in CLAUDE.md.</li>
+<li><strong>Host swap.</strong> Walk a fresh Mac through cloning the backup repos and restoring per-bot. Used when a Mac is being replaced wholesale.</li>
+</ul>
+<p>A page badge surfaces here if the security audit detects drift between live <code>openclaw.json</code> / SOUL.md / AGENTS.md / HEARTBEAT.md / evolve-tiers.json and the last committed copy. This is layer 2 of the security architecture — backup is the durability story <em>and</em> the drift-detection baseline.</p>
+<hr>
+<h2 id="tradeoffs-cloud-vs-local">Tradeoffs: cloud vs. local</h2>
+<p>The page header carries a collapsible <strong>Cloud vs. local: tradeoffs</strong> explainer. Short version:</p>
+<ul>
+<li><strong>Cloud</strong> survives drive failure, theft, and host swap. Lives at a third party (private GitHub by default), so anything you classify <code>cloud</code> is data you're comfortable storing there.</li>
+<li><strong>Local</strong> stays on hardware you own. Survives accidents (undo an edit you didn't mean to ship) but doesn't survive disasters that hit the same physical location.</li>
+<li><strong>None</strong> is the right tier for ephemeral scratch — cache dirs, log spools, generated artifacts that can be rebuilt.</li>
+</ul>
+<p>Both surfaces serve different recovery scenarios. Don't pick one <em>instead</em> of the other — pick what's eligible for each.</p>
+<hr>
+<h2 id="common-questions">Common questions</h2>
+<p><strong>A bot's Cloud destination is showing as "public" — what now?</strong>
+The push is blocked until you either flip the repo private on GitHub or change the destination URL. The page header surfaces a red badge with a one-click "Open repo settings" link.</p>
+<p><strong>I deleted an app — does the backup repo still hold its files?</strong>
+Phase 4b's auto-prune handles this: the next push removes the deleted app's paths from the cloud repo as part of the same commit. You can also trigger a one-off prune from Cloud → "Run prune now."</p>
+<p><strong>I want to back up everything, no exceptions.</strong>
+Set the bot's default tier to <code>cloud</code> on the Data subtab and remove every per-app override that downgrades. The classification audit will then surface any path that doesn't get pushed (typically just the manifest-declared ephemeral paths).</p>
+<p><strong>Time Machine says "no destination" — does Evolve auto-fix that?</strong>
+No. The local subtab surfaces a "Configure Time Machine" link to System Settings → Time Machine; macOS owns the destination registration. Once a destination is configured, Evolve's exclusion sync runs on the next cycle.</p>
+<p><strong>How does Recovery decide which files to overwrite?</strong>
+Dry-run-diff first. The page shows what would change before you confirm. The actual restore writes through <code>/tmp</code> + <code>sudo /bin/cp</code> so file ownership matches the bot user.</p>
+<p><strong>Where does Forge get its default classification from?</strong>
+The bot's <code>backup_default_tier</code> from the Data subtab. Forge stamps it onto every manifest it generates for that bot at install time (#1779). Override per-app afterward if a specific app needs different posture.</p>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/backup.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>

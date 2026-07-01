@@ -1,0 +1,536 @@
+#!/usr/bin/env python3
+"""meta-queue — deterministic projection of the cross-aspect META decision queue.
+
+The operator's inbox (`/queue`, `/reconcile`, `/coherence`, `/launch`) is a
+*computed projection* of the durable in-flight ledgers
+(`meta-state/<aspect>.json`, schema: ``docs/meta-ledger-schema.md``). Before
+this tool existed the read-heavy skills loaded all ~16 ledgers (~200KB) RAW
+into the operator's main conversation context — one `/queue` measured ~190k
+tokens — when only a thin decision-queue projection was needed, and the raw
+text then persisted and was re-read every subsequent turn.
+
+This script is the projection, factored out of the skill prose so it can run
+in a throwaway subagent (the heavy read happens there, not in main context)
+and so the rules are pinned by a test rather than re-derived each run.
+
+It applies the build rules from ``.claude/skills/queue/SKILL.md`` and the
+"decision queue (computed projection)" section of
+``docs/meta-ledger-schema.md`` EXACTLY:
+
+  - Glob ``*.json`` in the ledger dir (``_README.md`` is not matched).
+  - Skip any item (chip / decision / object-gate) whose ``snoozed_until`` is a
+    date still in the future.
+  - Collect:
+      (A) RESCUE        — held-merge chips that need rescue: ``bucket==stalled``
+                          (dead chip), ``verdict_is_blocking(two_pass)`` (reviewer
+                          flagged — FAIL / DO-NOT-MERGE / un-exempted concerns), or
+                          ``reversible==false`` on an open PR (irreversible —
+                          auditor-grade look).
+      (B) DECISIONS     — every ``decisions_pending[]`` fork (with recommendation).
+      (C) GATES         — operator gates: object gates whose ``blocked_on`` is
+                          ``operator``, plus freeform string gates (skip ones
+                          clearly gated on a date "≥ 06-18" or another aspect
+                          "blocked on platform").
+      (D) VERIFY-MERGE  — green PRs awaiting the operator's merge:
+                          ``operator_merge==true`` while ``open_green`` +
+                          ``verdict_is_pass(two_pass)`` (verified, just needs the
+                          click — flagged "clearable" when the flag isn't warranted),
+                          or ``open_green`` with ``not verdict_is_pass(two_pass)``
+                          (green-but-unverified — the reconciler auto-reviews it).
+  - Dedup: an object gate and a decisions_pending entry sharing an ``id`` (same
+    aspect) → show only the decision (it carries the recommendation).
+
+Verdicts are read through ``verdict_is_pass`` / ``verdict_is_blocking`` (below),
+the canonical normalization of the free-prose ``two_pass`` field — NOT an exact
+``== "PASS"`` match (which stranded every "SHIP …"-style verdict). The
+auto-merge-clean case (``open_green`` AND ``verdict_is_pass(two_pass)`` AND
+``reversible==true`` AND ``operator_merge!=true``) is intentionally NOT surfaced
+— the reconciler merges it; it never needs the operator.
+
+Output: a compact, grouped, numbered text rendering led by a freshness stamp
+(from ``~/.claude/meta-reconcile/last-seen.json`` ``last_run``; fallback: the
+newest ledger ``updated``). ``--json`` emits the same items structured for the
+scheduled reconciler / programmatic callers. The brains-liveness and sessions
+footers stay in the skill (they need live tools this script does not call).
+
+Usage:
+    tools/meta-queue [--dir DIR] [--last-seen PATH] [--today YYYY-MM-DD] [--json]
+
+Exit codes: 0 ok; 2 ledger dir could not be resolved / bad usage.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime
+import json
+import os
+import sys
+from pathlib import Path
+
+# Per-project substrate config (repo slug, memory-dir glob, deploy model, …) from
+# `.claude/meta.json`, falling back to Evolve's own when absent. Stdlib-only sibling
+# module; ensure tools/ is importable regardless of caller cwd (shebang run OR the
+# SourceFileLoader tools/meta-inflight uses to reuse this module).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import meta_config  # noqa: E402  (path insert must precede the import)
+
+# A chip is "on an open PR" (so reversible:false holds it for a human) in these
+# buckets. `merged`/`live`/`done` are past the merge; `stalled` is handled first
+# as a dead chip; `dispatched`/`backlog` have no PR yet.
+OPEN_PR_BUCKETS = {"open_green", "open_red", "draft"}
+
+# Terminal buckets are past the merge decision. A "held merge" holds a MERGE, so
+# nothing terminal is one — including a chip left at `merged` with a stale
+# FAIL/CONCERNS verdict (that is the reconciler's "merged+privileged, two_pass!=PASS
+# → post-hoc auditor chip" red-zone item, added live from `gh`, NOT part of this
+# ledger-derivable projection; see docs/meta-reconcile-procedure.md step 5).
+#
+# The schema canon is {merged, live, done}, but ledgers DRIFT it: trailing
+# deploy/verify state (`merged-deployed`, `merged-deployed-verified`), casing
+# (`MERGED`), and other-terminal synonyms (`landed`, `closed`, `closed_superseded`,
+# `superseded`, `dismissed`, `investigated-resolved`). All are past the
+# merge/close decision, so NONE is a held merge — yet an exact-set membership
+# test stranded every drifted-bucket merged chip in (A) Rescue as a phantom FAIL
+# whenever its verdict prose wasn't a clean PASS. `is_terminal_bucket` recognizes
+# the whole family case-insensitively so merged work drops out of the queue.
+#
+# TERMINAL_BUCKETS stays as the SCHEMA CANON (the 3 values writers should
+# converge on — the consolidation target documented in the schema); all live
+# membership tests go through `is_terminal_bucket` below, never this bare set.
+TERMINAL_BUCKETS = {"merged", "live", "done"}
+_TERMINAL_EXACT = {
+    "merged", "live", "done", "landed", "closed", "superseded",
+    "dismissed", "investigated-resolved",
+}
+
+
+def is_terminal_bucket(bucket):
+    """True iff `bucket` denotes a state past the merge/close decision.
+
+    Tolerant of the bucket-vocabulary drift above (case-insensitive; the
+    `merged-*` / `closed-*` / `superseded-*` variants carry trailing
+    deploy/verify/close state but are still terminal)."""
+    if not bucket:
+        return False
+    b = str(bucket).strip().lower().replace("_", "-")
+    if b in _TERMINAL_EXACT:
+        return True
+    return b.startswith(("merged-", "closed-", "superseded-"))
+
+GROUP_ORDER = ["rescue", "decisions", "gates", "verify_merge"]
+GROUP_TITLES = {
+    "rescue": "(A) Rescue",
+    "decisions": "(B) Decisions",
+    "gates": "(C) Gates",
+    "verify_merge": "(D) Verify-then-merge",
+}
+
+
+# ── small helpers ──────────────────────────────────────────────────────────
+
+
+def _parse_date(s):
+    """Parse a leading YYYY-MM-DD out of a value; None if it doesn't look like one."""
+    if not s:
+        return None
+    try:
+        return datetime.date.fromisoformat(str(s)[:10])
+    except ValueError:
+        return None
+
+
+def _is_snoozed(obj, today):
+    """True iff obj carries a snoozed_until date still in the future."""
+    if not isinstance(obj, dict):
+        return False
+    d = _parse_date(obj.get("snoozed_until"))
+    return d is not None and d > today
+
+
+# Verdict normalization — the SINGLE canonical reading of the free-prose
+# `two_pass` field, mirroring `docs/meta-ledger-schema.md` ("verdict_is_pass /
+# verdict_is_blocking — the canonical verdict predicate"). Chips and reviewers
+# record the verdict as prose, not the bare enum — e.g.
+# "SHIP (2 non-blocking concerns) — independent adversarial reviewer…" or
+# "SHIP / CONCERNS-no-blockers…". An exact `== "PASS"` match stranded every such
+# fully-reviewed PR, so the headless reconciler merged 0 of them for days. These
+# predicates recognize the prose; they NEVER invent a PASS — anything unmatched
+# (pending / empty / "required …" / "n/a …") stays not-pass, and the whole thing
+# is deliberately CONSERVATIVE: an ambiguous verdict reads as not-pass (held for
+# the operator), never as pass (auto-merged). A false hold is safe; a false merge
+# is not. Keep these two functions in lockstep with the schema's pseudocode and
+# its truth table; `test_meta_queue.py` pins them.
+
+# A verdict mergeable IFF it OPENS with a pass token AND carries no live blocker.
+_PASS_PREFIXES = ("pass", "ship", "approve", "lgtm")  # "approve" covers "approved"
+# Phrases that explicitly de-fang a "concerns"/"blockers" mention as non-blocking.
+# (They contain the substrings "block"/"concern", so they are stripped/recognized
+# BEFORE the blocking-marker scan, or those substrings would self-trip.)
+_NONBLOCKING = ("non-blocking", "non blocking", "nonblocking",
+                "no-blocker", "no blocker", "no concern")
+# Absolute blockers — disqualify even alongside a "non-blocking" note. ("fail" is
+# a substring match on purpose: "no failures" still reads as not-pass — safe.)
+_HARD_BLOCK = ("fail", "do not merge", "don't merge", "dont merge")
+# Explicit not-yet-done markers. A verdict that OPENS with a pass token but also
+# carries one of these ("ship pending QA", "approve pending more review") is a
+# contradictory hedge, not an approval — it is UNVERIFIED, not blocking, so it
+# routes to auto-review rather than auto-merge. ("pending" is itself a documented
+# not-mergeable verdict value.) Chosen to have ZERO overlap with any pass verdict:
+# note "ship" does NOT contain "wip".
+_UNVERIFIED_MARKERS = ("pending", "wip", "tbd", "todo")
+
+
+def verdict_is_pass(two_pass):
+    """True iff `two_pass` is a reviewed PASS-equivalent verdict (mergeable).
+
+    Mergeable IFF the verdict (case-insensitively) STARTS WITH a pass token
+    {PASS, SHIP, APPROVE/APPROVED, LGTM} AND contains no live blocking marker
+    AND no explicit not-yet-done marker. A "concerns"/"blocker" mention
+    disqualifies UNLESS explicitly marked non-blocking ("non-blocking",
+    "no-blockers", "N non-blocking concerns", …). FAIL / "DO NOT MERGE" /
+    "pending"/"wip"/"tbd"/"todo" disqualify unconditionally.
+    """
+    s = (two_pass or "").strip().lower()
+    if not s:
+        return False
+    if not any(s.startswith(p) for p in _PASS_PREFIXES):
+        return False
+    if any(m in s for m in _HARD_BLOCK):
+        return False
+    if any(u in s for u in _UNVERIFIED_MARKERS):
+        return False  # pass-prefix + a not-done hedge ("ship pending QA") → unverified
+    if any(p in s for p in _NONBLOCKING):
+        return True  # concerns/blockers explicitly de-fanged
+    return "concern" not in s and "block" not in s
+
+
+def verdict_is_blocking(two_pass):
+    """True iff `two_pass` AFFIRMATIVELY flags a problem (reviewer said no / found
+    a blocker): FAIL, "DO NOT MERGE", or an un-exempted "concerns"/"blocker".
+
+    Distinct from merely-unverified (pending / empty / "required …" / "n/a …"),
+    which is neither pass nor blocking. Routes a held chip to Rescue ("reviewer
+    flagged") rather than to green-but-unverified (which the reconciler can
+    auto-review). Mutually exclusive with verdict_is_pass for well-formed verdicts.
+    """
+    s = (two_pass or "").strip().lower()
+    if not s:
+        return False
+    if any(m in s for m in _HARD_BLOCK):
+        return True
+    if any(p in s for p in _NONBLOCKING):
+        return False
+    return "concern" in s or "block" in s
+
+
+# ── ledger dir + freshness resolution ───────────────────────────────────────
+
+
+def _home():
+    return Path(os.environ.get("HOME") or os.path.expanduser("~"))
+
+
+def resolve_ledger_dir(override=None):
+    """Resolve the meta-state ledger dir.
+
+    Default: ``$HOME/.claude/projects/<memory_slug>/memory/meta-state`` where
+    ``<memory_slug>`` comes from this checkout's `.claude/meta.json` via
+    ``meta_config.memory_slug()`` — ``*evolve*`` for Evolve, ``*calgraph*`` for a
+    second project, etc. (the project-dir name varies — it is derived from the
+    repo's cwd path — so it is a glob). Repointing this at the resolver is the
+    A-config latent-bug fix: hardcoding ``*evolve*`` made the glob match nothing
+    on any non-Evolve checkout, silently resolving the ledger dir to empty. Falls
+    back to ``*/memory/meta-state`` if the slug glob misses. When several match,
+    prefer the one with the most ledger files.
+    """
+    if override:
+        p = Path(override).expanduser()
+        return p if p.is_dir() else None
+    base = _home() / ".claude" / "projects"
+    slug = meta_config.memory_slug()
+    cands = [c for c in sorted(base.glob("%s/memory/meta-state" % slug)) if c.is_dir()]
+    if not cands:
+        cands = [c for c in sorted(base.glob("*/memory/meta-state")) if c.is_dir()]
+    if not cands:
+        return None
+    return max(cands, key=lambda c: (len(list(c.glob("*.json"))), c.name))
+
+
+def resolve_as_of(last_seen_override, ledgers):
+    """The freshness stamp: meta-reconcile last_run, else newest ledger `updated`."""
+    if last_seen_override is not None:
+        path = Path(last_seen_override).expanduser()
+    else:
+        path = _home() / ".claude" / "meta-reconcile" / "last-seen.json"
+    try:
+        ls = json.loads(path.read_text())
+        last_run = ls.get("last_run")
+        if last_run:
+            return str(last_run), "reconcile"
+    except (OSError, ValueError):
+        pass
+    dates = [d.get("updated") for d in ledgers if d.get("updated")]
+    if dates:
+        return max(dates), "ledger"
+    return None, "none"
+
+
+def load_ledgers(ledger_dir):
+    """Load every *.json ledger (sorted by filename for deterministic output)."""
+    out = []
+    for p in sorted(Path(ledger_dir).glob("*.json")):
+        try:
+            data = json.loads(p.read_text())
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        data["_file"] = p.name
+        out.append(data)
+    return out
+
+
+# ── classification ──────────────────────────────────────────────────────────
+
+
+def classify_chip(chip):
+    """Map a chip to (group, reason, recommendation), or None if it doesn't
+    need the operator (auto-merge-clean, still building, already merged/live).
+
+    Precedence matters: a chip can match several conditions; the FIRST that
+    fires wins so each chip yields exactly one queue line. Stalled (dead) and
+    reviewer-flagged (FAIL/CONCERNS) and irreversible all route to Rescue;
+    the merge-ready cases route to Verify-then-merge.
+    """
+    bucket = chip.get("bucket")
+    tp = chip.get("two_pass")
+    rev = chip.get("reversible")
+    operator_merge = chip.get("operator_merge") is True
+    privileged = chip.get("privileged") is True
+
+    if is_terminal_bucket(bucket):
+        return None  # past the merge — never a held merge (see is_terminal_bucket)
+    if bucket == "stalled":
+        return ("rescue", "stalled (dead chip)",
+                "relaunch from last_commit (≤2), or investigate")
+    if verdict_is_blocking(tp):  # FAIL / DO-NOT-MERGE / un-exempted concerns
+        if "fail" in (tp or "").lower():
+            return ("rescue", "two-pass FAIL",
+                    "bounce back to the chip — resolve the FAIL")
+        return ("rescue", "two-pass CONCERNS",
+                "review the flagged concerns before merging")
+    if rev is False and bucket in OPEN_PR_BUCKETS:
+        return ("rescue", "irreversible (reversible:false)",
+                "auditor-grade human review before merge")
+    if operator_merge and bucket == "open_green" and verdict_is_pass(tp):
+        # operator_merge is only WARRANTED on a privileged or irreversible chip;
+        # on a reversible+non-privileged one it needlessly holds a green+reviewed
+        # PR for a human click (cause #2 of the 0-merges stall). Surface it as
+        # clearable rather than silently overriding the human's deliberate flag.
+        if not privileged and rev is not False:
+            return ("verify_merge", "verified (PASS) · operator_merge (clearable)",
+                    "merge your click — or clear operator_merge to let it auto-merge"
+                    " (reversible + non-privileged: the flag isn't needed here)")
+        return ("verify_merge", "verified (PASS) · operator_merge",
+                "merge (your click)")
+    if bucket == "open_green" and not verdict_is_pass(tp):
+        # green but unverified: pending/empty/"required …"/"n/a …" — no PASS to
+        # merge on. The reconciler auto-dispatches a review chip for the
+        # reversible+non-privileged case (≤2) and pokes for privileged/irreversible
+        # (see docs/meta-reconcile-procedure.md step 4); the queue line is the same.
+        return ("verify_merge", "green but unverified",
+                "verify, then merge")
+    return None
+
+
+def _gate_is_operator_object(gate):
+    """Object gate that needs the operator: blocked_on begins with 'operator'."""
+    blocked_on = str(gate.get("blocked_on") or "").strip().lower()
+    return blocked_on.startswith("operator")
+
+
+def _string_gate_is_operator_note(text):
+    """A freeform string gate is an operator note UNLESS it is clearly gated on
+    a date threshold ('≥ 06-18') or another aspect ('blocked on platform')."""
+    low = text.lower()
+    if "≥" in text or ">=" in text:
+        return False
+    if "blocked on " in low:
+        return False
+    return True
+
+
+# ── build ────────────────────────────────────────────────────────────────────
+
+
+def build_queue(ledgers, today):
+    """Build the grouped, numbered projection from loaded ledgers."""
+    groups = {k: [] for k in GROUP_ORDER}
+
+    for d in ledgers:
+        aspect = d.get("aspect") or Path(d.get("_file", "")).stem
+
+        # (B) Decisions — collect ids first for gate dedup within this aspect.
+        decision_ids = set()
+        for dp in d.get("decisions_pending") or []:
+            if isinstance(dp, dict):
+                if _is_snoozed(dp, today):
+                    continue
+                did = dp.get("id")
+                if did:
+                    decision_ids.add(did)
+                fork = dp.get("fork") or dp.get("desc") or did or "(unlabeled fork)"
+                rec = dp.get("recommendation") or "(needs a recommendation)"
+                groups["decisions"].append({
+                    "aspect": aspect, "kind": "decision", "id": did,
+                    "what": str(fork), "recommendation": str(rec),
+                    "source": dp.get("source"),
+                    "signature": "decision:%s:%s" % (aspect, did or fork),
+                })
+            else:  # defensive: freeform string fork
+                groups["decisions"].append({
+                    "aspect": aspect, "kind": "decision", "id": None,
+                    "what": str(dp), "recommendation": "(needs a recommendation)",
+                    "source": None,
+                    "signature": "decision:%s:%s" % (aspect, dp),
+                })
+
+        # (A)/(D) Chips — held merges + rescues.
+        for chip in d.get("chips") or []:
+            if not isinstance(chip, dict):
+                continue
+            if _is_snoozed(chip, today):
+                continue
+            verdict = classify_chip(chip)
+            if verdict is None:
+                continue
+            group, reason, rec = verdict
+            cid = chip.get("id")
+            pr = chip.get("pr")
+            title = chip.get("title") or cid or "(untitled chip)"
+            pr_tag = "PR #%s" % pr if pr else "no PR"
+            groups[group].append({
+                "aspect": aspect, "kind": "chip", "id": cid, "pr": pr,
+                "bucket": chip.get("bucket"), "two_pass": chip.get("two_pass"),
+                "reason": reason,
+                "what": "%s (%s, %s)" % (title, pr_tag, reason),
+                "recommendation": rec,
+                "signature": ("heldmerge:%s" % pr) if pr else ("chip:%s:%s" % (aspect, cid)),
+            })
+
+        # (C) Gates — operator object gates (deduped vs decisions) + string notes.
+        for gate in d.get("gates") or []:
+            if isinstance(gate, dict):
+                if _is_snoozed(gate, today):
+                    continue
+                if not _gate_is_operator_object(gate):
+                    continue
+                gid = gate.get("id")
+                if gid and gid in decision_ids:
+                    continue  # the decision carries the recommendation; show only it
+                desc = gate.get("desc") or gid or "(gate)"
+                what = ("%s: %s" % (gid, desc)) if gid else str(desc)
+                groups["gates"].append({
+                    "aspect": aspect, "kind": "gate", "id": gid,
+                    "what": what, "recommendation": "operator action",
+                    "blocked_on": gate.get("blocked_on"),
+                    "signature": "gate:%s:%s" % (aspect, gid or desc),
+                })
+            else:  # freeform string gate
+                text = str(gate)
+                if not _string_gate_is_operator_note(text):
+                    continue
+                groups["gates"].append({
+                    "aspect": aspect, "kind": "gate", "id": None,
+                    "what": text, "recommendation": "operator note",
+                    "blocked_on": None,
+                    "signature": "gate:%s:%s" % (aspect, text[:48]),
+                })
+
+    # Assign global numbers in group order (text + json share the same numbering).
+    n = 0
+    for g in GROUP_ORDER:
+        for item in groups[g]:
+            n += 1
+            item["n"] = n
+            item["group"] = g
+    return groups, n
+
+
+def project(ledger_dir, today, last_seen_override):
+    """Full projection: load ledgers, build groups, attach freshness + counts."""
+    ledgers = load_ledgers(ledger_dir)
+    as_of, as_of_source = resolve_as_of(last_seen_override, ledgers)
+    groups, count = build_queue(ledgers, today)
+    return {
+        "as_of": as_of,
+        "as_of_source": as_of_source,
+        "today": today.isoformat(),
+        "aspect_count": len(ledgers),
+        "count": count,
+        "groups": groups,
+    }
+
+
+# ── render ────────────────────────────────────────────────────────────────────
+
+
+def render_text(result):
+    as_of = result["as_of"] or "unknown (no reconcile run, no ledger dates)"
+    lines = ["Queue as of %s · run /reconcile for live state" % as_of]
+    if result["count"] == 0:
+        lines.append("✅ Queue clear — %d aspects, nothing needs you." % result["aspect_count"])
+        return "\n".join(lines) + "\n"
+    for g in GROUP_ORDER:
+        items = result["groups"][g]
+        if not items:
+            continue
+        lines.append("")
+        lines.append(GROUP_TITLES[g])
+        for it in items:
+            lines.append("  #%d  [%s]  %s — %s"
+                         % (it["n"], it["aspect"], it["what"], it["recommendation"]))
+    lines.append("")
+    lines.append("%d item(s) need you across %d aspects."
+                 % (result["count"], result["aspect_count"]))
+    return "\n".join(lines) + "\n"
+
+
+def render_json(result):
+    return json.dumps(result, indent=2, ensure_ascii=False, sort_keys=False) + "\n"
+
+
+# ── cli ────────────────────────────────────────────────────────────────────────
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(
+        prog="meta-queue",
+        description="Deterministic projection of the cross-aspect META decision queue.",
+    )
+    ap.add_argument("--dir", help="ledger dir override (default: glob under $HOME/.claude/projects)")
+    ap.add_argument("--last-seen", help="last-seen.json override (freshness stamp source)")
+    ap.add_argument("--today", help="reference date YYYY-MM-DD for snooze/date logic (default: today)")
+    ap.add_argument("--json", action="store_true", help="emit the projection as JSON")
+    args = ap.parse_args(argv)
+
+    today = _parse_date(args.today) if args.today else datetime.date.today()
+    if today is None:
+        print("meta-queue: --today must be YYYY-MM-DD", file=sys.stderr)
+        return 2
+
+    ledger_dir = resolve_ledger_dir(args.dir)
+    if ledger_dir is None:
+        where = args.dir or ("$HOME/.claude/projects/%s/memory/meta-state"
+                             % meta_config.memory_slug())
+        print("meta-queue: could not resolve ledger dir (%s)" % where, file=sys.stderr)
+        return 2
+
+    result = project(ledger_dir, today, args.last_seen)
+    sys.stdout.write(render_json(result) if args.json else render_text(result))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,27 @@
+---
+name: meta
+description: Launch or resume a META coordinator for an Evolve dev aspect. Usage:/meta <id> (e.g. /meta rsi). Bootstraps from the aspect's durable trio (registry row + spec + memory), discovers its in-flight chips/PRs, and reports where things stand and the next actionable step. Known aspects:model-tiers, platform, diligence, user-value, multi-pod, edr, rsi.
+---
+
+The operator is launching you as the **META coordinator** for the aspect given as the argument (e.g. `/meta rsi` → aspect `rsi`). Work in the Evolve dev clone (your local checkout or the current worktree — never the deploy checkout).
+
+**Resolve the aspect forgivingly.** Normalize the argument (lowercase, trim, ignore trailing `s` and punctuation) and match it against the registry ids in `docs/META-aspect-registry.md`. Exact → use it. One clear near-match (e.g. `platforms`→`platform`, `cost`→`cost-opt`) → use it and note *"interpreting as `<id>`"*. Ambiguous → list the candidates and ask. **No close match** → don't assume a typo: treat the words as a *description of work* and **route** it (the `/design` intake — see "Intake routing" in the guide), which usually maps to an existing aspect and proposes a *new* one only when genuinely distinct. **No argument at all** → ask the operator to describe the work they want to do, then route it — don't make them pick an aspect from a list of 20+.
+
+**Title the session `META <id>` — exactly.** Once the id is resolved, the session title is the literal `META`, a space, then the id (e.g. `META model-tiers`): no suffix, no colon, no task. No tool sets a session title programmatically, so **lead your bootstrap response with `META <id>` on its own first line** — the canonical name a content-derived auto-title can pick up; if the app titles sessions another way, the operator renames to that exact string. One format, uniform across the session list.
+
+**Write the active-aspect marker (enables auto-prefix of spawned chips).** Also once the id is resolved, run — best-effort, from this session's working directory — `bash tools/hooks/meta-active-aspect.sh write <id>`. This records that *this* working directory is coordinating `META:<id>`, so the `prepend-meta-prefix.sh` PreToolUse hook deterministically prepends `[META:<id>] ` to any chip / subagent title you spawn that lacks it. It is the **mechanism complement** to the prose propagation rule — you still title chips `[META:<id>] …` yourself; the hook is the safety net, not a licence to forget. The marker is operator-local runtime state under `~/.claude/meta-state/active-aspect/` (keyed by this cwd), not version-controlled; `/close` clears it. If the helper isn't on the checkout (older branch), the command is a harmless no-op — proceed normally.
+
+Execute the bootstrap procedure defined in **`docs/META-bootstrap.md`** — it is authoritative; this skill is just the launcher. Read its **Bootstrap**, **Naming convention**, and **Session lifecycle and continuity** sections, plus the aspect's row in the **Aspect registry** (**`docs/META-aspect-registry.md`**; the surface-ownership map and the scheduled-automation procedures live in the full reference **`docs/META-session-guide.md`** — both read on demand). In short:
+
+1. Read `docs/META-bootstrap.md` (the bootstrap doctrine + lifecycle). Find your `META:<id>` row in the **Aspect registry** in `docs/META-aspect-registry.md`.
+2. Read that aspect's **spec doc(s)** and recall its **memory entries** (the tags in the row). That trio IS the holistic view — not any past chat.
+3. **Discover your in-flight children:** read the aspect's **structured ledger** `meta-state/<id>.json` (in the memory dir; schema: `docs/meta-ledger-schema.md`) — it lists every chip with its `bucket` + `two_pass` verdict, open `gates`, `decisions_pending`, and `next_action`. Cross-check it against live artifacts: `gh pr list --repo "$(tools/meta-config)" --state all` for `claude/*` PRs belonging to the aspect (the repo slug comes from this checkout's `.claude/meta.json` via `tools/meta-config` — falling back to `cjalden/evolve` when absent — so the substrate runs in any project); optionally list sessions filtered by the `[META:<id>]` chip-name prefix. If the ledger is **missing or stale** vs. `gh` (e.g. a PR it calls open is merged), reconstruct from `gh pr list` + memory and write it back — a fresh `/meta` should leave the ledger current.
+4. **Open with a tight status block:**
+   - **Aspect:** `META:<id>` — one-line mission.
+   - **Shipped recently / since last bout.**
+   - **In-flight:** each child PR/chip + state (ready / cooking / merged / stalled / gated).
+   - **Next actionable:** the single most useful next step (+ any gates). Loose ends the last bout left (a stale trio, unpushed commits) go here, as to-dos — not framed as closure.
+   - **Do NOT issue a closure-readiness verdict in this opening response.** A just-opened bout is by definition not one the operator wants to close, so a "safe to close?" judgement here is noise. Closure-readiness is a *during/end-of-bout* signal only.
+5. Then act as coordinator per the guide: design + dispatch `[META:<id>]`-prefixed chips; keep the trio current; **do not** run heavy build/review in-context. Surface closure-readiness *later* — when the answer first changes (WIP becomes unrecorded, the session grows heavy) and at `/close` — never in the bootstrap response.
+
+Keep the report tight — it's an orientation for the operator, not a file dump.

@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cost Optimization Page · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">cost</span><span class="chip">spend</span><span class="chip">budget</span><span class="chip">daily-cap</span><span class="chip">efficiency-score</span><span class="chip">context-pruning</span></div><div class="reviewed">Last reviewed 2026-06-06</div></div><h1 id="help-cost-optimization-page">Cost Optimization Page</h1>
+<p>The Cost Optimization page (in the <strong>Improve</strong> bucket) is the control center for spend governance — the cap ladder, the per-bot context and session settings, the behavioral efficiency score, and the audit tools. Use this page to understand how each bot is spending and to set the guardrails that catch runaway costs before you find them on a bill.</p>
+<p><strong>Ask evo to apply a cap or optimization.</strong> Evo has chat tools for the whole cap ladder — <em>"set team-bot-a's daily warn at $5"</em>, <em>"trip the tier-downgrade on team-bot-a"</em>, <em>"what cost optimizations are open?"</em>. The matrix on this page and the chat tools both write through the same backend, so changes show up either way.</p>
+<hr>
+<h2 id="pod-vs-per-bot">POD vs. per-bot</h2>
+<p>The page has two views, picked by the bot-tab row near the top:</p>
+<ul>
+<li><strong>POD tab</strong> (first, default) — shows pod-wide content: the pod-default Cost &amp; Caps matrix (every threshold that bots inherit unless they override it) and an aggregate of every open cost proposal across the pod.</li>
+<li><strong>Per-bot tab</strong> (one per bot) — shows that bot's Cost Efficiency Score, its Cost &amp; Caps matrix with inherited-vs-explicit indicators, its Context &amp; Session Settings matrix, and the runaway / audit / spike sections below.</li>
+</ul>
+<p>The per-bot tile rail above the tabs is a faster picker — click a tile to jump straight to that bot's tab. The tiles also show a grade letter (A–F), today's spend, and a chip row for any active cost issues.</p>
+<hr>
+<h2 id="per-bot-tile-rail">Per-bot tile rail</h2>
+<p>One tile per bot at the top, primary-first then alphabetical. Each tile shows:</p>
+<ul>
+<li><strong>Grade circle (A–F)</strong> — the bot's current Cost Efficiency Score.</li>
+<li><strong>Today's spend + delta</strong> — vs. yesterday, with the trend arrow.</li>
+<li><strong>Tier-colored model-mix bar</strong> — share of spend going to tier1/2/3.</li>
+<li><strong>Chip row</strong> — up to 3 active cost issues (e.g. <code>cost_burst</code>, <code>l1_tripped</code>, <code>cascade-live</code> indicator if the bot is in the cascade-toggle treatment group).</li>
+</ul>
+<p>Click a tile to switch to that bot's tab. Empty days collapse the spend headline to "no spend"; cascade-live is only shown on bots where the toggle is on (see Cascade toggle below).</p>
+<hr>
+<h2 id="cost-caps-matrix-per-bot-pod">Cost &amp; Caps matrix (per-bot + POD)</h2>
+<p>The headline control on this page. One row per cost threshold, organized into three groups:</p>
+<h3 id="alerts-notify-only">Alerts · notify only</h3>
+<p>These send a Signal to your alert channel when crossed. No enforcement.</p>
+<table>
+<thead>
+<tr>
+<th>Row</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Monthly warn</strong></td>
+<td>Notifies when month-to-date spend crosses this. Alert-only.</td>
+</tr>
+<tr>
+<td><strong>Weekly warn</strong></td>
+<td>Notifies when rolling 7-day spend crosses this. Deduped once per ISO week.</td>
+</tr>
+<tr>
+<td><strong>Daily warn</strong></td>
+<td>Notifies when today's spend crosses this. Deduped once per day, pod local TZ.</td>
+</tr>
+<tr>
+<td><strong>Pod-total weekly warn</strong> <em>(POD tab only)</em></td>
+<td>Notifies when the SUM of every bot's rolling 7-day spend crosses this. Pod aggregate; no per-bot equivalent.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="remediation-graduated-enforcement">Remediation · graduated enforcement</h3>
+<p>The graduated ladder shipped May–June 2026 (<a href="../spec-cost-caps-2026-06-05.md">spec</a>) replaces the old single-cap model with three independent levers, each more disruptive than the last. Each fires on today's spend in pod local TZ.</p>
+<table>
+<thead>
+<tr>
+<th>Row</th>
+<th>What it does</th>
+<th>Recovery</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Tier downgrade (daily)</strong></td>
+<td>Auto-switches the bot's primary model to tier 3 for the rest of the day when crossed.</td>
+<td>Auto-reverts at midnight (pod local TZ).</td>
+</tr>
+<tr>
+<td><strong>L1 circuit breaker (daily) — stop auto sessions</strong></td>
+<td>Trips L1: heartbeat + background sessions pause; user chat keeps working. A "this bot is over its daily budget; resumes at midnight" sentinel replaces background turns.</td>
+<td>Auto-resets after 24h.</td>
+</tr>
+<tr>
+<td><strong>L2 circuit breaker (daily) — shut down gateway</strong></td>
+<td>Stops the bot's gateway entirely. No chat, no background turns.</td>
+<td>Manual reset required; <strong>no auto-revert.</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Pick the smallest hammer that solves your problem. Tier downgrade is reversible at midnight and barely felt; L1 keeps you reachable but kills cron / heartbeats; L2 is the "I need this bot offline today" lever.</p>
+<h3 id="sentinel-in-flight-session-ceiling">Sentinel · in-flight session ceiling</h3>
+<table>
+<thead>
+<tr>
+<th>Row</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Per-session cap</strong></td>
+<td>Rejects the next turn in any session whose accumulated cost crosses this. Catches looping prompts and runaway tool use before they burn through the daily budget.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="how-the-matrix-reads">How the matrix reads</h3>
+<p>Each cell shows the active value or <code>—</code> if unset. On the per-bot tab, three column states:</p>
+<ul>
+<li><strong>Default</strong> — inheriting the pod default for this threshold. Cell shows the inherited value with a grey "inherited" affordance.</li>
+<li><strong>Off</strong> — explicitly disabled on this bot. Cell shows "Off."</li>
+<li><strong>Custom $___</strong> — explicit per-bot override. Cell shows the dollar amount in the active accent color.</li>
+</ul>
+<p>Click a row to expand its description; click a cell to switch its state. Setting any cell to a numeric value writes through <code>/api/arbiter/bot-setup/&lt;bot&gt;</code>; "Default" deletes the override so the row inherits again. On the POD tab, the matrix is simpler — every row is the pod default, and changes propagate to inheriting bots immediately.</p>
+<p><strong>Pod conduct rule for transparency.</strong> When a remediation tier fires on a bot, the bot itself receives a <code>RUNTIME_NOTES.md</code> injection at the next session_start telling it which remediation is active and why. This means a user who hits a tier-downgraded bot gets an honest "I'm running on a slower model right now because we crossed today's spend threshold" rather than silent degradation.</p>
+<hr>
+<h2 id="cost-efficiency-score-per-bot">Cost Efficiency Score (per-bot)</h2>
+<p>The per-bot grade card at the top of the per-bot view. Replaces the old composite 0–100 score with a behavioral measurement: did the bot actually spend efficiently over the last 7 days?</p>
+<p>The grade circle shows the letter (A–F) and the numeric score. Below the badge, a "components" grid lists each measured behavior with a pass/fail icon, score, one-line detail, and — for failing components — a fix hint plus clickable jump links that scroll the Cost &amp; Caps or Context &amp; Session matrix row into view and flash it briefly.</p>
+<p>Common components:</p>
+<ul>
+<li><strong>Heartbeat behavior</strong> — are idle pings running light (small context, tier3) instead of full sessions?</li>
+<li><strong>Maintenance routing</strong> — are debug-the-gateway sessions hitting tier3 as intended?</li>
+<li><strong>Cache discipline</strong> — what fraction of input tokens are cache hits vs. re-paid?</li>
+<li><strong>Audience mix</strong> — are autonomous (non-Human) audiences pulling premium models?</li>
+<li><strong>Per-session ceiling fit</strong> — is the per-session cap catching outliers without false positives?</li>
+<li><strong>Cap headroom</strong> — is the bot well within its daily warn / L1 thresholds, or running close to the edge?</li>
+</ul>
+<p>The window is "last 7 days" by default; the panel text states it explicitly. The score is a diagnostic — fix the matrix rows below to move it.</p>
+<hr>
+<h2 id="context-session-settings-matrix">Context &amp; Session Settings (matrix)</h2>
+<p>Per-bot only. A matrix view of every cost-relevant <code>openclaw.json</code> setting. Rows are individual fields grouped by purpose (heartbeat, context pruning, compaction, session start). Columns are four profiles plus an editable Custom column:</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>What it means</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Conservative</strong></td>
+<td>Maximum cost savings, smallest context. Good for high-volume short-session bots.</td>
+</tr>
+<tr>
+<td><strong>Balanced</strong></td>
+<td>Recommended default for normal work.</td>
+</tr>
+<tr>
+<td><strong>Performance</strong></td>
+<td>Maximum continuity, largest context. Use for long-form research bots.</td>
+</tr>
+<tr>
+<td><strong>Other</strong></td>
+<td>Either a saved custom profile (dropdown picker) or live-editable Custom values for any integer field.</td>
+</tr>
+</tbody>
+</table>
+<p>Click a <strong>column header</strong> to apply that entire profile to the bot. Click a single <strong>cell</strong> to set just that one field to the profile's value. The active value is highlighted with a bold accent border; unset values show as "—".</p>
+<p>To save the current per-bot state as a reusable profile, click <strong>+ Save current as profile</strong> in the header. Saved profiles appear in the Other column's dropdown and can be applied to any bot. Custom profiles can be deleted from the dropdown's trash button.</p>
+<p>After changing settings the gateway needs a kickstart — go to <strong>Maintenance → Status</strong> and restart the bot. The page banner reminds you.</p>
+<p><strong>Setting groups, briefly:</strong></p>
+<ul>
+<li><strong>Heartbeat</strong> — session_isolation and light_context_mode together cut idle-ping cost by 97%+ when both are on. Recommended: both on.</li>
+<li><strong>Context pruning</strong> — drops idle session data on a TTL. Cache-TTL mode with a 1-hour TTL is the sweet spot for most bots.</li>
+<li><strong>Compaction</strong> — what happens when the context window fills. Safeguard mode preserves the most history; Aggressive compacts early for cheaper turns.</li>
+<li><strong>Session start</strong> — bootstrap_max_chars caps total injection; idle_reset_minutes ends fully idle sessions.</li>
+<li><strong>Prompt cache TTL</strong> — added 2026-05-30; controls how long OpenClaw keeps Anthropic ephemeral cache breakpoints alive. Longer = more cache hits when conversations are slow; shorter = lower cache-write overhead for very chatty bots. Default is the OpenClaw default. Deep-link in the row jumps to the Anthropic billing console row that this affects.</li>
+</ul>
+<hr>
+<h2 id="cascade-toggle">Cascade toggle</h2>
+<p>A toggle on each bot's row in the AI Optimization → Tier Definitions section, mirrored as a chip on the per-bot tile here. When <strong>cascade is on</strong>, the model router walks down the tier ladder on tier-2 failures or "I need help" markers from the bot — tier2 → tier3 if tier2 errors, or tier1 → tier2 if a tier1 turn is taking too long. When <strong>off</strong>, a failed tier-2 call fails the session instead of cascading.</p>
+<p>Cascade is off by default. It's a treatment-group experiment shipped 2026-06-05 (<a href="https://github.com/evolve-ops/evolve/pull/2291">PR 2291</a>) — bots in the treatment group get the chip and the live cascading behavior; bots outside don't. Once the per-bot effect on spend and quality is well-characterized this will graduate from experiment to default.</p>
+<p>The deprecated <strong>Configure</strong> button on the cost tile was removed in the same PR — every tile-level cost action now lives in the Cost &amp; Caps matrix below or in the AI Optimization page.</p>
+<hr>
+<h2 id="runaway-session-monitor">Runaway Session Monitor</h2>
+<p>Detects sessions consuming disproportionate cost — a sign of a looping prompt, runaway tool use, or a compromised key.</p>
+<p><strong>↻ Refresh</strong> checks for active outlier sessions right now.</p>
+<p>A session is flagged as runaway when its cost is significantly above the bot's rolling average session cost. Flagged sessions appear with the session ID, estimated cost, turn count, and time active.</p>
+<p>Pair this with the per-session cap row in the matrix above — a per-session cap rejects the next turn in any flagged session, so combining "ceiling on per-session spend" with "alert me when sessions look runaway" gives you both prevention and detection.</p>
+<hr>
+<h2 id="turn-audit">Turn Audit</h2>
+<p>An audit table of the most expensive individual turns across all sessions. Use this to identify what's actually driving spend — a single expensive turn with a huge tool call often explains a cost spike better than aggregate charts.</p>
+<p>Sort by <strong>Most recent</strong> or <strong>Highest cost</strong>, and pick a time range (Today / 7d / 30d). Each row links to the session it belongs to.</p>
+<hr>
+<h2 id="spike-explorer-budget-hawk-v2">Spike Explorer (Budget Hawk v2)</h2>
+<p>One row per billable LLM call within the selected window, tagged with <code>trigger_kind</code> (cron / heartbeat / message / tool) and <code>cache_state</code> (cache miss / hit / partial). This is the lineage-backed view that powers Budget Hawk v2's forensics detectors — it answers "why did this cost what it did" in a way aggregate charts can't.</p>
+<p>The rollup at the top groups spend by trigger and by app so you can spot which subsystem is producing the long tail. When a cost-burst Signal fires, this is the section you scroll to.</p>
+<hr>
+<h2 id="common-questions">Common questions</h2>
+<p><strong>My efficiency score is failing on "Cache discipline" — what do I do?</strong>
+Click the fix-link on that component. It jumps you to the Prompt cache TTL row in the Context &amp; Session matrix above and flashes it. Increase the TTL if conversations are slow (more hits when the cache lives longer), or check the heartbeat-light-context row — if heartbeats are running heavy, they invalidate the cache on every ping.</p>
+<p><strong>A bot is L1-tripped but I need it to keep doing background work — can I unstick it?</strong>
+L1 auto-resets after 24h. If you need to override before that, raise the bot's L1 threshold so today's spend no longer exceeds it (matrix → L1 row → Custom $___ above the current value). The breaker re-checks against today's spend on the next pricing tick. Alternatively, leave the threshold and accept the daily pause.</p>
+<p><strong>I tripped L2 by mistake — how do I get the gateway back?</strong>
+L2 doesn't auto-revert. Raise the L2 threshold so the current spend is back under it, then redeploy or restart the gateway (Maintenance → Status). Set L2 to <strong>Off</strong> if you don't want that lever active.</p>
+<p><strong>I set a Daily warn at $5 but never got an alert — what's wrong?</strong>
+Three things to check: (1) the alert channel for cost is configured in Reports → Alerts; (2) the producer <code>budget_hawk</code> is in the alert allowlist (it should be by default); (3) today's spend actually crossed $5 in pod local TZ — the dedupe says "once per day" so a tiny over-crossing followed by re-crossing on the same day fires once.</p>
+<p><strong>Which order should I climb the ladder?</strong>
+Top-down: alerts first (warns at $X), then tier downgrade (auto-reversible at midnight), then L1 (24h pause on background), then L2 (operator-only reset). Pick the smallest hammer that solves your problem. Most pods only need warns + tier downgrade.</p>
+<p><strong>The score card says "behavioral measurement over last 7 days" — what changed?</strong>
+The composite 0–100 score in the previous incarnation was a weighted average of static checks (is tier3 in use, is light-context on, etc.). The new score measures actual behavior: did the bot's spend pattern over the last 7 days look efficient, given its workload? Failing components carry jump links to the matrix row that drives them, so the diagnostic is one click from the fix.</p>
+<p><strong>Where did the old Spending Caps section go?</strong>
+Merged into the Cost &amp; Caps matrix above. The old single <code>daily_cap_usd</code> is now the <strong>L1 circuit breaker</strong> row; everything else (warns, tier downgrade, L2, per-session cap) was net-new and didn't exist on the page before. Pod-wide defaults moved to the POD tab.</p>
+<p><strong>Important:</strong> Spending caps are enforced by Evolve's cost-cap ladder, not by the API provider. Set caps at your provider too (console.anthropic.com) as a backstop in case the cap mechanism itself fails — defense in depth.</p>
+<p><strong>The runaway session monitor flagged a session — what should I do?</strong>
+Check the session in the bot's OC interface. If it looks legitimate (a complex long-running task), you can dismiss it. If it looks like it's looping or unusually verbose, end the session from the OC admin. For recurring issues, set or lower the per-session cap row above so the ceiling catches the next one automatically.</p>
+<p><strong>Note on MAX subscriptions.</strong> Anthropic ended MAX coverage for third-party tools on April 4, 2026. Every OpenClaw call bills at API rates regardless of MAX status. The Auth-mode score factor that used to surface this has been retired; the cap ladder is the durable answer.</p>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/cost-optimization.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>

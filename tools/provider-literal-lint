@@ -1,0 +1,357 @@
+#!/usr/bin/env python3
+"""provider-literal-lint — ratchet gate on provider/model-name literals in logic.
+
+Spec: docs/spec-model-rungs-and-roles-2026-06-09.md §Addendum 3.B (the
+three-homes rule). Provider and model names may live in exactly three places:
+  1. catalog/index DATA  (DEFAULT_MODEL_CATALOG, _PROVIDER_PICKS, network.json)
+  2. provider ADAPTERS    (per-provider listing endpoints, auth/key formats)
+  3. tests
+Never in LOGIC — no provider conditionals, no literal fallbacks, no names in
+UI templates. Availability/routing/resolution is a SET derivation; a new
+frontier provider must be a one-line catalog-data edit with zero code changes.
+
+This gate, same shape as except-pass-lint and ci-quarantine.txt, freezes the
+current literal count per covered module as a baseline, BLOCKS any change that
+ADDS a new provider/model literal, and lets the baseline ratchet DOWN as the
+three homes are marked. The baseline tolerates the legacy data/adapter
+literals that already live in the covered modules; new logic literals exceed
+it and fail.
+
+Allowlisting the three homes (so they don't count toward the baseline):
+  • Comments and docstrings are stripped before counting — a provider name in
+    a comment or in a docstring example is never logic.
+  • A whole region: wrap it in
+        # provider-literal-allow-begin: <reason>
+        ...data / adapter block...
+        # provider-literal-allow-end
+    (``//`` form for TypeScript). Everything between is exempt.
+  • A single line: append ``# provider-literal-allow`` (``// ...`` for TS).
+
+Covered modules (the routing/availability/catalog-logic surface) are listed in
+_COVERED below; extend the list as audited modules come clean (spec §B:
+"the guard's coverage grows as audited modules come clean").
+
+Usage:
+  tools/provider-literal-lint [<file> ...]      # lint covered files among args
+  tools/provider-literal-lint --all             # lint all covered modules
+  tools/provider-literal-lint --staged          # lint git-staged covered files
+  tools/provider-literal-lint --all --update-baseline   # regenerate baseline
+
+Exit status: 0 if no covered file exceeds its baseline; 1 if a new literal
+appeared.
+"""
+from __future__ import annotations
+
+import argparse
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+BASELINE_PATH = REPO_ROOT / "tools" / "provider-literal-baseline.txt"
+
+# The routing/availability/catalog-LOGIC modules the guard covers. Paths are
+# repo-relative. Grow this list as more modules are audited clean (spec §B).
+_COVERED: tuple[str, ...] = (
+    "packages/plugin/src/observer/ModelRouter.ts",
+    "packages/plugin/src/tools/SetTierTool.ts",
+    "packages/analyzer/primary_bot.py",
+    "packages/analyzer/model_discovery.py",
+    "packages/analyzer/model_cost_bands.py",
+    "packages/analyzer/arbiter/appliers/adopt_model.py",
+)
+
+# Provider/model literal: a quoted "provider/model" qualified id, or a bare
+# quoted provider name. The provider token is matched STRUCTURALLY (a short
+# lowercase identifier before a "/model" or standing alone in quotes) so the
+# guard itself names no provider — it can't go stale when a new provider
+# appears. We accept ' or " quotes (Python + TS).
+_QUALIFIED = re.compile(
+    r"""['"]([a-z][a-z0-9_-]{1,15})/[a-z0-9][a-z0-9._-]*['"]"""
+)
+# A bare quoted provider name is too broad to match structurally without false
+# positives ("low", "high", "bot", any short string). Model literals are
+# ALWAYS qualified (provider/model), so they are caught by _QUALIFIED. A BARE
+# quoted token only counts as a provider literal when it is bound to a
+# ``provider``/``prov`` name on the same line — ``provider == "x"``,
+# ``prov == "x"``, ``model.provider == "x"``, ``provider = "x"``,
+# ``provider: "x"``, or ``"x" == ...provider`` — which is exactly the
+# provider-conditional / provider-literal-fallback anti-pattern §B forbids.
+#
+# The receiver token matches ``prov\w*`` (covers ``prov``, ``provider``,
+# ``provider_id`` …) and an OPTIONAL ``<obj>.`` prefix so attribute access like
+# ``model.provider == "anthropic"`` is caught — the exact form the old regex
+# missed (its ``[^\w.]`` guard excluded a leading ``.``, and it never matched
+# the ``prov`` shorthand). This is the tightening flagged in the band-derived
+# rung refactor: per-provider ``model.provider == "..."`` / ``prov == "..."``
+# branches in suggestion logic now count toward the baseline.
+# Structural config keywords that are not providers are excluded.
+_NON_PROVIDER_KEYWORDS = {"not-standard"}
+_BARE_PROVIDER_CTX = re.compile(
+    r"""(?:^|[^\w])(?:\w+\.)?prov\w*\s*(?:==|!=|=|:)\s*['"]([a-z][a-z0-9_-]{1,15})['"]"""
+    r"""|['"]([a-z][a-z0-9_-]{1,15})['"]\s*(?:==|!=)\s*(?:\w+\.)?prov\w*"""
+)
+
+_ALLOW_LINE_PY = "# provider-literal-allow"
+_ALLOW_BEGIN_PY = "# provider-literal-allow-begin"
+_ALLOW_END_PY = "# provider-literal-allow-end"
+_ALLOW_LINE_TS = "// provider-literal-allow"
+_ALLOW_BEGIN_TS = "// provider-literal-allow-begin"
+_ALLOW_END_TS = "// provider-literal-allow-end"
+
+
+def _is_ts(path: Path) -> bool:
+    return path.suffix in (".ts", ".tsx", ".js", ".mjs")
+
+
+def _strip_comments_and_docstrings(text: str, is_ts: bool) -> list[str | None]:
+    """Return per-line content with comments and string-literal docstrings
+    blanked to None (so the caller skips them). This is a pragmatic stripper:
+    it removes Python ``#``/triple-quoted docstrings and TS ``//``/``/* */``
+    and treats those lines as non-logic. It is conservative — it never
+    *adds* a violation, only removes lines that are clearly not logic.
+    """
+    lines = text.splitlines()
+    out: list[str | None] = []
+    in_block_doc = False
+    block_delim = ""
+    for raw in lines:
+        line = raw
+        if is_ts:
+            # /* ... */ block comments.
+            if in_block_doc:
+                if "*/" in line:
+                    line = line.split("*/", 1)[1]
+                    in_block_doc = False
+                else:
+                    out.append(None)
+                    continue
+            # strip /* on this line
+            while "/*" in line:
+                pre, rest = line.split("/*", 1)
+                if "*/" in rest:
+                    line = pre + rest.split("*/", 1)[1]
+                else:
+                    line = pre
+                    in_block_doc = True
+                    break
+            # strip // line comment (not inside a string — best effort)
+            if "//" in line:
+                line = _strip_ts_line_comment(line)
+        else:
+            # Python triple-quoted docstrings.
+            if in_block_doc:
+                if block_delim in line:
+                    line = line.split(block_delim, 1)[1]
+                    in_block_doc = False
+                else:
+                    out.append(None)
+                    continue
+            for delim in ('"""', "'''"):
+                while delim in line:
+                    pre, rest = line.split(delim, 1)
+                    if delim in rest:
+                        line = pre + " " + rest.split(delim, 1)[1]
+                    else:
+                        line = pre
+                        in_block_doc = True
+                        block_delim = delim
+                        break
+                if in_block_doc:
+                    break
+            # strip # line comment (best effort — not inside a string)
+            if "#" in line:
+                line = _strip_py_line_comment(line)
+        out.append(line)
+    return out
+
+
+def _strip_py_line_comment(line: str) -> str:
+    in_str = ""
+    for i, ch in enumerate(line):
+        if in_str:
+            if ch == in_str:
+                in_str = ""
+        elif ch in ("'", '"'):
+            in_str = ch
+        elif ch == "#":
+            return line[:i]
+    return line
+
+
+def _strip_ts_line_comment(line: str) -> str:
+    in_str = ""
+    i = 0
+    while i < len(line) - 1:
+        ch = line[i]
+        if in_str:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == in_str:
+                in_str = ""
+        elif ch in ("'", '"', "`"):
+            in_str = ch
+        elif ch == "/" and line[i + 1] == "/":
+            return line[:i]
+        i += 1
+    return line
+
+
+def _count_logic_literals(path: Path) -> int:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return 0
+    is_ts = _is_ts(path)
+    allow_line = _ALLOW_LINE_TS if is_ts else _ALLOW_LINE_PY
+    allow_begin = _ALLOW_BEGIN_TS if is_ts else _ALLOW_BEGIN_PY
+    allow_end = _ALLOW_END_TS if is_ts else _ALLOW_END_PY
+
+    raw_lines = text.splitlines()
+    stripped = _strip_comments_and_docstrings(text, is_ts)
+
+    n = 0
+    in_allow_region = False
+    for raw, code in zip(raw_lines, stripped):
+        if allow_begin in raw:
+            in_allow_region = True
+            continue
+        if allow_end in raw:
+            in_allow_region = False
+            continue
+        if in_allow_region:
+            continue
+        if allow_line in raw:
+            continue
+        if code is None or not code.strip():
+            continue
+        hits = len(_QUALIFIED.findall(code))
+        for m in _BARE_PROVIDER_CTX.finditer(code):
+            tok = next((g for g in m.groups() if g), None)
+            if tok and tok not in _NON_PROVIDER_KEYWORDS:
+                hits += 1
+        n += hits
+    return n
+
+
+def _load_baseline() -> dict[str, int]:
+    if not BASELINE_PATH.exists():
+        return {}
+    out: dict[str, int] = {}
+    for line in BASELINE_PATH.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split("\t", 1)
+        if len(parts) != 2:
+            continue
+        try:
+            out[parts[1]] = int(parts[0])
+        except ValueError:
+            continue
+    return out
+
+
+def _write_baseline(counts: dict[str, int]) -> None:
+    lines = [
+        "# provider-literal-baseline — provider/model literal counts per covered",
+        "# module (after stripping comments/docstrings and allow-regions).",
+        "# Generated by `tools/provider-literal-lint --all --update-baseline`.",
+        "# The lint BLOCKS any covered file that EXCEEDS its count, so this may",
+        "# only ratchet DOWN: mark a literal's home (data/adapter/test via an",
+        "# allow-region, or move it to catalog data) -> rerun --update-baseline",
+        "# -> the number drops. Goal state: every covered module at 0.",
+        "",
+    ]
+    for path in sorted(counts):
+        if counts[path] > 0:
+            lines.append(f"{counts[path]}\t{path}")
+    BASELINE_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _staged_files() -> list[Path]:
+    r = subprocess.run(
+        ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+    )
+    out = []
+    for name in r.stdout.splitlines():
+        if name in _COVERED:
+            p = REPO_ROOT / name
+            if p.exists():
+                out.append(p)
+    return out
+
+
+def _rel(p: Path) -> str:
+    try:
+        return str(p.resolve().relative_to(REPO_ROOT))
+    except ValueError:
+        return str(p)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description="Ratchet gate on provider/model-name literals in routing/"
+        "availability/catalog LOGIC (spec §Addendum 3.B three-homes rule).",
+    )
+    ap.add_argument("files", nargs="*", help="specific files to lint")
+    ap.add_argument("--all", action="store_true", help="lint all covered modules")
+    ap.add_argument("--staged", action="store_true", help="lint git-staged covered files")
+    ap.add_argument(
+        "--update-baseline", action="store_true",
+        help="regenerate the baseline from current counts (requires --all)",
+    )
+    args = ap.parse_args()
+
+    baseline = _load_baseline()
+
+    if args.update_baseline:
+        if not args.all:
+            print("--update-baseline requires --all", file=sys.stderr)
+            return 2
+        counts = {c: _count_logic_literals(REPO_ROOT / c) for c in _COVERED}
+        _write_baseline(counts)
+        total = sum(counts.values())
+        print(f"baseline written: {total} literal(s) across {len(_COVERED)} covered modules")
+        return 0
+
+    if args.all:
+        targets = [REPO_ROOT / c for c in _COVERED]
+    elif args.staged:
+        targets = _staged_files()
+    else:
+        targets = [Path(f) for f in args.files if _rel(Path(f)) in _COVERED]
+
+    violations = []
+    for p in targets:
+        rel = _rel(p)
+        if rel not in _COVERED or not p.exists():
+            continue
+        n = _count_logic_literals(p)
+        allowed = baseline.get(rel, 0)
+        if n > allowed:
+            violations.append((rel, n, allowed))
+
+    if violations:
+        print("✗ new provider/model literal(s) in covered logic (three-homes rule):\n")
+        for rel, n, allowed in violations:
+            print(f"  {rel}: {n} literal(s), baseline allows {allowed}")
+        print(
+            "\nProvider/model names belong in catalog DATA, provider ADAPTERS,\n"
+            "or TESTS — never in routing/availability/resolution logic. Either\n"
+            "move the name to catalog data, or (if it is genuinely a data/adapter\n"
+            "block) wrap it in `provider-literal-allow-begin/-end` and rerun\n"
+            "`tools/provider-literal-lint --all --update-baseline`, which leaves\n"
+            "a reviewable baseline diff.\n"
+            "\nSpec: docs/spec-model-rungs-and-roles-2026-06-09.md §Addendum 3.B"
+        )
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,296 @@
+{
+  "pkg_id": "p-3b4f5d29",
+  "pkg_version": "2026.06.08-1.1",
+  "gallery_version": "2026.06.08-1.1",
+  "schema_version": 5,
+  "manifest_type": "evolve_application",
+  "display_name": "Commitment Tracker",
+  "author": "evolve",
+  "description": "Captures commitments made in conversation into the Contacts memory layer, then surfaces overdue ones lazily at the start of each new conversation. The bot calls `commitments.py record` inline when it detects a phrase like 'I'll send X to Alex by Friday' (no separate transcript-scan sweep). A daily 03:30 launchd cron runs `commitments.py list-due` and writes the FOLLOWUP_DUE: lines to `memory/commitments/followups-cache.md`; the bot reads that cache once per session via an AGENTS.md instruction.",
+  "application_tags": [
+    "personal-productivity",
+    "executive-assistant",
+    "ea-suite",
+    "contacts",
+    "follow-up",
+    "productivity",
+    "task-management"
+  ],
+  "id": "app_commitment_tracker",
+  "name": "Commitment Tracker",
+  "status": "active",
+  "dependencies": [],
+  "app_dependencies": [
+    {
+      "pkg_id": "p-4136a932",
+      "display_name": "Contacts",
+      "required": true,
+      "reason": "Commitment Tracker writes commitments into memory/contacts/{slug}.md (the Contacts schema) and surfaces overdue items via `contacts.py list-due` (the FOLLOWUP_DUE: signal). Without Contacts there is no storage layer, so the tracker has nowhere to record."
+    }
+  ],
+  "requirements": {
+    "integrations": [],
+    "secrets": [],
+    "system": [],
+    "python_packages": []
+  },
+  "interface_contract": {
+    "populated_by_forge": false,
+    "extracted_at": null,
+    "data_files": [
+      {
+        "path": "memory/commitments/followups-cache.md",
+        "description": "Daily-refreshed cache of overdue commitments. Written by the cache-followups launchd cron at 03:30 local; read by the bot ONCE per conversation via the AGENTS.md session-greet instruction. Empty file means stay silent on commitments this session.",
+        "schema": {
+          "storage_format": "text — raw FOLLOWUP_DUE: lines from `commitments.py list-due` stdout. Empty file = nothing overdue.",
+          "fields": {}
+        }
+      }
+    ],
+    "cli": [
+      {
+        "command": "python3 scripts/commitments.py record",
+        "key_flags": [
+          "--person NAME",
+          "--text TEXT",
+          "--due YYYY-MM-DD (optional)"
+        ],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/commitments.py list-due",
+        "key_flags": [],
+        "output_signals": [
+          "FOLLOWUP_DUE:"
+        ]
+      },
+      {
+        "command": "python3 scripts/commitments.py mark-done",
+        "key_flags": [
+          "--person NAME",
+          "--text-contains SUBSTRING"
+        ],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/commitments.py status",
+        "key_flags": [],
+        "output_signals": []
+      }
+    ],
+    "key_paths": {
+      "cli":              "scripts/commitments.py",
+      "followups_cache":  "memory/commitments/followups-cache.md",
+      "cache_cron":       "scripts/commitment-tracker-cache-cron.sh",
+      "storage_via":      "scripts/contacts.py (Contacts app)"
+    },
+    "signal_prefixes": [
+      "FOLLOWUP_DUE:"
+    ],
+    "output_signal_formats": {
+      "FOLLOWUP_DUE:": "FOLLOWUP_DUE: {slug} | {commitment text}"
+    }
+  },
+  "files": [],
+  "install_job": null,
+  "improvement_history": [],
+  "identity": {
+    "purpose": "Make commitments made in conversation observable and time-bound. The user (or the bot, on the user's behalf) says 'I'll send the contract to Alice by Friday', the tracker captures it into Contacts, and at the right time the bot surfaces it as a follow-up so it doesn't slip. The tracker is the missing layer between transcript reality and persistent commitment memory.",
+    "scope_includes": [
+      "Expose `commitments.py record --person --text [--due]` that the bot calls inline when it detects a commitment phrase in the current turn",
+      "Expose `commitments.py list-due` that scans Contacts memory for past-due commitments and emits FOLLOWUP_DUE: signals",
+      "Expose `commitments.py mark-done --person --text-contains` that strikes through completed commitment lines in the Contacts file",
+      "Daily 03:30-local launchd cron runs `commitments.py list-due` and writes the FOLLOWUP_DUE: lines to `memory/commitments/followups-cache.md`",
+      "Session-start AGENTS.md instruction surfaces the cached follow-ups once per conversation — bot stays silent if the cache is empty",
+      "Session-start AGENTS.md instruction tells the bot to detect commitments inline (during normal turn handling), not via a separate scan sweep"
+    ],
+    "scope_excludes": [
+      "Owning the on-disk format for commitments — that belongs to Contacts (memory/contacts/{slug}.md)",
+      "Calendar integration or pre-meeting prep (Pre-Meeting Brief owns that)",
+      "Sending follow-up messages to third parties on behalf of the operator (the tracker only surfaces follow-ups to the operator)",
+      "Natural-language commitment detection logic in Python — detection is the bot's responsibility (LLM judgment), the script just records what the bot tells it to",
+      "Scanning historical email or external chat — only the bot's own conversation transcript is in scope",
+      "Multi-bot shared commitment stores — each bot owns its own commitments via its own Contacts files"
+    ],
+    "bot_interaction_pattern": "Inline + lazy cache. The bot calls `commitments.py record` inline when it judges (during normal turn handling) that the current operator turn contained a commitment — there is NO separate transcript-scan sweep. A daily 03:30 launchd cron runs `list-due` and writes overdue follow-ups to `memory/commitments/followups-cache.md`; the bot reads that cache ONCE at the start of a new conversation via an AGENTS.md instruction. The bot does NOT poll commitments on heartbeats — that was the regression this version fixes.",
+    "user": "The operator (the human making and receiving commitments) and the bot (which detects commitment phrases and records them). The tracker never surfaces commitments to anyone other than the operator."
+  },
+  "success_criteria": {
+    "observable_outcomes": [
+      "When the operator says 'I'll send X to Alice by Friday' in conversation, the bot records it inline during its reply — an entry appears under memory/contacts/alice.md's Commitments section before the bot finishes responding",
+      "After a commitment's due date passes, the next morning's 03:30 cron writes a FOLLOWUP_DUE: line into `memory/commitments/followups-cache.md`; the bot surfaces it on the first operator-initiated turn of any conversation that day",
+      "`commitments.py list-due` output format is byte-identical to `contacts.py list-due` so downstream consumers (e.g. Evening Sweep) parse one canonical FOLLOWUP_DUE: shape",
+      "`commitments.py mark-done` produces an append-only mutation of the Contacts file (strikethrough on the commitment line) and never deletes history",
+      "Bot consumes ZERO heartbeat tokens on commitment polling (no HEARTBEAT.md section ships with this package)"
+    ],
+    "failure_signals": [
+      "A commitment is uttered in conversation but never appears under any Contacts file — bot's inline-detect step is silent or `record` is failing",
+      "Past-due commitments are not surfaced at session start — cache cron is not running or AGENTS.md instruction has drifted",
+      "list-due output differs from contacts.py list-due — the contract is broken",
+      "mark-done deletes a commitment line instead of striking it through",
+      "`memory/commitments/followups-cache.md` is touched on every heartbeat (regression to old polling pattern)"
+    ],
+    "quality_bar": {
+      "minimum": "Operator can say 'I'll do X for Y by Friday', then ask 'what do I owe Y?' and see the commitment surfaced. The next morning, the bot mentions any overdue commitments in the first reply of that day's conversation.",
+      "excellent": "Detection precision is high enough that operators don't see false-positive commitments (e.g. 'I'll think about it' is not recorded). Overdue commitments surface naturally in the bot's first reply of each new conversation, drawn from the daily cache. mark-done is offered as a one-line bot suggestion when the operator confirms completion in conversation."
+    }
+  },
+  "constraints": {
+    "privacy": [
+      "Commitment text often references specific people and obligations — entries live only in memory/contacts/{slug}.md (Contacts app) and the followups cache. Never in shared logs, never in audit emissions beyond the slug + first 80 chars of text in FOLLOWUP_DUE:",
+      "The followups cache mirrors `list-due` stdout (FOLLOWUP_DUE: lines only). Rotated each cron run, no history retained."
+    ],
+    "safety": [
+      "All Contacts writes go through `contacts.py add-commitment` (the canonical CLI) — never write to memory/contacts/{slug}.md directly. This preserves the append-only invariant and slug normalization.",
+      "mark-done modifies an existing line via strikethrough — the script must preserve the original commitment text and date verbatim, only adding `~~ ~~` around the text portion",
+      "list-due is read-only with respect to Contacts — never mutate while iterating",
+      "Do NOT add a HEARTBEAT.md section for this app. Heartbeat polling of `list-due` or transcript scans is explicitly forbidden — that pattern was retired in pkg_version 2026.06.08-1.1 after the token-waste incident."
+    ],
+    "dependencies": [
+      "Contacts (p-4136a932) — REQUIRED. `scripts/contacts.py` must exist; commitments.py shells out to it for storage."
+    ],
+    "boundaries": [
+      "Detection is the bot's job, not the script's — `record` accepts whatever the bot supplies; no NLP heuristics in Python",
+      "list-due cadence is owned by launchd (cron at 03:30 local). The CLI does not self-throttle; manual invocations during the day are always allowed.",
+      "Inline detection happens during normal turn handling, not via a separate scan sweep. No scan cursor file.",
+      "Scope is the bot's own conversation transcript; no email or external-chat scanning in v1"
+    ]
+  },
+  "build_spec": "# Commitment Tracker — Build Specification\n\n## Overview\n\nA thin behavior layer on top of the Contacts app. Three CLI subcommands (`record`, `list-due`, `mark-done`, `status`), a daily 03:30 launchd cron that refreshes a follow-ups cache, and two AGENTS.md session-start instructions (one for inline detection, one for surfacing the cache).\n\nThe tracker does NOT own the commitment data format — Contacts does. The tracker exists to make commitment capture and surfacing routine without requiring the operator to memorize Contacts CLI syntax.\n\n**Prerequisite:** Contacts (p-4136a932) must already be installed — `scripts/contacts.py` is the storage gateway.\n\n**v2026.06.08-1.1 architecture change:** the two heartbeat instructions from v1.0 (transcript-scan + daily-followups) were retired after the 2026-06-08 incident — they billed per-heartbeat tokens even when there were no new turns to scan and nothing was due. Replaced with: (a) inline detection during normal turn handling (no separate sweep), and (b) a daily launchd cron + lazy-read cache for follow-ups.\n\n## Python invocation\n\nUse `python3` (let the deploy environment resolve the binary). Do not hardcode venv paths.\n\n## File layout\n\n```\nscripts/\n  commitments.py                              ← main CLI (record | list-due | mark-done | status)\n  commitment-tracker-cache-cron.sh            ← launchd wrapper: runs list-due, writes the cache\nmemory/\n  commitments/\n    followups-cache.md                        ← daily-refreshed cache of FOLLOWUP_DUE: lines\n```\n\nNo `scan-cursor.json` — inline detection means the bot processes each operator turn exactly once at arrival, so there is nothing to bookmark.\n\n## scripts/commitments.py\n\n### Subcommands\n\n```\ncommitments.py record    --person NAME --text TEXT [--due YYYY-MM-DD]\ncommitments.py list-due\ncommitments.py mark-done --person NAME --text-contains SUBSTRING\ncommitments.py status\n```\n\n### record\n\nShell out to Contacts:\n\n```python\nimport subprocess, sys\nfrom pathlib import Path\n\ndef record(workspace: Path, person: str, text: str, due: str | None) -> int:\n    contacts_cli = workspace / \"scripts\" / \"contacts.py\"\n    if not contacts_cli.exists():\n        print(\"ERROR: Contacts app not installed (scripts/contacts.py missing)\", file=sys.stderr)\n        return 2\n    cmd = [\"python3\", str(contacts_cli), \"add-commitment\",\n           \"--person\", person, \"--text\", text]\n    if due:\n        cmd += [\"--due\", due]\n    result = subprocess.run(cmd, cwd=str(workspace), capture_output=True, text=True, timeout=10)\n    sys.stdout.write(result.stdout)\n    sys.stderr.write(result.stderr)\n    return result.returncode\n```\n\nNo deduplication at this layer — the Contacts file is append-only and the bot is expected to record each fresh commitment exactly once. Re-recording is harmless but produces a duplicate line; the scan cursor (below) is the dedup mechanism for heartbeat-driven scans.\n\n### list-due\n\nShell out to Contacts and pass through:\n\n```python\ndef list_due(workspace: Path) -> int:\n    contacts_cli = workspace / \"scripts\" / \"contacts.py\"\n    if not contacts_cli.exists():\n        return 2\n    result = subprocess.run(\n        [\"python3\", str(contacts_cli), \"list-due\"],\n        cwd=str(workspace), capture_output=True, text=True, timeout=10,\n    )\n    sys.stdout.write(result.stdout)\n    sys.stderr.write(result.stderr)\n    return result.returncode\n```\n\n**Contract:** output is byte-identical to `contacts.py list-due` — the same `FOLLOWUP_DUE: {slug} | {text}` lines. Downstream consumers like Evening Sweep parse one canonical format.\n\n### mark-done\n\nLocate the unique commitment line in the contact file and replace its text portion with `~~text~~`:\n\n```python\ndef mark_done(workspace: Path, person: str, contains: str) -> int:\n    slug = person.strip().lower().replace(\" \", \"-\")\n    contact_file = workspace / \"memory\" / \"contacts\" / f\"{slug}.md\"\n    if not contact_file.exists():\n        print(f\"No contact file for {person}\", file=sys.stderr)\n        return 1\n    text = contact_file.read_text()\n    lines = text.splitlines(keepends=True)\n    matches = [i for i, ln in enumerate(lines)\n               if ln.startswith(\"- \") and contains in ln and \"~~\" not in ln]\n    if len(matches) == 0:\n        print(\"No matching commitment line found\", file=sys.stderr)\n        return 1\n    if len(matches) > 1:\n        print(f\"Ambiguous: {len(matches)} matching lines. Be more specific.\", file=sys.stderr)\n        return 1\n    i = matches[0]\n    # Replace the text portion between the date prefix and any [due:] suffix\n    line = lines[i].rstrip(\"\\n\")\n    # Format: '- YYYY-MM-DD: TEXT [due: YYYY-MM-DD]?'\n    if \": \" not in line:\n        return 1\n    prefix, rest = line.split(\": \", 1)\n    if \" [due:\" in rest:\n        text_part, due_part = rest.split(\" [due:\", 1)\n        due_part = \" [due:\" + due_part\n    else:\n        text_part, due_part = rest, \"\"\n    lines[i] = f\"{prefix}: ~~{text_part}~~{due_part}\\n\"\n    # Atomic write\n    import os, tempfile\n    fd, tmp = tempfile.mkstemp(dir=contact_file.parent, suffix=\".tmp\")\n    with os.fdopen(fd, \"w\") as f:\n        f.writelines(lines)\n    os.replace(tmp, contact_file)\n    print(f\"Marked done: {text_part.strip()}\")\n    return 0\n```\n\nIf no match or ambiguous: exit non-zero with a hint, do not mutate. The bot is expected to retry with a longer `--text-contains` substring.\n\n### status\n\nPrint a one-screen summary: count of contacts files with commitments, count of past-due, count of struck-through (done) lines, last scan cursor timestamp.\n\n## Scheduled Behavior — launchd cron + session-start instructions\n\nThree `scheduled_actions[]` entries are declared on this manifest (below). Phase 4.5 reads them and dispatches to `install_launchd_command_action` (for the cron) or `install_heartbeat_instruction` (for the AGENTS.md session_instructions). None of them use HEARTBEAT.md.\n\n**Action 1 — `commitment-tracker-cache-followups`** (`mechanism: launchd`). Fires daily at 03:30 local via `StartCalendarInterval {Hour=3, Minute=30}`. Calls `scripts/commitment-tracker-cache-cron.sh` which runs `python3 scripts/commitments.py list-due > memory/commitments/followups-cache.md` (atomically via temp file + os.replace). If nothing is overdue, the file is zero bytes — that empty signal tells the session-greet instruction to stay silent.\n\n**Action 2 — `commitment-tracker-session-greet`** (`mechanism: oc_session_instruction`). Installs a `## Commitment Tracker — Session Greet` section in AGENTS.md. On the first turn of an operator-initiated session, the bot reads `memory/commitments/followups-cache.md`; if non-empty, surfaces the FOLLOWUP_DUE: lines naturally in its first reply. If empty/missing, stays silent on commitments unless asked. Fires once per session, NOT per heartbeat.\n\n**Action 3 — `commitment-tracker-detect-inline`** (`mechanism: oc_session_instruction`). Installs a `## Commitment Tracker — Detect Inline` section in AGENTS.md. Throughout the session, when an operator turn contains a genuine commitment phrase, the bot calls `python3 scripts/commitments.py record --person NAME --text TEXT [--due DATE]` inline as part of its normal reply. No separate transcript-scan sweep.\n\n## scripts/commitment-tracker-cache-cron.sh\n\n```bash\n#!/bin/bash\n# commitment-tracker-cache-cron.sh — launchd wrapper.\n# Runs list-due and writes the output to memory/commitments/followups-cache.md\n# atomically. Quiet on success; errors to /tmp.\n\nWORKSPACE=\"/Users/{bot_id}/.openclaw/workspace\"\nCACHE=\"$WORKSPACE/memory/commitments/followups-cache.md\"\nLOGFILE=\"/tmp/{bot_id}-commitment-tracker-cache.log\"\n\ncd \"$WORKSPACE\" || exit 1\nmkdir -p \"$(dirname \"$CACHE\")\"\n\nTMP=$(mktemp \"$(dirname \"$CACHE\")/.cache.XXXXXX\")\nif /usr/bin/python3 \"$WORKSPACE/scripts/commitments.py\" list-due > \"$TMP\" 2>> \"$LOGFILE\"; then\n  mv \"$TMP\" \"$CACHE\"\nelse\n  echo \"$(date -u +%FT%TZ) list-due failed; previous cache preserved\" >> \"$LOGFILE\"\n  rm -f \"$TMP\"\nfi\n\nexit 0\n```\n\nMake it executable: `chmod +x scripts/commitment-tracker-cache-cron.sh`.\n\nThe launchd plist is rendered by Phase 4.5's `install_launchd_command_action` from `scheduled_actions[*].install` — do NOT author it in this script.\n\n## Test surface\n\n```bash\npython3 -m py_compile scripts/commitments.py\npython3 scripts/commitments.py status\n# Expected: prints zero counts on a fresh install\npython3 scripts/commitments.py record --person \"Test Person\" --text \"Test commitment\" --due 2099-01-01\n# Expected: shells to contacts.py, returns 0. memory/contacts/test-person.md should now exist.\npython3 scripts/commitments.py list-due\n# Expected: no output (due date is in the future)\npython3 scripts/commitments.py mark-done --person \"Test Person\" --text-contains \"Test commitment\"\n# Expected: 'Marked done: Test commitment'. The line in memory/contacts/test-person.md should be struck through.\n```\n\n## Provenance marker\n\n```python\n# evolve: pkg=p-3b4f5d29 file=f-XXXXXXXX@<version>\n```\n\n## What NOT to include\n\n- **No HEARTBEAT.md section for this app.** Heartbeat-driven polling of `list-due` or transcript sweeps burns tokens on every bot turn even when nothing is overdue and no new commitments are in flight — that was the 2026-06-08 regression this version fixes. If a future reviewer asks 'why not heartbeat?', the answer is the cron + session-greet + inline-detect trio gives the same coverage at a fraction of the cost.\n- No NLP / regex commitment detection in Python — the bot's LLM is the detector, operating inline.\n- No `memory/commitments/scan-cursor.json` (or any other scan bookmark). Inline detection means no re-scan, so no bookmark is needed.\n- No direct writes to memory/contacts/{slug}.md (except the targeted strikethrough in mark-done) — all other writes go through contacts.py.\n- No openclaw.json mutation (Phase 4.5 installs the launchd plist and the two AGENTS.md sections; that's all).\n- No background daemons or sleep loops (launchd handles cadence).\n- No `/tmp` log files written from the Python script (logs go to stdout/stderr; the cron wrapper redirects to `/tmp/{bot_id}-commitment-tracker-cache.log`).\n",
+  "example_triggers": [
+    "I'll send the contract to Alice by Friday",
+    "Track that I owe Bob the Q2 numbers",
+    "What have I committed to this week?",
+    "Mark my Alice commitment done",
+    "Any commitments I've missed?"
+  ],
+  "test_cases": [
+    {
+      "trigger": "I told Alice I'd send her the contract by Friday — track that",
+      "expected": "Bot calls commitments.py record --person 'Alice' --text 'send contract' --due 2026-06-12 (or appropriate Friday). memory/contacts/alice.md gains a commitment line under ## Commitments."
+    },
+    {
+      "trigger": "Any commitments I've missed?",
+      "expected": "Bot calls commitments.py list-due. Output is the FOLLOWUP_DUE: lines from Contacts. Bot summarizes them as a short list on the primary channel."
+    },
+    {
+      "trigger": "I sent the contract to Alice — mark that done",
+      "expected": "Bot calls commitments.py mark-done --person 'Alice' --text-contains 'contract'. The commitment line in alice.md is struck through but not deleted."
+    }
+  ],
+  "scheduled_actions": [
+    {
+      "id": "commitment-tracker-cache-followups",
+      "mechanism": "launchd",
+      "trigger": {
+        "kind": "launchd",
+        "schedule": "daily_at_03_30_local"
+      },
+      "state": "active",
+      "quality": "verified",
+      "safety_net_for": [],
+      "install": {
+        "plist_label": "ai.evolve.${bot_id}.commitment-tracker-cache-followups",
+        "command": "/bin/bash ${workspace}/scripts/commitment-tracker-cache-cron.sh",
+        "cwd": "${workspace}",
+        "schedule": {"cron": {"Hour": 3, "Minute": 30}},
+        "exec_policy": "inherit"
+      },
+      "inputs": [
+        {"path": "memory/contacts/", "kind": "data_dir"}
+      ],
+      "outputs": [
+        {"path": "memory/commitments/followups-cache.md", "kind": "data_file"}
+      ],
+      "delivery_contract": {
+        "user_facing": false,
+        "heal": "none"
+      },
+      "summary": "Daily 03:30-local launchd cron — runs `commitments.py list-due` and writes the FOLLOWUP_DUE: lines to `memory/commitments/followups-cache.md`. Replaces the every-heartbeat daily-followups instruction. delivery_contract declares user_facing:false explicitly — this action refreshes a cache; the person-facing surface is the session-greet instruction."
+    },
+    {
+      "id": "commitment-tracker-session-greet",
+      "mechanism": "oc_session_instruction",
+      "trigger": {
+        "kind": "session_start",
+        "schedule": "session_start",
+        "evidence_path": "AGENTS.md",
+        "evidence_locator": "## Commitment Tracker — Session Greet"
+      },
+      "state": "active",
+      "quality": "verified",
+      "safety_net_for": [],
+      "install": {
+        "file": "AGENTS.md",
+        "section_anchor": "## Commitment Tracker — Session Greet",
+        "body": "At the start of a fresh operator-initiated conversation, read `memory/commitments/followups-cache.md`. If the file exists and is non-empty, surface its `FOLLOWUP_DUE: {slug} | {text}` lines naturally as a short bulleted reminder in your first reply — name the person and the commitment text plainly. If the file is empty or absent, say nothing about commitments and stay silent on this topic for the rest of the session unless the operator asks.\n\nDo NOT run `commitments.py list-due` on every heartbeat or every turn. A daily launchd cron (`scripts/commitment-tracker-cache-cron.sh`) at 03:30 local refreshes this cache. Polling the CLI on heartbeats is a regression and was explicitly retired in pkg_version 2026.06.08-1.1.",
+        "command": "cat memory/commitments/followups-cache.md",
+        "output_signals": ["FOLLOWUP_DUE:"],
+        "silent_when_no_output": true,
+        "exec_policy": "inherit"
+      },
+      "inputs": [
+        {"path": "memory/commitments/followups-cache.md", "kind": "data_file"}
+      ],
+      "outputs": [
+        {"kind": "session_message", "channel": "primary"}
+      ],
+      "summary": "Once-per-conversation lazy read of the followups cache. Zero heartbeat cost."
+    },
+    {
+      "id": "commitment-tracker-detect-inline",
+      "mechanism": "oc_session_instruction",
+      "trigger": {
+        "kind": "session_start",
+        "schedule": "session_start",
+        "evidence_path": "AGENTS.md",
+        "evidence_locator": "## Commitment Tracker — Detect Inline"
+      },
+      "state": "active",
+      "quality": "verified",
+      "safety_net_for": [],
+      "install": {
+        "file": "AGENTS.md",
+        "section_anchor": "## Commitment Tracker — Detect Inline",
+        "body": "Throughout this session, when you process an operator turn that contains a genuine commitment (statement where the operator commits to doing something for a named person by a specific time — e.g. 'I'll send the contract to Alice by Friday', 'I owe Bob the Q2 numbers', 'I'll call Carol next Tuesday'), call `python3 scripts/commitments.py record --person NAME --text TEXT [--due YYYY-MM-DD]` inline as part of your normal reply. Do NOT run a separate transcript-scan sweep — detect commitments as turns arrive.\n\nBe conservative — vague intent ('I'll think about it', 'maybe later') is NOT a commitment. The Contacts file is append-only, so re-recording produces a duplicate line; trust your judgment in the current turn and do not re-scan past turns.",
+        "command": "python3 scripts/commitments.py record",
+        "output_signals": [],
+        "silent_when_no_output": true,
+        "exec_policy": "inherit"
+      },
+      "inputs": [],
+      "outputs": [
+        {"path": "memory/contacts/{slug}.md", "kind": "data_file"}
+      ],
+      "summary": "Inline commitment detection during normal turn handling. Replaces the every-heartbeat transcript-scan that polled even when no new operator turns existed."
+    }
+  ],
+  "usage": {
+    "model": "user-initiated",
+    "trigger_recognition": {
+      "pattern": "When the user (or you, summarising for the user) commits to something with a time element, record it. When the user asks what they owe whom, list it.",
+      "hint_words": [
+        "I'll send",
+        "I'll get back to",
+        "I owe",
+        "track that",
+        "commitment",
+        "what I committed to",
+        "what's overdue"
+      ],
+      "requires_keyword": false
+    },
+    "auto_capture": {
+      "enabled": true,
+      "sources": [
+        "user message"
+      ]
+    },
+    "how_to_use": "When the user states a commitment to a person ('I'll send the contract to Alice by Friday'), call `record` with the person, what, and deadline — don't ask for confirmation, the user already committed it. When the user asks 'what have I committed to?' / 'what's overdue?', call `list-due`. When something is done, call `mark-done`.",
+    "bot_voice_examples": [
+      "Tracked — Alice, contract by Friday.",
+      "You owe Bob the Q2 numbers (Thursday) and Alice a contract draft (today).",
+      "Marked done."
+    ]
+  }
+}

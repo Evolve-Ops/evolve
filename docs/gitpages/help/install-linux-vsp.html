@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Install Evolve on Linux (Ubuntu / VPS) · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">install-linux</span><span class="chip">installation</span><span class="chip">vps</span><span class="chip">ssh-tunnel</span><span class="chip">remote-access</span></div><div class="reviewed">Last reviewed 2026-06-23</div></div><h1 id="install-evolve-on-linux-ubuntu-vps">Install Evolve on Linux (Ubuntu / VPS)</h1>
+<p>End-to-end setup on a dedicated, always-on Linux box — a cloud VPS or a
+home server running Ubuntu/Debian. The setup wizard is the same as on macOS, but
+Linux has a handful of platform-specific landmines that pass the wizard and only
+bite later. This guide calls each one out so you can verify it now rather than
+discover it in production.</p>
+<p>Gather your prerequisites and keys from the <strong><a href="installation.html">Installing Evolve</a></strong>
+hub first. For the full operator-grade reference behind this guide — including
+deeper diagnostics — see the
+<a href="../runbook-linux-vps-install.md">Linux/VPS install runbook</a>.</p>
+<hr>
+<h2 id="the-linux-layout-dont-fight-it">The Linux layout (don't fight it)</h2>
+<p>Evolve uses fixed paths on Linux. The most common single mistake is assuming the
+macOS layout — bot homes live under <code>/home/&lt;bot&gt;</code>, <strong>never</strong> <code>/Users/&lt;bot&gt;</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>What it is</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/var/lib/evolve</code></td>
+<td>Shared directory — pod-wide state</td>
+</tr>
+<tr>
+<td><code>/var/lib/evolve/repo</code></td>
+<td>The deploy checkout (a <strong>child</strong> of the shared directory — this matters)</td>
+</tr>
+<tr>
+<td><code>/var/lib/evolve-venv</code></td>
+<td>The virtual environment whose Python runs Evolve</td>
+</tr>
+<tr>
+<td><code>/var/lib/evolve-plugin</code></td>
+<td>The built OpenClaw plugin</td>
+</tr>
+<tr>
+<td><code>/etc/systemd/system</code></td>
+<td>Daemon units — managed with <code>systemctl</code>, not <code>launchctl</code></td>
+</tr>
+<tr>
+<td><code>/home/&lt;bot&gt;</code></td>
+<td>Bot home directories</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="phase-0-host-prerequisites">Phase 0 — Host prerequisites</h2>
+<table>
+<thead>
+<tr>
+<th>Requirement</th>
+<th>Why it matters</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Dedicated, <strong>always-on</strong> VPS (Ubuntu 24.04 LTS recommended)</td>
+<td>The wizard assumes the box won't sleep or reboot out from under the gateways.</td>
+</tr>
+<tr>
+<td><strong>root or full-sudo</strong> login</td>
+<td>The wizard creates users, writes systemd units, and installs sudoers drop-ins.</td>
+</tr>
+<tr>
+<td><strong>The <code>acl</code> package</strong> (<code>sudo apt-get install -y acl</code>)</td>
+<td><code>setfacl</code>/<code>getfacl</code> <em>are</em> the Linux permission model. It isn't on minimal Ubuntu, and <strong>without it every permission grant silently does nothing.</strong> Install it first.</td>
+</tr>
+<tr>
+<td>Python ≥3.10, Node ≥20, git, <code>ca-certificates</code></td>
+<td>Runtime, plugin build, and update pulls.</td>
+</tr>
+<tr>
+<td><strong>Only inbound port 22 open</strong></td>
+<td>The admin UI binds to localhost — reach it over an SSH tunnel (see the end of this guide). <strong>Do not expose it publicly.</strong></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>On stock Ubuntu 24.04, a bare <code>pip install</code> is refused with
+<code>externally-managed-environment</code>. Install <code>uv</code> with the standalone installer
+(<code>curl -LsSf https://astral.sh/uv/install.sh | sh</code>) rather than fighting pip.</p>
+</blockquote>
+<hr>
+<h2 id="phase-1-clone-the-repo-as-the-evolve-user-and-build-the-env">Phase 1 — Clone the repo (as the <code>evolve</code> user) and build the env</h2>
+<p>On Linux the deploy checkout must be a real clone <strong>owned by a dedicated
+<code>evolve</code> service account and authenticated by a read-only deploy key</strong> — the same
+key the auto-updater later uses to pull. Cloning as root, or via a personal
+GitHub token, puts the credential in the wrong place and the updater can't reuse
+it.</p>
+<ol>
+<li>Create the service account: <code>sudo useradd -m -r evolve</code></li>
+<li>Generate an SSH key <strong>as <code>evolve</code></strong> (e.g. <code>/home/evolve/.ssh/evolve-repo</code>)</li>
+<li>Add the public key to the repository on GitHub as a <strong>read-only deploy key</strong>
+   (leave "Allow write access" <strong>unchecked</strong>)</li>
+<li>Point <code>evolve</code>'s <code>~/.ssh/config</code> at the key</li>
+<li>Clone <strong>as <code>evolve</code></strong> into <code>/var/lib/evolve/repo</code></li>
+<li>Verify access:
+   <code>bash
+   sudo -u evolve ssh -T git@github.com      # "successfully authenticated"
+   sudo evolve-admin repo-pull               # fast-forwards or "up to date"</code></li>
+</ol>
+<p>Then build the Python environment and the plugin:</p>
+<pre><code class="language-bash">cd /var/lib/evolve/repo
+uv sync --locked        # resolves the admin + analyzer packages
+# Build the plugin into /var/lib/evolve-plugin with:  npm ci   (NOT npm install)
+</code></pre>
+<hr>
+<h2 id="phase-2-run-the-setup-wizard">Phase 2 — Run the setup wizard</h2>
+<pre><code class="language-bash">EVOLVE_PLATFORM=linux /var/lib/evolve-venv/bin/evolve-admin setup --fresh
+</code></pre>
+<p>A Linux box already selects the Linux profile automatically;
+<code>EVOLVE_PLATFORM=linux</code> just makes it explicit. The wizard is the same idempotent
+17-step flow as on macOS — it creates bot accounts under <code>/home/&lt;bot&gt;</code>, asks for
+your Anthropic key, Telegram token, and chat ID, sets up the shared directory and
+its permissions, installs the systemd units, and provisions the primary bot.</p>
+<p>After it finishes, the admin server and the MCP bridge run continuously; <strong>every
+other unit is timer-triggered</strong>, so seeing many <code>ai.evolve.*</code> units listed as
+<code>inactive (dead)</code> is normal — they fire on a schedule, not continuously.</p>
+<hr>
+<h2 id="phase-3-verify-the-linux-landmines">Phase 3 — Verify the Linux landmines</h2>
+<p>These five checks each correspond to a real failure that passes the wizard but
+breaks later. A genuinely clean install has none of them lurking — run each one.</p>
+<blockquote>
+<p>⚠️ <strong>1. ACL mask clobber (the big one).</strong> On Linux, <code>chmod</code> recalculates the
+POSIX ACL mask. Any hardening <code>chmod</code> on a <code>.openclaw</code> directory can clamp the
+<code>evolve</code> account's access to nothing — silently, pod-wide. Verify <code>evolve</code>
+still has effective read/traverse on every bot:</p>
+<p>```bash
+getfacl /home/*/.openclaw 2&gt;/dev/null | grep -E 'user:evolve|mask'</p>
+<h1 id="want-userevolver-x-and-maskr-x">want:  user:evolve:r-x  and  mask::r-x</h1>
+<h1 id="bad-effective-or-mask-">bad:   #effective:---   or   mask::---</h1>
+<p>```</p>
+<p>⚠️ <strong>2. Nested deploy checkout → frozen fleet.</strong> Because <code>/var/lib/evolve/repo</code>
+sits <em>inside</em> the shared directory, a recursive permission pass over the shared
+directory can flip the checkout's git file modes and wedge the next update
+pull — freezing your pod on stale code. Pin the guard and confirm the checkout
+is clean:</p>
+<p><code>bash
+git -C /var/lib/evolve/repo config core.fileMode      # expect: false
+sudo -u evolve git -C /var/lib/evolve/repo status      # expect: clean</code></p>
+<p>⚠️ <strong>3. <code>npm ci</code>, never <code>npm install</code>.</strong> Building the plugin with
+<code>npm install</code> rewrites <code>package-lock.json</code>, which dirties the deploy checkout
+and wedges the next update pull — the same freeze as landmine 2, different
+trigger. Always use <code>npm ci</code>.</p>
+<p>⚠️ <strong>4. Secrets re-widened by a recursive permission pass.</strong> A recursive
+<code>chmod -R a+rX</code> over the shared directory makes every secret world-readable
+(this is how an API key once leaked). The tree is re-tightened automatically,
+but confirm nothing token-bearing is world-readable:</p>
+<p>```bash
+sudo find /var/lib/evolve -name '<em>.json' -perm -o+r \
+  ( -name 'openclaw.json' -o -name 'auth-profiles.json' -o -path '</em>keystore*' )</p>
+<h1 id="expect-no-output">expect: no output</h1>
+<p>```</p>
+<p>⚠️ <strong>5. Python 3.12 changes how missing files report.</strong> On Python 3.12, a file
+existence check under a locked-down (<code>0700</code>) parent <em>raises</em> an error instead of
+returning "not found" as it did on 3.11. This is already guarded in current
+code, but it's the failure family to recognize if a daemon dies with a bare
+permission error from a file probe.</p>
+</blockquote>
+<hr>
+<h2 id="phase-4-known-unresolved-gap-read-before-declaring-done">Phase 4 — Known unresolved gap (read before declaring "done")</h2>
+<p>Be honest with yourself about one current limitation on Linux:</p>
+<blockquote>
+<p>🚧 <strong>The <code>evolve</code> service account has no <code>openclaw.json</code> on Linux.</strong></p>
+<p>On Linux the bot gateway runs under a separate <code>evo</code> account, so the <code>evolve</code>
+service account is provisioned without its own OpenClaw config file. The
+consequence, confirmed on a live box: the built-in <strong>security CVE-scan app is
+quarantined and cannot run</strong>. The wizard correctly reports this as <em>deferred</em>
+rather than failed — it does not crash the install.</p>
+<p>This is a known limitation tracked by the maintainers; <strong>it is not yet fixed in
+code.</strong> Until it is, a Linux pod either runs the CVE scan dark, or you apply one
+manual remediation: provision <code>/home/evolve/.openclaw/openclaw.json</code> (a headless
+config), set it <code>evolve</code>-owned and <code>0600</code>, re-assert the <code>evolve</code> read-ACL (see
+landmine 1), then re-run <code>sudo evolve-admin install-infra-jobs</code>.</p>
+</blockquote>
+<p>Detect the gap:</p>
+<pre><code class="language-bash">ls -l /home/evolve/.openclaw/openclaw.json 2&gt;&amp;1   # &quot;No such file&quot; on a current Linux pod
+</code></pre>
+<p>macOS is unaffected — there the <code>evolve</code> account <em>is</em> the gateway account, so the
+file exists.</p>
+<hr>
+<h2 id="accessing-the-dashboard-over-an-ssh-tunnel">Accessing the dashboard over an SSH tunnel</h2>
+<p>The admin UI binds to localhost on the VPS and is never exposed publicly. Reach
+it by forwarding the port over your existing SSH connection:</p>
+<pre><code class="language-bash">ssh -N -L 5050:127.0.0.1:5050 &lt;user&gt;@&lt;vps-host&gt;
+# then open http://127.0.0.1:5050 in your browser
+</code></pre>
+<p>Once it's up, walk the Alerts / Reports page to confirm there are no firing
+signals. For a private, persistent path from your laptop and phone — and to
+install the dashboard as an app — set up <a href="pwa-install.html">Tailscale and HTTPS</a>.</p>
+<hr>
+<p>For the deep operator reference (full account model, diagnostics, and the
+verification one-liner), see the
+<a href="../runbook-linux-vps-install.md">Linux/VPS install runbook</a>.</p>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/install-linux-vsp.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>

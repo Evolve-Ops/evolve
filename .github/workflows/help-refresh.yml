@@ -1,0 +1,123 @@
+name: help-refresh
+
+# Weekly knowledge-refresh routine for the public help corpus (docs/help/).
+#
+# Implements docs/help/README.md §"Weekly knowledge-refresh routine" via
+# tools/help-refresh. Every Monday it scans the prior week's merged PRs, finds
+# help docs whose concepts were touched AND are overdue for review (>30 days),
+# bumps their `last_reviewed`, and (re)writes docs/help/REVIEW-QUEUE.md mapping
+# each affected doc to the PRs a human must verify it against. It then opens a
+# HUMAN-GATED review PR — it NEVER auto-merges, and it is a clean no-op when the
+# window has zero candidate PRs (no empty PR is opened).
+#
+# This is meta/dev tooling: it touches only docs/help/ and never ships to pods.
+
+on:
+  schedule:
+    # Mondays at 13:00 UTC. Cron has no timezone; pick a quiet hour.
+    - cron: "0 13 * * 1"
+  workflow_dispatch: {}        # allow an operator to run it on demand
+
+# Least-privilege: the default GITHUB_TOKEN, scoped to push a branch and open a
+# PR. No extra secret to invent (see the AUTH note on the run steps below).
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  # Never let two refresh runs race on the same branch.
+  group: help-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      # AUTH: tools/help-refresh calls `gh pr list` and the next step calls
+      # `gh pr create`. The gh CLI reads GH_TOKEN. The auto-provisioned
+      # GITHUB_TOKEN + the `permissions:` block above (contents + pull-requests
+      # write) is sufficient — this matches how the repo's other gh-driven
+      # automation authenticates and invents no new secret.
+      #
+      # KNOWN TRADE-OFF: PRs opened with GITHUB_TOKEN do NOT trigger other
+      # workflows (GitHub's infinite-loop guard), so CI does not auto-run on the
+      # refresh PR. That is fine for a human-gated docs PR — the reviewer pushes
+      # a trivial commit or re-runs checks as part of review. If you want CI to
+      # fire automatically on the refresh PR, create a fine-grained PAT (scopes:
+      # contents:write, pull-requests:write), store it as secrets.HELP_REFRESH_PAT,
+      # and swap GH_TOKEN to ${{ secrets.HELP_REFRESH_PAT }} on both gh steps.
+      - name: Run the weekly knowledge refresh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 tools/help-refresh
+
+      - name: Open the human-gated review PR (only if anything changed)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # Zero-candidate / nothing-stale run → the tool wrote no files → clean
+          # tree → no PR. This is the "safe with zero candidate PRs" guarantee.
+          if [ -z "$(git status --porcelain docs/help)" ]; then
+            echo "help-refresh: no candidate-driven changes this week — no PR opened."
+            exit 0
+          fi
+
+          run_date="$(date -u +%F)"
+          branch="help-refresh/${run_date}"
+          title="docs(help): weekly knowledge refresh ${run_date}"
+
+          # Idempotent: if this week's review PR is already open, don't duplicate it.
+          existing="$(gh pr list --head "$branch" --state open --json number --jq 'length')"
+          if [ "$existing" != "0" ]; then
+            echo "help-refresh: a review PR for ${branch} is already open — skipping."
+            exit 0
+          fi
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git checkout -b "$branch"
+          git add docs/help
+          git commit -m "$title"
+          git push --force-with-lease -u origin "$branch"
+
+          # PR body is backtick-free on purpose (an unquoted heredoc would eval
+          # backticks / $(...)); the changelog detail lives in REVIEW-QUEUE.md.
+          cat > /tmp/help-refresh-body.md <<EOF
+          Automated weekly knowledge-refresh PR (tools/help-refresh).
+
+          It bumps last_reviewed on help docs whose concepts were touched by merged
+          PRs in the past week AND were overdue for review (>30 days), and
+          (re)writes docs/help/REVIEW-QUEUE.md mapping each affected doc to the PRs
+          to verify it against.
+
+          HUMAN GATE: this is a proposal, not a verified fact. For each doc listed
+          in docs/help/REVIEW-QUEUE.md, read the linked PRs and confirm the prose
+          still matches what a user sees — edit it in this PR if it drifted — before
+          merging. No auto-merge; this PR is reviewed like any code change.
+
+          See docs/help/README.md, section "Weekly knowledge-refresh routine".
+
+          Window ending ${run_date}.
+          EOF
+
+          gh pr create \
+            --base main \
+            --head "$branch" \
+            --title "$title" \
+            --body-file /tmp/help-refresh-body.md
+
+          echo "help-refresh: opened review PR on ${branch}."

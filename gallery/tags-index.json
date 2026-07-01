@@ -1,0 +1,189 @@
+{
+  "archetype-personal-assistant": [
+    "p-aab5e569"
+  ],
+  "archetype-project-manager": [
+    "p-3a7d52c9"
+  ],
+  "calendar": [
+    "p-2c7a9b6e",
+    "p-341576fa",
+    "p-3a7d52c9",
+    "p-4136a932",
+    "p-738f057c",
+    "p-a9a74bf7",
+    "p-aab5e569",
+    "p-f14e9562",
+    "p-fe9acef3"
+  ],
+  "calendar-summary": [
+    "p-2c7a9b6e",
+    "p-738f057c",
+    "p-a9a74bf7",
+    "p-aab5e569",
+    "p-f14e9562",
+    "p-fe9acef3"
+  ],
+  "contacts": [
+    "p-1d3e8f47",
+    "p-2c7a9b6e",
+    "p-341576fa",
+    "p-3a7d52c9",
+    "p-3b4f5d29",
+    "p-4136a932",
+    "p-aab5e569"
+  ],
+  "crm": [
+    "p-4136a932"
+  ],
+  "daily-brief-suite": [
+    "p-41e4c5f4",
+    "p-738f057c",
+    "p-a9a74bf7"
+  ],
+  "daily-digest": [
+    "p-41e4c5f4",
+    "p-738f057c",
+    "p-a9a74bf7",
+    "p-aab5e569"
+  ],
+  "daily-routine": [
+    "p-fb9141b4"
+  ],
+  "data-foundation": [
+    "p-341576fa",
+    "p-4136a932",
+    "p-fe9acef3"
+  ],
+  "ea-suite": [
+    "p-1d3e8f47",
+    "p-2c7a9b6e",
+    "p-3b4f5d29",
+    "p-4136a932",
+    "p-9bfa1c84",
+    "p-aab5e569"
+  ],
+  "email": [
+    "p-341576fa",
+    "p-41e4c5f4",
+    "p-738f057c",
+    "p-a9a74bf7"
+  ],
+  "email-summary": [
+    "p-341576fa",
+    "p-41e4c5f4",
+    "p-a9a74bf7"
+  ],
+  "email-triage": [
+    "p-41e4c5f4"
+  ],
+  "evening-routine": [
+    "p-1d3e8f47",
+    "p-aab5e569"
+  ],
+  "executive-assistant": [
+    "p-1d3e8f47",
+    "p-2c7a9b6e",
+    "p-341576fa",
+    "p-3a7d52c9",
+    "p-3b4f5d29",
+    "p-4136a932",
+    "p-aab5e569",
+    "p-fe9acef3"
+  ],
+  "follow-up": [
+    "p-3a7d52c9",
+    "p-3b4f5d29"
+  ],
+  "integration": [
+    "p-2c7a9b6e",
+    "p-341576fa",
+    "p-3a7d52c9",
+    "p-a9a74bf7",
+    "p-aab5e569",
+    "p-f14e9562",
+    "p-fe9acef3"
+  ],
+  "journaling": [
+    "p-fb9141b4"
+  ],
+  "knowledge-management": [
+    "p-f14e9562"
+  ],
+  "meeting-notes": [
+    "p-3a7d52c9",
+    "p-f14e9562"
+  ],
+  "meeting-prep": [
+    "p-2c7a9b6e",
+    "p-3a7d52c9"
+  ],
+  "morning-routine": [
+    "p-738f057c",
+    "p-a9a74bf7",
+    "p-aab5e569"
+  ],
+  "notes": [
+    "p-3a7d52c9",
+    "p-f14e9562"
+  ],
+  "obsidian-integration": [
+    "p-f14e9562"
+  ],
+  "personal-productivity": [
+    "p-1d3e8f47",
+    "p-2c7a9b6e",
+    "p-341576fa",
+    "p-3b4f5d29",
+    "p-4136a932",
+    "p-41e4c5f4",
+    "p-738f057c",
+    "p-9bfa1c84",
+    "p-a9a74bf7",
+    "p-aab5e569",
+    "p-fb9141b4",
+    "p-fe9acef3"
+  ],
+  "productivity": [
+    "p-1d3e8f47",
+    "p-2c7a9b6e",
+    "p-341576fa",
+    "p-3a7d52c9",
+    "p-3b4f5d29",
+    "p-4136a932",
+    "p-41e4c5f4",
+    "p-738f057c",
+    "p-9bfa1c84",
+    "p-a9a74bf7",
+    "p-aab5e569",
+    "p-fb9141b4",
+    "p-fe9acef3"
+  ],
+  "productivity-foundation": [
+    "p-9bfa1c84"
+  ],
+  "project-management": [
+    "p-3a7d52c9"
+  ],
+  "reflection": [
+    "p-fb9141b4"
+  ],
+  "relationship-management": [
+    "p-4136a932"
+  ],
+  "starter-pack": [
+    "p-3a7d52c9",
+    "p-aab5e569"
+  ],
+  "task-management": [
+    "p-1d3e8f47",
+    "p-3a7d52c9",
+    "p-3b4f5d29",
+    "p-9bfa1c84",
+    "p-aab5e569"
+  ],
+  "workspace-suite": [
+    "p-341576fa",
+    "p-fe9acef3"
+  ]
+}

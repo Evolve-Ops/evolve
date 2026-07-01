@@ -1,0 +1,8 @@
+{
+  "repo_slug": "cjalden/evolve",
+  "registry_path": "docs/META-aspect-registry.md",
+  "memory_slug": "*evolve*",
+  "deploy_model": "pod-canary",
+  "preflight_cmd": "tools/preflight",
+  "flaky_jobs_doc": "docs/ci-flaky-jobs.md"
+}

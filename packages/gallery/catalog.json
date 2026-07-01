@@ -1,0 +1,114 @@
+[
+  {
+    "pkg_id": "p-a1b2c3d4",
+    "name": "Daily Health Tracker",
+    "description": "Log meals, exercise, sleep, and vitals in one place. Tracks trends and surfaces insights over time.",
+    "categories": ["personal-lifestyle"],
+    "application_tags": ["health-nutrition", "health-fitness"],
+    "keywords": ["food log", "calories", "protein", "workout", "sleep", "steps", "weight", "nutrition", "exercise"]
+  },
+  {
+    "pkg_id": "p-b2c3d4e5",
+    "name": "Travel Planner",
+    "description": "Plan trips end-to-end: flights, hotels, itineraries, packing lists, and on-trip day planning.",
+    "categories": ["personal-lifestyle", "executive-admin"],
+    "application_tags": ["travel", "calendar", "document-generation"],
+    "keywords": ["travel", "itinerary", "flight", "hotel", "trip", "booking", "packing", "vacation"]
+  },
+  {
+    "pkg_id": "p-c3d4e5f6",
+    "name": "Home Manager",
+    "description": "Track home maintenance tasks, contractor contacts, appliance warranties, and repair history.",
+    "categories": ["personal-lifestyle"],
+    "application_tags": ["home-management", "task-management"],
+    "keywords": ["home", "repair", "maintenance", "contractor", "appliance", "plumber", "electrician", "warranty"]
+  },
+  {
+    "pkg_id": "p-d4e5f6a7",
+    "name": "Meeting Agenda Builder",
+    "description": "Prepare structured meeting agendas from context, capture action items during discussion, and send follow-up summaries.",
+    "categories": ["professional-productivity", "executive-admin"],
+    "application_tags": ["calendar", "document-generation", "task-management"],
+    "keywords": ["meeting", "agenda", "action items", "follow-up", "minutes", "standup", "1:1"]
+  },
+  {
+    "pkg_id": "p-e5f6a7b8",
+    "name": "Weekly Status Reporter",
+    "description": "Auto-draft weekly status updates from task history and session notes. Format for Slack, email, or document.",
+    "categories": ["professional-productivity", "executive-admin"],
+    "application_tags": ["document-generation", "slack-comms", "task-management"],
+    "keywords": ["weekly report", "status update", "progress", "standup", "accomplishments", "blockers"]
+  },
+  {
+    "pkg_id": "p-f6a7b8c9",
+    "name": "Project Tracker",
+    "description": "Track projects, milestones, and deadlines across multiple initiatives. Surface at-risk items and upcoming due dates.",
+    "categories": ["professional-productivity"],
+    "application_tags": ["task-management", "calendar"],
+    "keywords": ["project", "milestone", "deadline", "deliverable", "status", "tracker", "roadmap", "sprint"]
+  },
+  {
+    "pkg_id": "p-a7b8c9d0",
+    "name": "Email Triage Assistant",
+    "description": "Process inbox: draft replies, flag action items, and summarize threads. Handles vendor and stakeholder correspondence. Works at the default email setting \u2014 Drafts only: it prepares, you send.",
+    "categories": ["executive-admin", "professional-productivity"],
+    "application_tags": ["email", "task-management", "document-generation"],
+    "keywords": ["email", "inbox", "reply", "thread", "vendor", "draft", "correspondence", "message"]
+  },
+  {
+    "pkg_id": "p-b8c9d0e1",
+    "name": "Executive Calendar Assistant",
+    "description": "Manage a busy calendar: schedule meetings, block focus time, prep briefings before events, and handle reschedule requests.",
+    "categories": ["executive-admin"],
+    "application_tags": ["calendar", "email", "task-management"],
+    "keywords": ["calendar", "schedule", "meeting", "briefing", "reschedule", "block", "availability", "invite"]
+  },
+  {
+    "pkg_id": "p-c9d0e1f2",
+    "name": "Fiction Writing Assistant",
+    "description": "Support long-form creative writing: track characters, plot threads, and world-building notes. Draft and revise chapters.",
+    "categories": ["creative"],
+    "application_tags": ["creative-writing", "document-generation"],
+    "keywords": ["novel", "chapter", "story", "character", "plot", "draft", "fiction", "writing", "manuscript"]
+  },
+  {
+    "pkg_id": "p-d0e1f2a3",
+    "name": "Content Calendar",
+    "description": "Plan and track content creation across channels. Draft outlines, manage deadlines, and repurpose content across formats.",
+    "categories": ["creative", "professional-productivity"],
+    "application_tags": ["creative-writing", "document-generation", "task-management"],
+    "keywords": ["content", "blog", "post", "article", "publish", "editorial", "newsletter", "social media"]
+  },
+  {
+    "pkg_id": "p-e1f2a3b4",
+    "name": "Slack Communications Manager",
+    "description": "Draft Slack messages, channel updates, and team announcements. Summarize threads and escalate action items.",
+    "categories": ["professional-productivity", "executive-admin"],
+    "application_tags": ["slack-comms", "document-generation"],
+    "keywords": ["slack", "channel", "team message", "announcement", "update", "thread", "dm"]
+  },
+  {
+    "pkg_id": "p-f2a3b4c5",
+    "name": "Personal Finance Tracker",
+    "description": "Track spending categories, monthly budgets, and savings goals. Summarize trends and flag unusual expenses.",
+    "categories": ["personal-lifestyle"],
+    "application_tags": ["home-management", "document-generation"],
+    "keywords": ["budget", "spending", "expense", "savings", "finance", "money", "cost", "bill", "subscription"]
+  },
+  {
+    "pkg_id": "p-a3b4c5d6",
+    "name": "Research Assistant",
+    "description": "Structured research sessions: gather sources, extract key points, synthesize findings into documents or summaries.",
+    "categories": ["professional-productivity", "creative"],
+    "application_tags": ["document-generation", "task-management"],
+    "keywords": ["research", "sources", "literature", "synthesis", "findings", "analysis", "study", "investigate"]
+  },
+  {
+    "pkg_id": "p-b4c5d6e7",
+    "name": "Daily Journal",
+    "description": "Structured daily journaling: capture reflections, mood, gratitude, and intentions. Surface patterns and streaks over time.",
+    "categories": ["personal-lifestyle"],
+    "application_tags": ["health-fitness", "document-generation"],
+    "keywords": ["journal", "diary", "reflection", "mood", "gratitude", "intentions", "daily", "log"]
+  }
+]

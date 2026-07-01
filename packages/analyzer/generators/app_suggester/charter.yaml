@@ -1,0 +1,40 @@
+id: app_suggester
+schema_version: 1
+type: optimizer
+dimension: capabilities
+# Surface routing: improvement. 'Consider installing X' exploratory suggestions from a curated
+#   capability catalog — optimistic product-shaped Improvements.
+# Spec: docs/spec-recommendations-rework-2026-06-02.md §"Generator routing".
+surface: improvement
+# Altitude: L2 capability. "Consider installing X" is a capability-tier idea
+#   (give the bot an app for a recurring need), not L0 hygiene — so it leads the
+#   Improvements rail above the folded Maintenance digest rather than getting
+#   buried among config nudges. Spec: docs/spec-fit-reviewer-2026-06-12.md §5.
+altitude: 2
+purpose: >
+  Surface "consider installing X" exploratory Investigation Proposals
+  from a curated catalog of common bot capabilities (health tracking,
+  weekly reflection, personal finance, learning log, etc.). Per-bot:
+  extracts the domains the bot's existing apps already cover, finds a
+  catalog category NOT covered, and emits one Investigation Proposal
+  with a customized rationale. v1 is pure Python — no LLM call. The
+  arbiter's fingerprint dedup and rejection-cooldown handle "don't
+  re-suggest the same category" naturally, so no extra cache is
+  required.
+cadence: weekly
+# Operator-facing exploratory suggestions deserve longer dwell time
+# than typical "fix this" proposals — leave them pending until the
+# operator dismisses or accepts. Auto-resolving on silence would
+# erase the suggestion before the operator has a chance to consider.
+resolves_when_silent: false
+invariants:
+  - id: action_kind_allowed
+    description: App Suggester emits Investigations only — never auto-installs apps.
+    check_kind: action_kind_allowed
+    params:
+      allowlist: [Investigation]
+  - id: touches_forbidden
+    description: App Suggester does not touch auth, tools, or channel config.
+    check_kind: touches_forbidden
+    params:
+      forbidden: [auth, tools, channel_config, gateway_core]

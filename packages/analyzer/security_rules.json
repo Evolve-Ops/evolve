@@ -1,0 +1,123 @@
+{
+  "_comment": "Evolve security rules — edit only manually, never via proposal. This file is the security reviewer's mandate.",
+  "_version": 2,
+
+  "auto_reject": [
+    {
+      "id": "no_network_exposure",
+      "description": "Reject any config change that sets gateway.bind or similar to 0.0.0.0 or a non-localhost address",
+      "applies_to": ["config_change"],
+      "check": "path_contains",
+      "pattern": "bind",
+      "value_pattern": "0\\.0\\.0\\.0|^(?!127\\.0\\.0\\.1|localhost)"
+    },
+    {
+      "id": "no_auth_disable",
+      "description": "Reject any change that disables authentication",
+      "applies_to": ["config_change"],
+      "check": "path_matches",
+      "pattern": "auth\\.enabled|security\\.enabled|requireAuth",
+      "value": false
+    },
+    {
+      "id": "no_self_modification",
+      "description": "Reject proposals that target evolve's own scripts or security rules",
+      "applies_to": ["script_change"],
+      "check": "target_file_contains",
+      "pattern": "evolve/"
+    },
+    {
+      "id": "no_credential_paths",
+      "description": "Reject script changes targeting auth or credential files",
+      "applies_to": ["script_change"],
+      "check": "target_file_contains",
+      "pattern": "auth-profiles|openclaw\\.json|\\.secrets|\\.env|credentials|api.key|token"
+    },
+    {
+      "id": "no_sudo_in_scripts",
+      "description": "Reject script changes that introduce sudo calls",
+      "applies_to": ["script_change"],
+      "check": "content_contains",
+      "pattern": "\\bsudo\\b|subprocess.*sudo|os\\.setuid|os\\.setgid"
+    },
+    {
+      "id": "no_network_calls_in_scripts",
+      "description": "Reject script changes that add outbound network calls to non-local addresses",
+      "applies_to": ["script_change"],
+      "check": "content_contains",
+      "pattern": "requests\\.get|urllib\\.request|curl|wget|http[s]?://(?!127\\.0\\.0\\.1|localhost)"
+    },
+    {
+      "id": "no_cross_user_writes",
+      "description": "Reject script changes targeting paths outside the bot's own workspace or /Users/Shared/evolve",
+      "applies_to": ["script_change"],
+      "check": "target_outside_allowed_roots",
+      "allowed_root_patterns": [
+        "/Users/{bot_id}/",
+        "/Users/Shared/evolve/"
+      ]
+    },
+    {
+      "id": "no_launchd_self_modification",
+      "description": "Reject changes targeting launchd plists",
+      "applies_to": ["script_change", "config_change"],
+      "check": "target_file_contains",
+      "pattern": "\\.plist|LaunchAgents|LaunchDaemons"
+    },
+    {
+      "id": "no_executable_content_in_any_type",
+      "description": "Reject any proposal type that carries exec/eval/os.system/shell injection regardless of declared type (closes type-spoofing gap)",
+      "applies_to": ["all"],
+      "check": "content_contains",
+      "pattern": "\\beval\\s*\\(|\\bexec\\s*\\(|os\\.system\\s*\\(|os\\.popen\\s*\\(|subprocess\\.\\w+\\s*\\(.*shell\\s*=\\s*True|__import__\\s*\\(|importlib\\.import_module"
+    },
+    {
+      "id": "no_network_clients_in_any_type",
+      "description": "Reject network client calls in any proposal type that carries executable content (closes type-spoofing gap for httpx, socket, etc.)",
+      "applies_to": ["all"],
+      "check": "content_contains",
+      "pattern": "\\bhttpx\\b|\\bsocket\\.socket\\b|\\bsocket\\.connect\\b|\\bsocket\\.create_connection\\b|\\baiohttp\\b"
+    }
+  ],
+
+  "auto_flag": [
+    {
+      "id": "model_change",
+      "description": "Flag any proposal changing the LLM model — requires human review",
+      "applies_to": ["config_change"],
+      "check": "path_contains",
+      "pattern": "model|provider"
+    },
+    {
+      "id": "cost_threshold_change",
+      "description": "Flag any proposal changing cost thresholds or limits",
+      "applies_to": ["config_change"],
+      "check": "path_contains",
+      "pattern": "cost|budget|limit|threshold|maxTokens"
+    },
+    {
+      "id": "channel_config_change",
+      "description": "Flag any proposal touching messaging channel config",
+      "applies_to": ["config_change"],
+      "check": "path_contains",
+      "pattern": "plugins|channel|telegram|slack|webhook"
+    },
+    {
+      "id": "high_confidence_only",
+      "description": "Flag proposals with confidence below 0.70",
+      "applies_to": ["all"],
+      "check": "confidence_below",
+      "threshold": 0.70
+    }
+  ],
+
+  "risk_scoring": {
+    "config_change": 20,
+    "script_change": 40,
+    "workflow_change": 10,
+    "investigation": 5,
+    "flag_per_auto_flag": 15,
+    "high_risk_threshold": 70,
+    "critical_risk_threshold": 90
+  }
+}

@@ -1,0 +1,374 @@
+#!/usr/bin/env python3
+"""meta-ledger-prune — collapse prior-bout terminal chips in the META in-flight ledgers.
+
+Lever E3 of META:substrate Initiative 5 (token/context budget;
+docs/spec-substrate-2026-06-15.md §8). The `meta-state/<aspect>.json` ledgers are meant
+to hold only what is *in motion right now* (docs/meta-ledger-schema.md: "When a chip
+reaches done/live, leave it in chips[] for the bout it completed in, then prune at the
+next /close"). In practice nobody prunes — ~95% of chip entries are terminal
+(done/live/merged) and never collapse, the long `note`/`output` bodies pile up, and the
+corpus has grown past 200KB (largest single ledger ~53KB). That bloat is the root cause
+of the META read-cost problem: every raw ledger read lands in the operator's main context.
+
+This is the idempotent batch migrator that catches the backlog up to the schema rule.
+It is conservative by construction:
+
+  * It collapses ONLY terminal chips (bucket in {done, live, merged}) that are NOT from
+    the current bout. A collapsed chip keeps {id, title, pr, bucket, two_pass} and drops
+    the long note/output bodies (that detail already lives in git PR history + the
+    aspect's memory topic file). Every non-terminal chip (backlog / dispatched / draft /
+    open_* / stalled / blocked) and every current-bout chip is kept verbatim (all fields,
+    same values).
+  * "Verbatim" is at the DATA level. A ledger with nothing to collapse is left
+    byte-for-byte untouched (it is never re-serialized). A ledger that IS shrunk is
+    re-emitted in a compact one-line-per-chip form (an existing ledger style — see
+    reports.json / user-value.json); kept chips keep every field and value, only
+    whitespace is normalized. The corpus has no single canonical whitespace style
+    (some files are json.dumps(indent=2), one uses 1-space indent, one mixes \\u
+    escapes), so byte-preserving every file's ad-hoc formatting is not attempted.
+  * It FLAGS but never auto-rewrites prose: any `bout` / `next_action` over ~280 chars,
+    and any ledger still over the ~8KB size budget after pruning. A human tightens those.
+
+--dry-run is the DEFAULT (print per-file before/after byte counts and what would
+collapse; write nothing). --apply performs it: it FIRST writes a timestamped backup of
+the entire meta-state dir (the memory dir is NOT git-tracked — this backup is the only
+undo), THEN rewrites each changed ledger atomically (temp file + os.replace).
+
+The dir is resolved the same way the other meta-state tools resolve it: --dir wins,
+else the ~/.claude/projects/*/memory/meta-state glob off $HOME (there is one Evolve
+project dir).
+
+Usage:
+    tools/meta-ledger-prune                 # dry-run against the resolved live dir
+    tools/meta-ledger-prune --apply         # back up, then prune
+    tools/meta-ledger-prune --dir PATH      # operate on a specific dir (tests, a backup)
+    tools/meta-ledger-prune --bout-date 2026-06-18   # override the per-ledger bout date
+    tools/meta-ledger-prune --keep-days 2   # widen the current-bout grace window
+
+Exit codes: 0 ok; 2 bad usage / dir not resolvable.
+"""
+
+from __future__ import annotations
+
+import argparse
+import glob
+import json
+import os
+import shutil
+import sys
+import tempfile
+from datetime import datetime, timedelta
+from pathlib import Path
+
+# A chip in one of these buckets is terminal — its work is finished, so its detail belongs
+# in git PR history + the memory topic file, not the live ledger.
+TERMINAL_BUCKETS = frozenset({"done", "live", "merged"})
+
+# The ONLY fields a collapsed (archived) chip keeps. Everything else — note, output,
+# task_id, branch, dispatched, last_commit, privileged, reversible, operator_merge — is
+# dropped. The handle (id) stays stable so prose like "T2 merged" remains resolvable.
+ARCHIVE_FIELDS = ("id", "title", "pr", "bucket", "two_pass")
+
+# Soft guidelines the tool flags (it never rewrites prose). Mirrors docs/meta-ledger-schema.md.
+PROSE_MAX_CHARS = 280       # `bout` / `next_action` should each be ONE line.
+SIZE_BUDGET_BYTES = 8192    # a single ledger over this should be tightened by hand.
+
+# Grace window (days) for "current bout". A bout can span a couple of days, so by default a
+# terminal chip whose activity date is within one day of the ledger's `updated` date is kept
+# verbatim. Older terminal chips collapse. Override with --keep-days.
+DEFAULT_KEEP_DAYS = 1
+
+
+def _die(code, msg):
+    print("meta-ledger-prune: " + msg, file=sys.stderr)
+    sys.exit(code)
+
+
+# ── dir resolution (same logic as the other meta-state tools) ──────────────────────────
+
+def resolve_dir(dir_arg):
+    """Return the meta-state dir as a Path. --dir wins; else glob the one Evolve project
+    dir under $HOME. Errors loudly rather than guessing."""
+    if dir_arg:
+        p = Path(dir_arg).expanduser()
+        if not p.is_dir():
+            _die(2, "--dir " + str(p) + " is not a directory")
+        return p
+    home = os.environ.get("HOME") or str(Path.home())
+    pattern = os.path.join(home, ".claude", "projects", "*", "memory", "meta-state")
+    matches = sorted(d for d in glob.glob(pattern) if os.path.isdir(d))
+    if not matches:
+        _die(2, "no meta-state dir found at " + pattern + " (pass --dir)")
+    if len(matches) > 1:
+        _die(2, "multiple meta-state dirs match " + pattern + "; pass --dir to disambiguate:\n  "
+             + "\n  ".join(matches))
+    return Path(matches[0])
+
+
+# ── date / bout logic ──────────────────────────────────────────────────────────────────
+
+def _parse_date(value):
+    """A date() from an ISO date or datetime string; None for anything else (e.g. a git
+    SHA, which is how `last_commit` may be stored)."""
+    if not isinstance(value, str):
+        return None
+    s = value.strip()
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00")).date()
+    except ValueError:
+        pass
+    try:
+        return datetime.strptime(s[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _chip_activity_date(chip):
+    """The most recent date we can read off a chip — max(dispatched, last_commit-date).
+    None when the chip carries no parseable date."""
+    dates = [d for d in (_parse_date(chip.get("dispatched")), _parse_date(chip.get("last_commit"))) if d]
+    return max(dates) if dates else None
+
+
+def _is_terminal(chip):
+    return chip.get("bucket") in TERMINAL_BUCKETS
+
+
+def _is_current_bout(chip, bout_date, keep_days):
+    """True iff the chip's activity is within the current-bout window. A chip with no
+    parseable date is NOT current-bout (its detail is treated as old)."""
+    ad = _chip_activity_date(chip)
+    if ad is None:
+        return False
+    return ad >= bout_date - timedelta(days=keep_days)
+
+
+def _should_collapse(chip, bout_date, keep_days):
+    return _is_terminal(chip) and not _is_current_bout(chip, bout_date, keep_days)
+
+
+def _collapse(chip):
+    """The one-line archived form: just the ARCHIVE_FIELDS that the chip actually has,
+    in canonical order. Idempotent — collapsing an already-collapsed chip is a no-op."""
+    return {k: chip[k] for k in ARCHIVE_FIELDS if k in chip}
+
+
+def prune_ledger(obj, bout_date, keep_days):
+    """Return (new_obj, n_collapsed). Pure — never mutates `obj`. new_obj == obj exactly
+    when nothing collapses (so the caller can skip writing unchanged ledgers)."""
+    chips = obj.get("chips")
+    if not isinstance(chips, list):
+        return obj, 0
+    new_chips = []
+    n = 0
+    for chip in chips:
+        if isinstance(chip, dict) and _should_collapse(chip, bout_date, keep_days):
+            collapsed = _collapse(chip)
+            if collapsed != chip:            # already collapsed → unchanged → no count
+                n += 1
+            new_chips.append(collapsed)
+        else:
+            new_chips.append(chip)
+    if n == 0:
+        return obj, 0
+    new_obj = dict(obj)
+    new_obj["chips"] = new_chips
+    return new_obj, n
+
+
+# ── compact serializer (one-line-per-chip ledger style) ─────────────────────────────────
+
+_INLINE_ARRAY_WIDTH = 80   # an all-scalar array shorter than this renders inline (spec/memory).
+
+
+def _compact(value):
+    """A value on a single line, ledger-style: `{"id": "x", "title": "y"}`."""
+    return json.dumps(value, ensure_ascii=False, separators=(", ", ": "))
+
+
+def _is_scalar(v):
+    return v is None or isinstance(v, (str, int, float, bool))
+
+
+def emit_ledger(obj):
+    """Serialize a ledger compactly: top-level keys one per line (2-space indent), each
+    array element on its own line as a one-liner, short all-scalar arrays inline. Ends
+    with a trailing newline. Round-trips: json.loads(emit_ledger(x)) == x."""
+    lines = ["{"]
+    keys = list(obj.keys())
+    for ki, key in enumerate(keys):
+        comma = "," if ki < len(keys) - 1 else ""
+        value = obj[key]
+        prefix = "  " + json.dumps(key, ensure_ascii=False) + ": "
+        if isinstance(value, list) and value:
+            inline = _compact(value)
+            if all(_is_scalar(e) for e in value) and len(prefix) + len(inline) <= _INLINE_ARRAY_WIDTH:
+                lines.append(prefix + inline + comma)
+            else:
+                lines.append(prefix + "[")
+                for ei, elem in enumerate(value):
+                    ecomma = "," if ei < len(value) - 1 else ""
+                    lines.append("    " + _compact(elem) + ecomma)
+                lines.append("  ]" + comma)
+        else:
+            lines.append(prefix + _compact(value) + comma)
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+# ── prose / size flags ───────────────────────────────────────────────────────────────────
+
+def collect_flags(obj, after_bytes, name):
+    """Warnings (not rewrites): over-long bout/next_action prose, and an over-budget file."""
+    warnings = []
+    for field in ("bout", "next_action"):
+        val = obj.get(field)
+        if isinstance(val, str) and len(val) > PROSE_MAX_CHARS:
+            warnings.append(
+                name + ": `" + field + "` is " + str(len(val)) + " chars (>" + str(PROSE_MAX_CHARS)
+                + ") — tighten to one line"
+            )
+    if after_bytes > SIZE_BUDGET_BYTES:
+        warnings.append(
+            name + ": " + str(after_bytes) + " bytes (>" + str(SIZE_BUDGET_BYTES)
+            + " budget) — tighten bout/next_action prose / let chips age out"
+        )
+    return warnings
+
+
+# ── atomic write + backup ────────────────────────────────────────────────────────────────
+
+def _atomic_write(path, text):
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix="." + path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def backup_dir(meta_dir, stamp):
+    """Copy the entire meta-state dir to a timestamped sibling. Returns the backup Path."""
+    dest = meta_dir.parent / (meta_dir.name + ".backup-" + stamp)
+    shutil.copytree(str(meta_dir), str(dest))
+    return dest
+
+
+# ── main ───────────────────────────────────────────────────────────────────────────────
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="meta-ledger-prune", description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--dir", help="meta-state dir (default: the ~/.claude/projects/*/memory/meta-state glob)")
+    ap.add_argument("--apply", action="store_true",
+                    help="perform the prune (back up the dir first, then rewrite changed ledgers). Default is --dry-run.")
+    ap.add_argument("--dry-run", action="store_true", help="print what would change; write nothing (the default)")
+    ap.add_argument("--bout-date", help="YYYY-MM-DD bout date for ALL ledgers (default: each ledger's `updated`)")
+    ap.add_argument("--keep-days", type=int, default=DEFAULT_KEEP_DAYS,
+                    help="current-bout grace window in days (default " + str(DEFAULT_KEEP_DAYS) + ")")
+    args = ap.parse_args(argv)
+
+    apply = args.apply and not args.dry_run
+    meta_dir = resolve_dir(args.dir)
+
+    override_bout = None
+    if args.bout_date:
+        override_bout = _parse_date(args.bout_date)
+        if override_bout is None:
+            _die(2, "--bout-date " + args.bout_date + " is not YYYY-MM-DD")
+
+    files = sorted(meta_dir.glob("*.json"))
+    print("meta-ledger-prune: " + str(meta_dir) + " (" + str(len(files)) + " ledgers)")
+    print("mode: " + ("APPLY" if apply else "DRY-RUN (no files written; pass --apply to perform)"))
+    print()
+
+    plan = []          # (path, new_text) for changed files — written only on --apply
+    warnings = []
+    total_before = total_after = 0
+    n_shrunk = n_collapsed_total = 0
+
+    for path in files:
+        raw = path.read_text(encoding="utf-8")
+        before = len(raw.encode("utf-8"))
+        total_before += before
+        name = path.name
+        try:
+            obj = json.loads(raw)
+        except json.JSONDecodeError as e:
+            warnings.append(name + ": not valid JSON (" + str(e) + ") — skipped")
+            total_after += before
+            continue
+        if not isinstance(obj, dict):
+            warnings.append(name + ": top-level is not an object — skipped")
+            total_after += before
+            continue
+
+        bout_date = override_bout if override_bout is not None else _parse_date(obj.get("updated"))
+        if bout_date is None:
+            # No bout reference → can't tell current from prior → don't collapse anything.
+            warnings.append(name + ": no `updated` date (and no --bout-date) — cannot determine "
+                            "current bout; pruning skipped (prose/size still checked)")
+            after = before
+            total_after += after
+            print("  " + name.ljust(18) + str(before).rjust(7) + " bytes  (skipped: no bout date)")
+            warnings.extend(collect_flags(obj, after, name))
+            continue
+
+        new_obj, n = prune_ledger(obj, bout_date, args.keep_days)
+        if n == 0:
+            after = before
+            total_after += after
+            print("  " + name.ljust(18) + str(before).rjust(7) + " bytes  (no change)")
+            warnings.extend(collect_flags(obj, after, name))
+            continue
+
+        new_text = emit_ledger(new_obj)
+        after = len(new_text.encode("utf-8"))
+        total_after += after
+        n_shrunk += 1
+        n_collapsed_total += n
+        plan.append((path, new_text))
+        verb = "collapsed" if apply else "would collapse"
+        delta = ("-" if after <= before else "+") + str(abs(before - after))
+        print("  " + name.ljust(18) + str(before).rjust(7) + " -> " + str(after).rjust(6)
+              + " bytes  (" + delta + ")  " + verb + " " + str(n)
+              + " terminal chip" + ("s" if n != 1 else ""))
+        warnings.extend(collect_flags(new_obj, after, name))
+
+    print()
+    print("summary: " + str(n_shrunk) + " ledger" + ("s" if n_shrunk != 1 else "") + " "
+          + ("shrunk" if apply else "would shrink") + ", " + str(n_collapsed_total)
+          + " chip" + ("s" if n_collapsed_total != 1 else "") + " collapsed; corpus "
+          + str(total_before) + " -> " + str(total_after) + " bytes ("
+          + ("-" if total_after <= total_before else "+") + str(abs(total_before - total_after)) + ")")
+
+    if warnings:
+        print()
+        print("flags (tighten by hand — the tool does not rewrite prose):")
+        for w in warnings:
+            print("  WARN  " + w)
+
+    if apply and plan:
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        bdir = backup_dir(meta_dir, stamp)
+        print()
+        print("backup: " + str(bdir))
+        for path, new_text in plan:
+            _atomic_write(path, new_text)
+        print("wrote " + str(len(plan)) + " ledger" + ("s" if len(plan) != 1 else "") + ".")
+    elif apply:
+        print()
+        print("nothing to write (no ledger needed pruning); no backup taken.")
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

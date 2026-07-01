@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Plugins Page · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">plugins</span><span class="chip">channels</span><span class="chip">credentials</span><span class="chip">embeddings</span><span class="chip">mcp-servers</span><span class="chip">hooks</span></div><div class="reviewed">Last reviewed 2026-06-23</div></div><h1 id="help-plugins-page">Plugins Page</h1>
+<p>The Plugins page (in the <strong>Operate</strong> bucket) is one place per bot to see and manage how every capability the bot has is <em>wired up</em> — the messaging surfaces it's reachable on, the API keys and connected accounts it uses, its embedding providers, the connection details for its MCP servers, and its hook policies. The Channels tab was retired and folded into the Plugins tab as a Messaging section; Plugins is now the source of truth for every OpenClaw plugin entry.</p>
+<p><strong>Add a capability on the Skills page; manage its keys here.</strong> This page is the <em>keys and connections</em> surface — the credentials, channels, and per-bot configuration behind your bots' abilities. To browse, install, remove, or scope the abilities themselves, use the <a href="skills.html">Skills</a> page. Rule of thumb: go to Skills to turn a capability on or off; come here to manage the key or connection it runs on.</p>
+<p><strong>Ask evo from any sub-tab.</strong> The chat widget's suggested prompts shift with
+your sub-tab:</p>
+<ul>
+<li><strong>Plugins</strong> — <em>"are any plugins missing required modules?"</em>, <em>"what's
+  drifted from the plugin baseline?"</em> Evo reads the per-bot plugin inventory
+  and can apply baseline-restoring proposals via <code>action.proposal.apply</code>.</li>
+<li><strong>Credentials</strong> — <em>"which integrations have unhealthy keys?"</em>, <em>"are any
+  credentials about to expire?"</em> Evo summarizes the per-bot key inventory.
+  <em>(Direct in-chat key rotation is on the roadmap as <code>RotateApiKey</code>; for now
+  evo can stage a rotation as a proposal.)</em></li>
+<li><strong>Embeddings</strong> — <em>"what's the embedding spend look like?"</em>, <em>"is the
+  embeddings index healthy?"</em></li>
+<li><strong>MCP Servers</strong> — <em>"is the github MCP server healthy?"</em>, <em>"what MCP servers
+  are configured?"</em></li>
+<li><strong>Hooks</strong> — <em>"what hooks are enabled on team-bot-a?"</em>, <em>"review the active hook
+  policy."</em></li>
+<li><strong>Activity</strong> — <em>"what changed on plugins this week?"</em>, <em>"show recent
+  permission changes."</em></li>
+</ul>
+<hr>
+<h2 id="bot-header-chip-strip">Bot header chip strip</h2>
+<p>At the top of the page, just below the bot tabs, a chip strip answers the at-a-glance question "can people reach this bot?":</p>
+<ul>
+<li><strong>Runtime</strong> — <code>● OC Gateway · ● Evolve Plugin</code> chips show whether each is live (green) or down (red). Pulled from the heal-scan probes that run every cycle.</li>
+<li><strong>Reachable via</strong> — one chip per messaging surface the bot has configured (slack / telegram / discord / whatsapp / …). Same data as the Messaging section of the Plugins tab, summarized.</li>
+</ul>
+<p>Both lines pull from <code>/api/integrations</code>. Click <strong>⟳ Scan</strong> to refresh now; the chip strip updates without leaving the page.</p>
+<hr>
+<h2 id="sub-tabs">Sub-tabs</h2>
+<h3 id="plugins">Plugins</h3>
+<p>The source-of-truth view for every OpenClaw plugin entry on the bot, grouped into four sections by purpose:</p>
+<p><strong>LLM Providers</strong> — adapter plugins for chat models: <code>anthropic</code>, <code>openai</code>, <code>google</code>, <code>xai</code>, <code>voyage</code>, <code>mistral</code>, <code>copilot</code>, <code>perplexity</code>. Each row carries a <code>Credentials →</code> button that jumps to the Credentials tab and highlights the matching key row — there's exactly one canonical place to rotate keys.</p>
+<p><strong>Messaging</strong> — the surfaces humans use to reach the bot. Slack, Telegram, WhatsApp, Discord, Signal, Matrix, Email, SMS. Each row shows both the plugin's config state ("Enabled") <em>and</em> its runtime probe state ("Connected") inline, so you can spot the case where the plugin is enabled but the integration can't reach the service.</p>
+<p>Some messaging surfaces live in <code>openclaw.json → channels.&lt;id&gt;</code> without a corresponding <code>plugins.entries</code> record — that's a valid OpenClaw shape (the channel-block config implicitly engages the channel-handler plugin). Those rows show up with a <code>channel-block</code> role badge and the source column reads <code>channels.&lt;id&gt;</code> instead of <code>path</code>.</p>
+<p><strong>Tools &amp; Capabilities</strong> — functional plugins: <code>brave</code> (web search), <code>memory-core</code>, <code>unity</code>, <code>dropbox</code>, and anything else.</p>
+<p><strong>Infrastructure</strong> — platform-required plugins managed by <code>deploy.py</code>: <code>evolve</code>, <code>oc_plugin</code>. Always required; not user-installable.</p>
+<p><strong>Status column</strong> uses plain colored text with an emoji prefix (matches the Credentials table styling):
+- <code>✅ Enabled</code> — running per the plugin entry
+- <code>❌ Enabled (denied!)</code> — running but the baseline says it shouldn't be
+- <code>⚠️ Disabled (expected on)</code> — required or expected by the baseline but turned off
+- <code>⊘ Disabled (intentional)</code> — explicitly disabled by per-bot override
+- <code>— Disabled</code> — not enabled, not expected</p>
+<p><strong>Role column</strong> classifies each plugin against the pod baseline (<code>{shared_dir}/policy/plugin-baseline.json</code>):
+- <code>required</code> — pod-wide invariant (every bot must have it). Today: <code>evolve</code>, <code>brave</code>.
+- <code>expected</code> — listed in this bot's <code>per_bot_overrides.additional_plugins</code>. Bot-specific add.
+- <code>permitted</code> — in the pod's <code>common_optional_plugins</code> allowlist. Allowed but not required.
+- <code>denied</code> — explicitly forbidden.
+- <code>unexpected</code> — enabled but not declared anywhere. Curator generator surfaces these as proposals.</p>
+<p>Hover the column header for the inline legend.</p>
+<p><strong>Install provenance.</strong> Each row also carries an install-source pill — <code>built-in</code>, <code>signed gallery</code>, <code>unsigned (allowed)</code>, or <code>unknown</code> (<a href="https://github.com/evolve-ops/evolve/pull/2284">PR 2284</a> / <a href="https://github.com/evolve-ops/evolve/pull/2288">PR 2288</a>). Trust is keyed off where the plugin came from, not whether its hash drifted from a snapshot — the old baseline-snapshot drift signals were retired because they fired on every harmless version bump. Today an <code>unknown</code> source surfaces a <code>plugin_unknown_install_source</code> Signal; everything else stays quiet.</p>
+<p><strong>Buttons:</strong>
+- <strong>Adopt allow list…</strong> — creates an <code>UpdatePluginAllowDeny</code> proposal that writes this bot's <code>plugins.allow</code> to the baseline-expected set. Use this when the bot doesn't yet have a curated allow list.
+- <strong>↻ Re-scan</strong> — re-reads the bot's <code>openclaw.json</code> and refreshes the inventory cache.
+- Per-row: <strong>Disable…</strong> / <strong>Enable…</strong> / <strong>Config…</strong> create proposals through the standard pipeline.</p>
+<p>To <em>install</em> a new capability (rather than tune one already present), head to the <a href="skills.html">Skills</a> page — that's where the browsable catalog and per-bot install/uninstall live. This tab is for the inventory and posture of what's already wired.</p>
+<h3 id="credentials">Credentials</h3>
+<p>One row per provider. Key values masked (first 8 + last 4 characters). Writes go to <code>auth-profiles.json</code> via the standard staging + <code>sudo cp</code> pattern.</p>
+<p><strong>+ Add Key</strong> opens a modal to add or replace a provider key. <strong>↺ Sync</strong> re-reads the file; <strong>↺ Rotate</strong> on a row opens the rotate modal for that provider; <strong>↩ Rollback</strong> restores the previous value where the storage layer supports it (auth-profiles, openclaw-channels).</p>
+<p>Cross-links: messaging plugin rows on the Plugins tab and embedding rows on the Embeddings tab carry <code>Credentials →</code> buttons that jump here and highlight the matching <code>&lt;tr&gt;</code>.</p>
+<h3 id="embeddings">Embeddings</h3>
+<p>Embedding providers (used for <code>memory_search</code> semantic recall) — distinct from chat models. Resolves to a fallback chain so OpenClaw fails over without Evolve in the loop. Active chain shown at the top; per-provider table below.</p>
+<ul>
+<li>Providers that take an API key (<code>openai</code>, <code>voyage</code>, <code>mistral</code>, <code>gemini</code>) show <code>+ Add key in Credentials</code> when missing or <code>↻ Rotate in Credentials</code> when present — both jump to the Credentials tab.</li>
+<li>Providers without a per-provider key show an inline hint instead: <code>AWS credential chain</code>, <code>Copilot subscription</code>, <code>local — no key</code>, <code>offline GGUF</code>.</li>
+<li><strong>Set as primary</strong> writes a per-bot embedding-chain override. <strong>Configure chain →</strong> jumps to AI Optimization for fuller chain editing.</li>
+</ul>
+<h3 id="mcp-servers">MCP Servers</h3>
+<p>The per-bot inventory of MCP (Model Context Protocol) servers a bot is connected to, read from <code>openclaw.json → mcp.servers</code>. Each row is a configured connection: which server it is and how its credentials are bound. This is the connection-and-config view — use it to confirm a bot is wired to the MCP servers you expect and that each one's credential slot is filled. <strong>↻ Re-scan</strong> re-reads the inventory across all bots.</p>
+<p><strong>Browsing, installing, and removing MCP servers lives on the <a href="skills.html">Skills</a> page</strong>, alongside the rest of the capability catalog — including the capability scoping for suites like Google Workspace and the security-advisory review that runs before an install. This tab is where you see and manage a <em>connection</em> once it's in place; Skills is where you add or remove the capability itself. When a server is removed there, its linked credential slot is released if no other bot is still using it, so connections don't leave dangling keys behind.</p>
+<p>Spec: <code>docs/spec-mcp-administration-2026-05-10.md</code>.</p>
+<h3 id="hooks">Hooks</h3>
+<p>Two hook surfaces per bot, both read from <code>openclaw.json</code>:</p>
+<p><strong>Webhook ingress</strong> (<code>hooks{}</code> block) — external HTTP endpoints that can trigger agent turns. Token, allowed agent IDs, allowed session-key prefixes, mappings, and an optional <code>transformsDir</code> for prebuilt request transforms. Disabled by default; enabling requires explicit operator approval through <code>UpdateHookBaseline</code>. The monitor hashes the <code>transformsDir</code> contents and flags any drift from the recorded baseline — that directory is a supply-chain surface.</p>
+<p><strong>Plugin typed hooks</strong> (<code>plugins.entries.&lt;id&gt;.hooks{}</code>) — per-plugin <code>allowConversationAccess</code> and <code>allowPromptInjection</code> flags. The evolve plugin needs <code>allowConversationAccess=true</code> to receive <code>agent_end</code> / <code>llm_output</code> events; that's set automatically by <code>deploy.py</code>. <code>allowPromptInjection=true</code> lets a plugin rewrite the bot's system prompt and is auto-rejected unless the plugin is in the baseline's <code>trusted_prompt_mutators</code> allowlist (default: empty).</p>
+<p><strong>Edit baseline…</strong> opens the pod-wide hook policy editor. Per-row actions create proposals through the standard pipeline.</p>
+<p>Spec: <code>docs/spec-hook-governance-2026-05-10.md</code>.</p>
+<hr>
+<h2 id="common-questions">Common Questions</h2>
+<p><strong>The chip strip says "reachable via telegram" but the Plugins → Messaging section is empty — what's wrong?</strong>
+That used to be a real bug. Now the Messaging section also surfaces plugins configured via <code>channels.&lt;id&gt;</code> even when there's no <code>plugins.entries.&lt;id&gt;</code> record — they appear with a <code>channel-block</code> role badge and <code>channels.telegram</code> in the source column. If you still see an empty Messaging section while the chip strip says reachable, click <strong>↻ Re-scan</strong> on Plugins; the inventory cache is per-bot and may be stale.</p>
+<p><strong>A row says <code>unexpected</code> in the Role column — should I worry?</strong>
+"Unexpected" just means the plugin isn't declared in the pod baseline or this bot's overrides. It's enabled but the baseline doesn't expect it. Two valid paths: (a) issue an <code>UpdatePluginBaseline</code> proposal to add it to the bot's expected set, or (b) disable it if it shouldn't be there. The Plugin Curator generator fires a proposal for any unexpected enable that persists across cycles.</p>
+<p><strong>How do I add a new key?</strong>
+Click <strong>+ Add Key</strong> on the Credentials tab, pick the provider, paste the key. Evolve stages the new <code>auth-profiles.json</code> to <code>/tmp</code> then <code>sudo cp</code>s it into the bot's home — the staging dance keeps writes atomic.</p>
+<p><strong>How do I rotate an expiring key?</strong>
+On the Credentials tab, click <strong>↻ Rotate</strong> on the row. Or from any other tab, click the row-level <strong>Credentials →</strong> / <strong>Rotate in Credentials</strong> button to jump to Credentials with that row highlighted, then click Rotate.</p>
+<p><strong>How do I install an MCP server (or any new capability)?</strong>
+Installing capabilities moved to the <a href="skills.html">Skills</a> page — browse the catalog, pick a bot, and follow the install flow (which handles capability scoping and a security-advisory check). Once a server is installed there, its connection and credential binding show up on this page's MCP Servers tab for you to manage.</p>
+<p><strong>Why are keys masked?</strong>
+Key values are masked (first 8 + last 4) for security — verify you're looking at the right key without exposing the full value. Full value never leaves the bot's home directory.</p>
+<p><strong>I added a key but the bot isn't using it — why?</strong>
+The gateway needs to pick up the new value. Restart it from <strong>Maintenance → Status</strong> for the affected bot. For most keys the plugin reads the value on each request; some channel tokens require a gateway restart.</p>
+<p><strong>What's the difference between "Scan" and "Sync"?</strong>
+<strong>⟳ Scan</strong> (top of page) re-runs the heal probes — actively pings each integration. <strong>↺ Sync</strong> (Credentials tab) re-reads the local <code>auth-profiles.json</code> file without probing external services. Use Scan when something looks stale; use Sync after editing auth-profiles by hand.</p>
+<p><strong>What about Channels — where did that tab go?</strong>
+Retired 2026-05-11. Every "channel" in OpenClaw is implemented by a plugin (slack, telegram, etc.), so a separate Channels tab was just a different view of the same data. Messaging is now the top section of the Plugins tab, and the "is the bot reachable?" question is answered by the bot header chip strip at the top of the page.</p>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/plugins.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>

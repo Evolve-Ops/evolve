@@ -1,0 +1,191 @@
+{
+  "pkg_id": "p-4136a932",
+  "pkg_version": "2026.04.16-1.0",
+  "gallery_version": "2026.04.16-1.0",
+  "schema_version": 5,
+  "manifest_type": "evolve_application",
+  "display_name": "Contacts",
+  "author": "evolve",
+  "description": "Per-person relationship memory. Tracks commitments, notes, and meeting history for each contact. Foundation for EA Pack, CRM, and meeting prep apps.",
+  "application_tags": [
+    "personal-productivity",
+    "relationship-management",
+    "crm",
+    "data-foundation",
+    "calendar",
+    "contacts",
+    "ea-suite",
+    "executive-assistant",
+    "productivity"
+  ],
+  "id": "app_contacts",
+  "name": "Contacts",
+  "status": "active",
+  "dependencies": [],
+  "app_dependencies": [],
+  "requirements": {
+    "integrations": [],
+    "secrets": [],
+    "system": [],
+    "python_packages": []
+  },
+  "interface_contract": {
+    "populated_by_forge": false,
+    "extracted_at": null,
+    "data_files": [
+      {
+        "path": "memory/contacts/{slug}.md",
+        "description": "Per-contact markdown file. Slug = name.strip().lower().replace(' ', '-'). Contains canonical sections for commitments, notes, and meetings.",
+        "schema": {
+          "storage_format": "Markdown with canonical section headers",
+          "file_header": "# {Person Name}\n\n## Commitments\n\n## Notes\n\n## Meetings\n",
+          "sections": {
+            "Commitments": "CANONICAL — must not vary. Commitment lines: '- YYYY-MM-DD: {text}' with optional '[due: YYYY-MM-DD]' suffix. Completed commitments use ~~strikethrough~~ on the text.",
+            "Notes": "CANONICAL — must not vary. Freeform note lines appended chronologically.",
+            "Meetings": "CANONICAL — must not vary. Meeting lines appended chronologically."
+          },
+          "commitment_format": "- {YYYY-MM-DD}: {text}",
+          "commitment_format_with_due": "- {YYYY-MM-DD}: {text} [due: YYYY-MM-DD]",
+          "commitment_done_format": "- {YYYY-MM-DD}: ~~{text}~~"
+        }
+      }
+    ],
+    "cli": [
+      {
+        "command": "python3 scripts/contacts.py add-commitment",
+        "key_flags": ["--person NAME", "--text TEXT", "--due YYYY-MM-DD (optional)"],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/contacts.py add-note",
+        "key_flags": ["--person NAME", "--text TEXT"],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/contacts.py add-meeting",
+        "key_flags": ["--person NAME", "--text TEXT", "--date YYYY-MM-DD (optional, default today)"],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/contacts.py show",
+        "key_flags": ["--person NAME"],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/contacts.py list-due",
+        "key_flags": [],
+        "output_signals": ["FOLLOWUP_DUE:"]
+      }
+    ],
+    "key_paths": {
+      "cli": "scripts/contacts.py",
+      "contacts_dir": "memory/contacts/"
+    },
+    "signal_prefixes": ["FOLLOWUP_DUE:"],
+    "output_signal_formats": {
+      "FOLLOWUP_DUE:": "FOLLOWUP_DUE: {slug} | {commitment text}"
+    }
+  },
+  "files": [],
+  "install_job": null,
+  "improvement_history": [],
+  "identity": {
+    "purpose": "Per-person relationship memory for the bot. Records and surfaces commitments made to or about contacts, freeform notes, and meeting history. Acts as the persistent layer that gives other apps (EA Pack, CRM, meeting prep) access to contact context.",
+    "scope_includes": [
+      "Create and maintain one markdown file per contact in memory/contacts/",
+      "Append commitments with optional due dates to the canonical Commitments section",
+      "Mark commitments as done via strikethrough syntax",
+      "Append freeform notes to the canonical Notes section",
+      "Append meeting records to the canonical Meetings section",
+      "Scan all contact files and surface past-due commitments via list-due command",
+      "Emit FOLLOWUP_DUE: signals for pickup by EA Pack and other behavior apps"
+    ],
+    "scope_excludes": [
+      "Calendar or scheduling integration — contact dates are not synced to any calendar",
+      "CRM-style pipeline or deal tracking",
+      "Email parsing or automatic contact extraction",
+      "Multi-bot shared contact stores"
+    ],
+    "user": "The bot and human operators who need to track relationships, promises, and follow-ups with specific people. The bot appends entries; the human queries via show and list-due."
+  },
+  "success_criteria": {
+    "observable_outcomes": [
+      "show --person returns the full contact file with all sections populated accurately",
+      "list-due surfaces all commitments with [due: DATE] where DATE is past today and text is not struck through",
+      "FOLLOWUP_DUE: signals are emitted with correct slug and commitment text format",
+      "All writes are append-only — no data is lost or overwritten on subsequent calls"
+    ],
+    "failure_signals": [
+      "Contact file is rewritten from scratch on update, losing prior history",
+      "list-due returns nothing when past-due commitments exist",
+      "Section headers drift from canonical names (e.g. 'Commitment' instead of 'Commitments')",
+      "Slug generation produces different results for the same name across calls"
+    ],
+    "quality_bar": {
+      "minimum": "Operator can ask 'what did I promise to Alice?' and get an accurate list from show --person, and list-due returns all past-due items with correct FOLLOWUP_DUE: format.",
+      "excellent": "list-due is run daily by EA Pack and surfaces follow-ups proactively. Commitment lines are consistently formatted, making them parseable by downstream apps. Completed items are clearly struck through and excluded from due scans."
+    }
+  },
+  "build_spec": "# Contacts — Build Specification\n\n## Overview\n\nBuild a per-person relationship memory system. One markdown file per contact. Three canonical sections per file. Append-only writes. A CLI for adding entries and querying due commitments.\n\n---\n\n## File Layout\n\n```\nscripts/\n  contacts.py        ← main CLI\nmemory/\n  contacts/          ← one .md file per person\n```\n\n---\n\n## Contact File Format\n\nFilename: `{slug}.md` where `slug = name.strip().lower().replace(' ', '-')`\n\nFile header (written once on creation):\n```\n# {Person Name}\n\n## Commitments\n\n## Notes\n\n## Meetings\n```\n\nSection headers are CANONICAL. They must be exactly:\n- `## Commitments`\n- `## Notes`\n- `## Meetings`\n\nNever vary the header text. Other apps depend on parsing these exact strings.\n\n---\n\n## Entry Formats\n\n### Commitment line\n```\n- YYYY-MM-DD: {text}\n```\nWith optional due date:\n```\n- YYYY-MM-DD: {text} [due: YYYY-MM-DD]\n```\nCompleted (done):\n```\n- YYYY-MM-DD: ~~{text}~~\n```\nor with due:\n```\n- YYYY-MM-DD: ~~{text} [due: YYYY-MM-DD]~~\n```\n\nThe leading `- ` is required. The date is the date the commitment was recorded. The `[due: ...]` tag, if present, appears at the end of the text.\n\n### Note line\nAppend as-is to the Notes section:\n```\n- YYYY-MM-DD: {text}\n```\n\n### Meeting line\nAppend to the Meetings section:\n```\n- YYYY-MM-DD: {text}\n```\n\n---\n\n## CLI: scripts/contacts.py\n\n### `add-commitment`\n```\ncontacts.py add-commitment --person NAME --text TEXT [--due YYYY-MM-DD]\n```\n- Compute slug from NAME\n- Open (or create) `memory/contacts/{slug}.md`\n- If creating: write the file header with the canonical sections\n- Append commitment line under `## Commitments`\n- All writes are **append-only** — never rewrite the file from scratch\n\n### `add-note`\n```\ncontacts.py add-note --person NAME --text TEXT\n```\n- Append note line under `## Notes`\n\n### `add-meeting`\n```\ncontacts.py add-meeting --person NAME --text TEXT [--date YYYY-MM-DD]\n```\n- Default date = today\n- Append meeting line under `## Meetings`\n\n### `show`\n```\ncontacts.py show --person NAME\n```\n- Print full contact file to stdout\n- If file doesn't exist: print \"No contact file for {name}\" and exit 0\n\n### `list`\n```\ncontacts.py list\n```\n- Print all contact slugs (one per line) found in memory/contacts/\n\n### `list-due`\n```\ncontacts.py list-due\n```\n- Scan all *.md files in memory/contacts/\n- Find lines in the Commitments section matching: `- YYYY-MM-DD: {text} [due: YYYY-MM-DD]`\n- Filter: due date < today AND line does not start with `- ` followed by `~~`\n- For each match: print `FOLLOWUP_DUE: {slug} | {text}` (text includes the [due: ...] portion)\n- If none found: exit 0 silently\n\n---\n\n## Append-Only Rule\n\nAll writes MUST append to existing files. Never:\n- Read the full file, modify in memory, and write back\n- Truncate and rewrite\n- Use a temp file + rename for append operations\n\nThe only atomic-write case is file creation (writing the header). After creation, all subsequent writes append a single line to the appropriate section.\n\n**Implementation:** Use Python's file append mode (`open(path, 'a')`). Locate the section header in the file by reading it, then append at the correct position. A simpler approach: maintain strict section order (Commitments, Notes, Meetings) and append lines directly after the relevant section header by scanning from bottom of section.\n\n---\n\n## Slug Consistency\n\nSlug computation must be deterministic and consistent:\n```python\ndef make_slug(name: str) -> str:\n    return name.strip().lower().replace(' ', '-')\n```\n\nApply identically in every command. Never add extra normalization (no accent stripping, no special-char removal beyond the spec above).\n\n---\n\n## Test Suite\n\n```bash\n# 1. Add a commitment (no due)\npython3 scripts/contacts.py add-commitment --person \"Alice Smith\" --text \"Send project report\"\n# Expected: memory/contacts/alice-smith.md created with header + commitment line\n\n# 2. Show person\npython3 scripts/contacts.py show --person \"Alice Smith\"\n# Expected: file contents printed, Commitments section has the line\n\n# 3. list-due (nothing due yet)\npython3 scripts/contacts.py list-due\n# Expected: no output (no due dates set)\n\n# 4. Add a past-due commitment\npython3 scripts/contacts.py add-commitment --person \"Alice Smith\" --text \"Follow up on invoice\" --due 2020-01-01\n# Expected: commitment line appended with [due: 2020-01-01]\n\n# 5. list-due (should surface the past-due item)\npython3 scripts/contacts.py list-due\n# Expected: FOLLOWUP_DUE: alice-smith | Follow up on invoice [due: 2020-01-01]\n\n# 6. Add note and meeting\npython3 scripts/contacts.py add-note --person \"Alice Smith\" --text \"Prefers async communication\"\npython3 scripts/contacts.py add-meeting --person \"Alice Smith\" --text \"Discussed Q2 roadmap\"\n\n# 7. Final show — verify all sections populated\npython3 scripts/contacts.py show --person \"Alice Smith\"\n# Expected: all three sections have content\n```\n\nAll steps must exit 0. Step 5 must print the FOLLOWUP_DUE: line.",
+  "example_triggers": [
+    "Add a commitment for Alice: send her the contract by Friday",
+    "What have I promised Bob?",
+    "Show me my notes on Carol",
+    "Log a meeting with Dave — we discussed Q2 planning",
+    "Who has overdue follow-ups?",
+    "List all my contacts"
+  ],
+  "test_cases": [
+    {
+      "trigger": "Add a commitment for Alice Smith: review her proposal by 2026-04-30",
+      "expected": "Call contacts.py add-commitment --person 'Alice Smith' --text 'review her proposal' --due 2026-04-30; confirm file memory/contacts/alice-smith.md updated"
+    },
+    {
+      "trigger": "What are my open commitments to Bob Jones?",
+      "expected": "Call contacts.py show --person 'Bob Jones'; return Commitments section contents, filtering out struck-through lines"
+    },
+    {
+      "trigger": "Who has overdue follow-ups?",
+      "expected": "Call contacts.py list-due; return all FOLLOWUP_DUE: lines grouped by person"
+    }
+  ],
+  "constraints": {
+    "safety": [
+      "All writes are append-only — never rewrite or truncate contact files",
+      "Section headers must be exactly canonical — do not vary capitalization or punctuation",
+      "Slug must be computed identically on every call to prevent duplicate files"
+    ],
+    "boundaries": [
+      "This is a local memory store — contact data is never synced externally",
+      "No calendar integration — due dates in commitments are tracked locally only",
+      "Do not infer or create contacts automatically from email or calendar data"
+    ]
+  },
+  "usage": {
+    "model": "user-initiated",
+    "trigger_recognition": {
+      "pattern": "When the user mentions doing something with or for a specific person, capture it into that contact's record. When the user asks about a person, retrieve.",
+      "hint_words": [
+        "promised",
+        "told",
+        "spoke with",
+        "met with",
+        "show me notes on",
+        "what did I tell"
+      ],
+      "requires_keyword": false
+    },
+    "auto_capture": {
+      "enabled": true,
+      "sources": [
+        "user message"
+      ]
+    },
+    "how_to_use": "Use `add-commitment` for things the user owes a person; `add-note` for freeform observations ('Alice prefers email over Slack'); `add-meeting` after meetings to record what happened. Use `show <name>` to retrieve a contact's full record; `list-due` for overdue commitments across all contacts.",
+    "bot_voice_examples": [
+      "Noted in Alice's record — contract draft by Friday.",
+      "Alice — last met Oct 14, prefers email, you owe her the Q2 deck.",
+      "Three overdue commitments: contract to Alice (3d), numbers to Bob (1d), intro to Carol (today)."
+    ]
+  }
+}

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.evolve.evolve.weekly-report</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/Shared/evolve-venv/bin/python3</string>
+        <string>/Users/Shared/evolve-repo/packages/analyzer/report.py</string>
+    </array>
+    <key>UserName</key>
+    <string>evolve</string>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>1</integer>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>/Users/evolve/.openclaw/logs/evolve-evolve.weekly-report.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/evolve/.openclaw/logs/evolve-evolve.weekly-report.err.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>PYTHONPATH</key>
+        <string>/Users/Shared/evolve-repo/packages/analyzer</string>
+        <key>EVOLVE_NETWORK</key>
+        <string>/Users/Shared/evolve/network.json</string>
+    </dict>
+</dict>
+</plist>
