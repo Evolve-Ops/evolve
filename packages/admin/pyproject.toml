@@ -52,7 +52,7 @@ dependencies = [
     # `openclaw channels login` stdout and renders it as a PNG data URL
     # the admin UI can show inline. Lightweight (~70 KB); PIL is the
     # default backend.
-    "qrcode[pil]>=7.0",
+    "qrcode[pil]>=8.2",
 ]
 
 [project.scripts]
