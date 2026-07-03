@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Users Page · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">users</span><span class="chip">pod-admins</span><span class="chip">paired-users</span><span class="chip">pairing-approval</span><span class="chip">self-claim-passphrase</span><span class="chip">per-bot-owner</span></div><div class="reviewed">Last reviewed 2026-06-08</div></div><h1 id="help-users-page">Users Page</h1>
+<p>The Users page (in the <strong>Settings</strong> bucket) is the single place for every "who can use this pod, and what can they do" question — pod admins, self-claim passphrases, per-bot owners, and paired-user management per channel.</p>
+<p>It replaces the old Settings → Identity sub-tab and absorbs the pairing-approval flow that previously required SSHing into the bot's account to run <code>openclaw pairing approve …</code>. Spec: <a href="../spec-per-bot-users-management-2026-05-29.md">docs/spec-per-bot-users-management-2026-05-29.md</a>.</p>
+<p><strong>Ask evo from chat.</strong> Most user-management actions are reachable through chat: <em>"approve Sam's pairing request for team-bot-a on Slack"</em>, <em>"disconnect U0PLKKXV0 from atlas"</em>, <em>"who is the primary user on personal-bot?"</em>, <em>"switch team-bot-a to multi-user mode"</em>. Evo routes through the same Users API the page uses, so the audit trail matches.</p>
+<hr>
+<h2 id="page-shape">Page shape</h2>
+<p>Top of the page: <strong>pod-wide identity</strong> (pod admins, self-claim passphrases) in cards. Below that: a <strong>bot-tile rail</strong> matching the Cost Optimization / Capabilities pattern — pick a bot to expand its panel below. Each bot's panel shows owner, passphrase override, and Users by channel.</p>
+<p>A page header chip counts pending pairing requests across the whole pod. Each bot tile shows a <code>●N</code> chip if that bot has any pending requests. The sidebar's Users badge mirrors the page header so demand is visible without opening the page.</p>
+<hr>
+<h2 id="pod-wide-identity">Pod-wide identity</h2>
+<h3 id="pod-admins-messaging">Pod Admins (messaging)</h3>
+<p>Anyone listed here gets admin privileges on every multi-user bot's chat surface. Pod admins are independent of the Unix admin account in Settings → Network — this is the messaging-side admin, the person who can run admin-tier <code>evo</code> keywords from any bot.</p>
+<p>To add: pick channel (Telegram / Slack / Discord / WhatsApp), enter the external ID, optionally label with a pod user and display name. The <code>×</code> next to an ID chip removes that channel's claim; the <code>×</code> next to a pod user drops every claim for that person.</p>
+<h3 id="self-claim-passphrases">Self-claim passphrases</h3>
+<p>Out-of-band claim words a user can message to a bot to record themselves as admin or primary, without you having to enter their channel ID by hand.</p>
+<ul>
+<li><strong>Admin passphrase</strong> (default <code>charles</code>) — claims pod-wide admin status.</li>
+<li><strong>Primary passphrase</strong> (default <code>darwin</code>) — claims per-bot primary on whichever bot the user messaged.</li>
+</ul>
+<p>A user types <code>evo claim darwin</code> and they become primary on that bot. <code>evo claim charles darwin</code> claims both at once.</p>
+<p>Per-bot overrides live in each bot's panel below — useful when you want different words per bot so one bot's owner doesn't accidentally claim primary on a sibling bot.</p>
+<hr>
+<h2 id="per-bot-panel">Per-bot panel</h2>
+<p>The bot-tile rail picks a bot; the panel below shows everything user-related for it.</p>
+<h3 id="owner-primary-user">Owner / primary user</h3>
+<p>The bot's primary user. Two ways to set:</p>
+<ul>
+<li><strong>Enter their ID here</strong> — pick channel + external ID + optional display name + pod user.</li>
+<li><strong>Have them self-claim</strong> — they message the bot once with the primary passphrase. The system records them.</li>
+<li><strong>Discover from history</strong> — a button under the owner block scans recent transcripts and proposes a primary based on conversation patterns; one-click "Use" commits the candidate.</li>
+</ul>
+<h3 id="self-claim-passphrase">Self-claim passphrase</h3>
+<p>Shows the active passphrase for this bot. If unset, the row reads "inherits pod default ({primary passphrase})". Override with a custom word per bot.</p>
+<h3 id="single-user-multi-user-toggle">Single-user ↔ multi-user toggle</h3>
+<p>Each bot's panel header has a mode segmented control. Single-user bots respond only to their primary owner. Multi-user bots accept paired users from the allowlist below.</p>
+<p>Flipping the toggle rewrites <code>openclaw.json</code> (<code>multi_user_mode</code>) and kickstarts the gateway so the change takes effect immediately.</p>
+<h3 id="users-by-channel">Users by channel</h3>
+<p>For each messaging channel the bot is configured on, two sections:</p>
+<p><strong>Approved (N).</strong> The OpenClaw <code>allowFrom</code> list — every channel-native ID that can talk to the bot. Each row shows the display name (when known), labels (<code>[Owner]</code>, <code>[Pod admin]</code>, <code>[You]</code>), the raw ID, and a <code>[Disconnect]</code> button. Labels come from cross-referencing <code>network.json</code> (pod admins, primary owners). The "You" label appears on rows that match the currently-viewing admin's claim for that channel.</p>
+<p><strong>Pending (N).</strong> Pairing requests that the user sent via <code>/start</code> and that haven't been approved or rejected yet. Each row shows the user's display name (or username), their ID, the pairing code, when the request was created, and <code>[Approve]</code> / <code>[Reject]</code> buttons.</p>
+<p>Channels with no configuration show a "Channel not configured" stub and link to Plugins → Messaging.</p>
+<h3 id="disconnect-reject-confirmations">Disconnect / reject confirmations</h3>
+<p><code>[Disconnect]</code> prompts a confirm dialog before removing the ID from the allowlist. If the target is the primary user or the only pod admin on that channel, the dialog adds a warning bar.</p>
+<p><code>[Reject]</code> on a pending request prompts a dialog with an optional <strong>"Don't auto-approve this ID for the next hour"</strong> checkbox (default on). This populates the <code>rejected.json</code> cool-off index so the background sweep doesn't re-approve an ID that coincidentally matches a pod-admin claim.</p>
+<hr>
+<h2 id="auto-approval">Auto-approval</h2>
+<p>When a pending request's channel ID matches a recorded pod admin's <code>external_id</code> for the same channel, the system auto-approves it. This is <strong>inline on GET</strong> (the listing endpoint approves on read so a freshly-paired admin sees their own <code>/start</code> already approved) and <strong>ambient on a 60-second sweep</strong> (<code>pairing_auto_approver</code> launchd job) for the case where no admin is watching the page.</p>
+<p>Every auto-approval emits a Signal to the Alerts page. Signature: <code>pairing_auto_approved:&lt;bot&gt;:&lt;channel&gt;:&lt;id&gt;</code>. The Signal auto-resolves immediately (informational). One-line summary: <em>"Auto-approved pairing — atlas / telegram / Pod-Admin Alden (pod admin)."</em></p>
+<p>If you manually reject a request, the cool-off index blocks re-approval for an hour even if the ID matches a pod-admin claim.</p>
+<hr>
+<h2 id="name-enrichment">Name enrichment</h2>
+<p>Approved IDs without a name from any local source (the resolved-names cache, the pod-admin claims map, the primary-owner record, or the identity_cache) get an asynchronous lookup against the channel API using the bot's own provider token.</p>
+<p>Coverage:</p>
+<ul>
+<li><strong>Telegram</strong> — <code>getChat(user_id)</code> returns <code>first_name</code>, <code>last_name</code>, <code>username</code>.</li>
+<li><strong>Slack</strong> — <code>users.info(user)</code> returns <code>real_name</code>, <code>display_name</code>, and (when the bot has the <code>users:read.email</code> scope) <code>profile.email</code>.</li>
+<li><strong>Discord</strong> — <code>GET /users/&lt;id&gt;</code> returns <code>username</code> and <code>global_name</code>. The display preference is <code>global_name</code> → <code>username</code>.</li>
+</ul>
+<p>Cache TTL is 7 days. The GET endpoint never blocks the page on a channel API call; lookups beyond a 5-second wall-clock complete in the background and seed the cache for the next render.</p>
+<h3 id="show-emails-toggle">Show emails toggle</h3>
+<p>Per-bot panels have a <strong>Show emails</strong> checkbox in the header (Slack only, since other channels don't expose email via the bot API path). Off by default so the page stays compact. The preference persists to <code>localStorage</code>. Email values come from <code>profile.email</code> on Slack <code>users.info</code> and require the <code>users:read.email</code> scope.</p>
+<hr>
+<h2 id="pod-context-the-row-that-used-to-live-here">Pod context (the row that used to live here)</h2>
+<p>The deploy machine / Unix admin / admin URL block that used to be on Settings → Identity has moved to Settings → Network. It's system configuration, not a "who" question.</p>
+<hr>
+<h2 id="api-surface">API surface</h2>
+<p>All endpoints under <code>/api/admin/bots/&lt;bot_id&gt;/users</code>:</p>
+<ul>
+<li><code>GET /</code> — per-channel paired-user state for the bot, with <code>approved[]</code>, <code>pending[]</code>, <code>auto_approve_eligible</code> flags, and <code>labels</code> chips.</li>
+<li><code>POST /approve</code> — body <code>{channel, id, code}</code>. Adds <code>id</code> to the allowlist and removes the pending entry. <code>code</code> acts as a nonce so a stale UI can't approve an unrelated request.</li>
+<li><code>POST /revoke</code> — body <code>{channel, id}</code>. Removes <code>id</code> from the allowlist.</li>
+<li><code>POST /reject</code> — body <code>{channel, id, code}</code>. Removes the pending entry without adding to the allowlist; optionally populates the cool-off index.</li>
+</ul>
+<p>Routes live in <a href="../../packages/admin/evolve_admin/web/routes_bot_users.py"><code>packages/admin/evolve_admin/web/routes_bot_users.py</code></a>.</p>
+<hr>
+<h2 id="common-questions">Common questions</h2>
+<p><strong>An ID is on the allowlist but shows no name — is something broken?</strong>
+No. It just means no local source (pod admins, primary owner, resolved-names cache) had a label and the channel API hasn't been queried yet, or the channel doesn't expose names easily (WhatsApp). The async lookup will populate the cache for the next render.</p>
+<p><strong>I rejected a pending request and they re-sent <code>/start</code> — will they auto-approve now?</strong>
+Not for an hour, even if their ID matches a pod-admin claim. The rejected.json cool-off index prevents that. After an hour, normal auto-approval rules resume.</p>
+<p><strong>Why does my own <code>/start</code> auto-approve but a teammate's doesn't?</strong>
+Your claim is recorded in the pod admins list; theirs isn't. Add them as a pod admin first (or have them message <code>evo claim charles</code> with the admin passphrase you set) and their next <code>/start</code> will auto-approve.</p>
+<p><strong>I switched a bot from single-user to multi-user — what happens to the existing primary?</strong>
+They remain the primary owner. The new mode means the bot now also accepts other users on the allowlist. Flip back and only the primary can talk to the bot again.</p>
+<p><strong>Does OpenClaw watch allowFrom.json for changes, or do I need to restart the gateway after approving?</strong>
+OC's gateway reads the file fresh on each incoming message, so approve / disconnect take effect immediately — no restart needed. The mode-toggle flow is different (it edits <code>openclaw.json</code>) and does kickstart the gateway.</p>
+<p><strong>Where does the auto-approval audit show up?</strong>
+On the Alerts page (Reports → Alerts), as a self-resolving informational Signal. Signature <code>pairing_auto_approved:&lt;bot&gt;:&lt;channel&gt;:&lt;id&gt;</code>.</p>
+<hr>
+<h2 id="roles-and-capabilities-2026-06-08">Roles and capabilities (2026-06-08)</h2>
+<p>The Users page also surfaces a per-identity <strong>role</strong> chip alongside the existing <code>pod_admin</code> / <code>owner</code> labels. Role determines what mutations the user is allowed to make ON THIS BOT — block other users, change channel modes, set someone else's role. It's distinct from "is paired at all" (the allowlist) and from "is the bot's primary owner" (the network.json claim).</p>
+<p>Spec: <a href="../spec-user-roster-and-roles-2026-06-07.md">docs/spec-user-roster-and-roles-2026-06-07.md</a>.</p>
+<h3 id="the-four-roles">The four roles</h3>
+<table>
+<thead>
+<tr>
+<th>Role</th>
+<th>What they can do</th>
+<th>How they got it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>admin</code></td>
+<td>Everything — manage every bot's roster, install apps, modify config, edit code</td>
+<td>Pod-admin claim in <code>network.json</code> (set on the Pod Admins card)</td>
+</tr>
+<tr>
+<td><code>primary_user</code></td>
+<td>Manage THIS bot's roster + channel modes + bot config; cannot install apps or edit code</td>
+<td>Set on the per-bot panel (role dropdown) or auto-inherited from the bot's Primary Owner claim</td>
+</tr>
+<tr>
+<td><code>participant</code></td>
+<td>Talk to the bot. No mutations.</td>
+<td>Default for anyone admitted to the allowlist</td>
+</tr>
+<tr>
+<td><code>blocked</code></td>
+<td>Sticky deny. Bot ignores them entirely.</td>
+<td>Operator clicks <strong>Block</strong> on a row, or evo cross-bot action</td>
+</tr>
+</tbody>
+</table>
+<p>Admin is computed from pod-admin claims, so changing it requires the Pod Admins card. Primary_user, participant, and blocked are controlled per-bot from the Users by channel rows: the role dropdown for set/promote/demote, the <strong>Block</strong> button for sticky deny.</p>
+<h3 id="engagement-surfaces-group-vs-dm">Engagement surfaces — group vs. DM</h3>
+<p>Per-identity field saying whether the bot honors group mentions, DMs, or both. Chips render alongside the role:</p>
+<ul>
+<li><code>group</code> — bot responds when @-mentioned in a shared group</li>
+<li><code>dm</code> — bot responds to private 1:1 messages</li>
+<li>both — most common; admin and primary_user default to both</li>
+</ul>
+<p>The distinction matters because DMs are unwitnessed and less socially costed. A participant defaulting to group-only means new members of a Telegram group can talk to the bot in the group context but can't quietly DM it for things they shouldn't be asking for.</p>
+<h3 id="newcomer-mode-per-channel">Newcomer mode (per channel)</h3>
+<p>Each channel has a <code>newcomer_mode</code> dropdown in its header that controls what happens when an unknown sender messages the bot:</p>
+<ul>
+<li><strong>Auto-admit</strong> — group membership is approval. Anyone who joins the Telegram group can talk to the bot; their <code>/start</code> (or first message) admits them as a participant. Removing them from the group quietly drops them from the allowlist. Best for trusted private groups.</li>
+<li><strong>Require approval</strong> — existing pairing flow. Their <code>/start</code> returns a pairing code; you approve in the Users page (or evo handles it for pod admins automatically). The default.</li>
+<li><strong>Closed</strong> — operator-only. Even pairing requests are advisory; nothing auto-admits.</li>
+</ul>
+<p>The Users page Newcomers dropdown writes the mode to the bot's overlay file at <code>{shared_dir}/rosters/{bot_id}.json</code>. Changes take effect on the next message.</p>
+<h3 id="block-vs-disconnect">Block vs. Disconnect</h3>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>What happens</th>
+<th>When to use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Disconnect</strong></td>
+<td>Removes from OC allowFrom. They can re-pair via <code>/start</code> and you can re-approve.</td>
+<td>Normal removal — they left the team, their access is no longer current.</td>
+</tr>
+<tr>
+<td><strong>Block</strong></td>
+<td>Sticky deny — removes from allowFrom AND writes a block-index entry that survives re-pairing. The pairing auto-approver will never re-admit them, even if they match a pod-admin claim.</td>
+<td>They lost trust. You don't want them sneaking back via <code>/start</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>Unblock removes from the block index but does NOT re-admit them — they'd have to send <code>/start</code> again and you'd approve the new pairing.</p>
+<h3 id="three-ways-to-manage-a-bots-roster">Three ways to manage a bot's roster</h3>
+<p>You don't have to use the admin UI. Three equivalent paths:</p>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>Who</th>
+<th>How</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>A — Admin UI</strong> (this page)</td>
+<td>Pod admin</td>
+<td>Click role chips, toggle Newcomer dropdown, hit Block / Unblock</td>
+</tr>
+<tr>
+<td><strong>B — DM or @-mention the bot</strong></td>
+<td>Admin or primary_user</td>
+<td>Tell the bot what to do in natural language: <em>"block 987654321 on telegram"</em>, <em>"set 555 to primary_user"</em>, <em>"set this channel to auto-admit"</em></td>
+</tr>
+<tr>
+<td><strong>C — Evo cross-bot</strong></td>
+<td>Admin</td>
+<td>Tell evo, naming the target bot: <em>"evo, block 987654321 on atlas telegram"</em>, <em>"evo, set atlas's telegram to auto-admit"</em></td>
+</tr>
+</tbody>
+</table>
+<p>All three reach the same admin daemon endpoints, with the same per-endpoint capability check. The audit log shows who actually triggered each change: <code>by=telegram:&lt;id&gt; via evolve</code> for Path C, <code>by=telegram:&lt;id&gt;</code> for Path B, <code>by=ui:admin</code> for Path A.</p>
+<p><strong>Path B and C are guarded by capability, not by surface.</strong> The daemon resolves the requester's role on the target bot and refuses with 403 if they don't have <code>bot.roster.mutate</code> (or <code>bot.channel.config</code> for newcomer mode changes). A participant typing <code>"block alice"</code> in Atlas's group gets a polite "I can't do that for you" instead of a mutation.</p>
+<h3 id="worked-example-onboarding-atlas-to-a-household-group">Worked example — onboarding Atlas to a household group</h3>
+<ol>
+<li><strong>Add yourself as pod admin</strong> if you aren't already (Pod Admins card). Add your Telegram numeric user_id.</li>
+<li><strong>Set Atlas's Telegram channel to <code>auto_admit</code></strong> via the Newcomers dropdown on Atlas's panel. Now anyone added to the group will be admitted as a participant.</li>
+<li><strong>Add a primary_user</strong> (optional). Pick a household member, get their Telegram user_id (or have them <code>/start</code> Atlas in a DM so it appears in pending), approve, then set their role to <code>primary_user</code>. They can now block / unblock / promote other users by DMing or @-mentioning Atlas.</li>
+<li><strong>Block when needed.</strong> If someone misbehaves in the group, click Block on their row — or just say "block them" to Atlas in the group, the bot calls the tool, the daemon writes the block.</li>
+</ol>
+<h3 id="what-the-llm-knows">What the LLM knows</h3>
+<p>Every turn, the bot's plugin captures the sender's id and resolves their role + capabilities. A short "Speaker context" block goes into the LLM's system prompt:</p>
+<pre><code>SPEAKER (this turn):
+  telegram:1260193629
+  role=admin · can_mutate_roster=yes · can_config_channel=yes
+</code></pre>
+<p>For participants/blocked, the block tells the LLM to decline politely WITHOUT calling the tools (saving a refusal round-trip). The DAEMON is still the authoritative gate — if a jailbroken LLM ignores the hint and calls the tool anyway, the 403 catches it.</p>
+<h3 id="capabilities">Capabilities</h3>
+<p>The full set of built-in capabilities:</p>
+<table>
+<thead>
+<tr>
+<th>Capability</th>
+<th>Gates</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>bot.roster.read</code></td>
+<td>Reading the per-bot user list</td>
+</tr>
+<tr>
+<td><code>bot.roster.mutate</code></td>
+<td>Add/modify/block identities, set roles</td>
+</tr>
+<tr>
+<td><code>bot.roles.bind</code></td>
+<td>Change which capabilities each role has (admin only — bot-scoping rule)</td>
+</tr>
+<tr>
+<td><code>bot.channel.config</code></td>
+<td>Set <code>newcomer_mode</code> / <code>default_engagement_surfaces</code> per channel</td>
+</tr>
+<tr>
+<td><code>bot.config.modify</code></td>
+<td>Edit bot configuration (openclaw.json, network.json bot block)</td>
+</tr>
+<tr>
+<td><code>bot.app.install</code></td>
+<td>Install / remove apps (admin only — deploy-surface rule)</td>
+</tr>
+<tr>
+<td><code>bot.code.modify</code></td>
+<td>Modify bot scripts or code (admin only — deploy-surface rule)</td>
+</tr>
+<tr>
+<td><code>bot.send_external</code></td>
+<td>Reach outside the bot's primary channel (admin and primary_user)</td>
+</tr>
+</tbody>
+</table>
+<p><code>admin</code> has all of them. <code>primary_user</code> has the bot-scoped subset (roster.mutate, channel.config, config.modify, send_external) but NOT the deploy-surface ones. <code>participant</code> and <code>blocked</code> have none.</p>
+<p>App-declared capabilities (manifest v7 <code>provided_capabilities</code>) layer on top once apps migrate. Not active yet.</p>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/users.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>

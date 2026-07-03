@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Terminal Page · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">terminal</span></div><div class="reviewed">Last reviewed 2026-06-23</div></div><h1 id="help-terminal-page">Terminal Page</h1>
+<p>The Terminal page (in the <strong>Operate</strong> bucket) is a real shell on your pod,
+embedded right in the admin UI. It's there for the moments when you'd otherwise
+SSH into your mini — checking a file, restarting a service, running a quick
+command to see what's going on — without leaving the browser.</p>
+<p>A few things to know:</p>
+<ul>
+<li><strong>It runs on your pod, not your laptop.</strong> Commands execute on the mini that
+  hosts your bots. For commands meant for your own machine, use your laptop's
+  terminal app instead.</li>
+<li><strong>It's hands-on-keyboard, for you.</strong> This is an operator tool you drive
+  yourself. Your bots don't use it, and nothing types into it on your behalf.</li>
+<li><strong>It can change things.</strong> A shell on your pod can read pod state, restart
+  services, and make system-level changes. Treat it with the same care you'd
+  give an SSH session — the first time you open it, you'll see a one-time
+  heads-up confirming you understand that.</li>
+</ul>
+<p>The header shows which pod you're connected to and whether the session is idle
+or active. If the connection drops, a <strong>Reconnect</strong> button brings it back.</p>
+<p>If you're not comfortable at a command line, you rarely need this page — the
+rest of the admin UI and the chat assistant cover day-to-day operation. The
+Terminal is the escape hatch for when you want to look under the hood directly.</p>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/terminal.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>

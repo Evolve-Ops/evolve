@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>User Profile Inferrer · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">profile-inferrer</span><span class="chip">per-bot-inference</span><span class="chip">dnt</span><span class="chip">session-end-hook</span><span class="chip">profile-extraction</span></div><div class="reviewed">Last reviewed 2026-06-05</div></div><h1 id="help-user-profile-inferrer">User Profile Inferrer</h1>
+<p>The User Profile Inferrer keeps each bot's per-user profile current by extracting new facts from the bot's own session transcripts. It runs <strong>inside each bot at session_end</strong>, using the bot's own LLM credentials — never as a centralized service. Spec: <a href="../spec-user-profile-2026-05-07.md">docs/spec-user-profile-2026-05-07.md</a>.</p>
+<p>The inferrer writes facts directly into <code>~/.openclaw/profiles/&lt;user_key&gt;.md</code>. There is no per-fact approval queue: things the user has already volunteered in conversation are implicitly authorized to be remembered. The user can review, edit, or wipe the profile any time via <code>evo profile</code>.</p>
+<hr>
+<h2 id="how-it-works">How it works</h2>
+<ol>
+<li><strong>Triggered per session.</strong> OpenClaw's <code>session_end</code> hook invokes the inferrer in the bot's own process.</li>
+<li><strong>Reads the transcript.</strong> The hook receives the just-ended session's transcript via the OC env contract (<code>OC_BOT_ID</code>, <code>OC_USER_KEY</code>, <code>OC_HOME_DIR</code>, <code>OC_TRANSCRIPT_PATH</code>).</li>
+<li><strong>DNT short-circuit.</strong> If the user has <code>tracking_enabled: false</code> in their profile (set via <code>evo profile dnt on</code>), the hook exits before any LLM call. No token spend on opted-out users.</li>
+<li><strong>LLM extraction.</strong> One Haiku 4.5 call per session: <code>(transcript, current_profile) → list[FactCandidate]</code>. The model sees the existing profile so it doesn't propose duplicates.</li>
+<li><strong>Confidence filter.</strong> Per-section thresholds drop low-confidence candidates. Sensitive sections (Family, Demographics, Constraints) require 0.85+; everyday sections (Goals, Vocation, Interests, Values, Communication Preferences) accept 0.70+.</li>
+<li><strong>Direct write.</strong> Surviving facts append into the appropriate sections; the Audit Log gets one line per write with section, source (<code>inferrer</code>), confidence, and timestamp.</li>
+</ol>
+<hr>
+<h2 id="activation">Activation</h2>
+<p>The inferrer is shipped as the <code>user_profile_inferrer</code> generator at <code>packages/analyzer/generators/user_profile_inferrer/</code>. Each bot installs it as a session_end hook in its <code>openclaw.json</code> at deploy time. The hook loads the bot's own Anthropic key from <code>~/.openclaw/credentials/anthropic.json</code> — never from the pod-wide evolve-side credentials store.</p>
+<p>If the credentials are missing, the hook logs and exits quietly (<code>skipped: no_llm_credentials</code>). The bot continues to function normally; just no profile updates that session.</p>
+<hr>
+<h2 id="what-it-can-and-cant-record">What it can and can't record</h2>
+<p><strong>Can:</strong> durable facts the user volunteered about themselves — "works as a software engineer at a small startup", "vegetarian", "prefers short responses without bullet points", "wants to ship a novel by year-end".</p>
+<p><strong>Can't (or shouldn't):</strong></p>
+<ul>
+<li>Facts about <em>other people</em> the speaker mentions — those go into the speaker's own profile only if relevant ("my partner is a teacher" → Family), never into the third party's profile.</li>
+<li>Transient state — "had a bad day", "running late". The inferrer is told to extract durable facts only.</li>
+<li>Anything below the per-section confidence threshold.</li>
+<li>Anything already in the profile (the model sees existing sections and is told not to re-extract).</li>
+</ul>
+<hr>
+<h2 id="user-control">User control</h2>
+<p>Three surfaces to inspect or alter the profile:</p>
+<ul>
+<li><strong><code>evo profile</code></strong> — show what's been recorded. Renders sections back to the user; nothing else.</li>
+<li><strong><code>evo profile dnt on</code></strong> — opt out of profile inference. Wipes all section content + Audit Log atomically. The inferrer short-circuits on subsequent sessions until the user toggles back.</li>
+<li><strong><code>evo profile dnt off</code></strong> — resume inference. Starts fresh — no backfill from past observations.</li>
+</ul>
+<p>The profile file at <code>~/.openclaw/profiles/&lt;user_key&gt;.md</code> is also directly editable by the user; the inferrer's parser preserves user-edited content.</p>
+<hr>
+<h2 id="privacy">Privacy</h2>
+<ul>
+<li>Each bot's inferrer sees only its own users' transcripts. Bot A's LLM never sees bot B's data — privacy by architecture, not policy.</li>
+<li>The profile file is mode 600, owned by the bot user. The evolve admin server's ACL is explicitly carved out for <code>*.md</code> files in <code>profiles/</code> (see <code>set_evolve_read_acl</code> in <code>deploy.py</code>).</li>
+<li>The admin UI sees only a binary signal — "any user has a profile with content?" — via <code>~/.openclaw/profiles/.status.json</code> (mode 644). Profile contents are never surfaced in the admin UI.</li>
+</ul>
+<hr>
+<h2 id="cost">Cost</h2>
+<p>One Haiku 4.5 call per session, ~2-3K input tokens (transcript) + ~200 output tokens. Roughly $0.001 per session. For an active user with 10 sessions/day, that's ~$0.30/month per user — well within the per-bot <code>monthly_cap_usd</code> design.</p>
+<p>To stop the inferrer entirely for a specific user: <code>evo profile dnt on</code>. To stop it pod-wide for testing: remove the session_end hook from the bot's <code>openclaw.json</code>.</p>
+<hr>
+<h2 id="failure-modes">Failure modes</h2>
+<ul>
+<li><strong>No credentials</strong> — logs <code>skipped: no_llm_credentials</code>, exits 0. Bot session is unaffected.</li>
+<li><strong>DNT enabled</strong> — logs <code>skipped: dnt_enabled</code>. No token spend.</li>
+<li><strong>bot_id mismatch</strong> — defensive guard. Logs <code>skipped: bot_id_mismatch</code>. Should never trigger if the hook is wired correctly; if it does, refuses to write rather than risk cross-contamination.</li>
+<li><strong>Empty transcript</strong> — logs <code>skipped: empty_transcript</code>. Common for heartbeat-only sessions.</li>
+<li><strong>LLM call fails</strong> — logs the error, returns no facts. Next session retries naturally.</li>
+</ul>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/profile-inferrer.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>

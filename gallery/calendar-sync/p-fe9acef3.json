@@ -1,0 +1,234 @@
+{
+  "pkg_id": "p-fe9acef3",
+  "pkg_version": "2026.04.16-1.0",
+  "gallery_version": "2026.04.16-1.0",
+  "schema_version": 5,
+  "manifest_type": "evolve_application",
+  "display_name": "Calendar Sync",
+  "author": "evolve",
+  "description": "Syncs Google Calendar events into structured local JSON files. Updates every 15 minutes. Provides calendar data to EA Pack, meeting prep, and other behavior apps.",
+  "application_tags": [
+    "calendar-summary",
+    "data-foundation",
+    "personal-productivity",
+    "calendar",
+    "executive-assistant",
+    "integration",
+    "productivity",
+    "workspace-suite"
+  ],
+  "id": "app_calendar_sync",
+  "name": "Calendar Sync",
+  "status": "active",
+  "dependencies": [],
+  "app_dependencies": [],
+  "requirements": {
+    "integrations": [
+      {
+        "id": "google_calendar",
+        "display_name": "Google Calendar",
+        "required": true,
+        "check_path": "openclaw.json → integrations.google_calendar",
+        "setup_doc": "docs/integrations/google-calendar.md",
+        "reason": "Reads calendar events via Google Calendar API",
+        "alternatives": [
+          {
+            "id": "google_path_c",
+            "display_name": "Google (path-C: service-account + DwD)",
+            "required": true,
+            "check_path": "network.json → bots[bot].google_integration",
+            "required_scopes": [
+              "https://www.googleapis.com/auth/calendar"
+            ],
+            "setup_doc": "docs/spec-google-integration-paths-2026-05-30.md",
+            "reason": "Path-C service-account auth from PR #1862. Bot uses calendar_create_event MCP tool server-side instead of legacy bearer-token HTTP."
+          }
+        ]
+      }
+    ],
+    "secrets": [],
+    "system": [],
+    "python_packages": []
+  },
+  "interface_contract": {
+    "populated_by_forge": false,
+    "extracted_at": null,
+    "data_files": [
+      {
+        "path": "memory/calendar-today.json",
+        "description": "Array of event objects for today, updated every 15 minutes.",
+        "schema": {
+          "storage_format": "JSON array of event objects",
+          "fields": {
+            "id": "string — Google Calendar event ID",
+            "title": "string — event summary/title",
+            "start_iso": "string — ISO 8601 datetime with timezone offset (e.g. 2026-04-16T09:00:00-07:00)",
+            "end_iso": "string — ISO 8601 datetime with timezone offset",
+            "attendees": "array of strings — attendee email addresses",
+            "description": "string — event description body (may be empty string)",
+            "is_external": "boolean — true if any attendee's email domain differs from the bot's primary email domain",
+            "location": "string | null — event location if set"
+          }
+        }
+      },
+      {
+        "path": "memory/calendar-upcoming.json",
+        "description": "Array of event objects for the next 7 days, updated every 15 minutes.",
+        "schema": {
+          "storage_format": "JSON array of event objects",
+          "fields": {
+            "id": "string",
+            "title": "string",
+            "start_iso": "string — ISO 8601 with offset",
+            "end_iso": "string — ISO 8601 with offset",
+            "attendees": "array of strings",
+            "description": "string",
+            "is_external": "boolean",
+            "location": "string | null"
+          }
+        }
+      }
+    ],
+    "cli": [
+      {
+        "command": "python3 scripts/calendar_sync.py sync",
+        "key_flags": [],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/calendar_sync.py today",
+        "key_flags": [],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/calendar_sync.py upcoming",
+        "key_flags": [
+          "--days N (default 7)"
+        ],
+        "output_signals": []
+      }
+    ],
+    "key_paths": {
+      "today_cache": "memory/calendar-today.json",
+      "upcoming_cache": "memory/calendar-upcoming.json",
+      "cli": "scripts/calendar_sync.py"
+    }
+  },
+  "files": [],
+  "install_job": null,
+  "improvement_history": [],
+  "identity": {
+    "purpose": "Pull Google Calendar events into local structured JSON files so that other bot apps (EA Pack, meeting prep, daily brief) can read calendar data without making API calls themselves. Acts as the calendar data layer for the bot.",
+    "scope_includes": [
+      "Authenticate with Google Calendar API using token from openclaw.json",
+      "Fetch today's events and write to memory/calendar-today.json",
+      "Fetch next 7 days' events and write to memory/calendar-upcoming.json",
+      "Compute is_external flag for each event based on attendee domains",
+      "Write files atomically (temp file + rename) to prevent partial reads",
+      "Degrade gracefully if auth token is expired or missing — write empty arrays",
+      "Run automatically every 15 minutes via launchd StartInterval"
+    ],
+    "scope_excludes": [
+      "Creating or modifying calendar events — read-only sync only",
+      "Syncing non-Google calendars (iCloud, Outlook, etc.)",
+      "Sending calendar invitations",
+      "Historical calendar data beyond the current sync window"
+    ],
+    "user": "Other bot apps that need calendar context (EA Pack, meeting prep, morning brief). The operator can also query today/upcoming directly from the CLI."
+  },
+  "success_criteria": {
+    "observable_outcomes": [
+      "memory/calendar-today.json is updated within 15 minutes of a calendar change",
+      "is_external is correctly set to true for meetings with attendees from outside the bot's domain",
+      "Both cache files contain valid JSON arrays even when no events exist",
+      "Auth failures result in empty arrays, not missing or corrupted files"
+    ],
+    "failure_signals": [
+      "Cache files are missing or contain malformed JSON after a sync run",
+      "is_external is always false even for obviously external attendees",
+      "Sync crashes with an unhandled exception when the token is expired",
+      "LaunchAgent is not running and files go stale"
+    ],
+    "quality_bar": {
+      "minimum": "EA Pack can read calendar-today.json and get an accurate list of today's events with correct start/end times and attendees.",
+      "excellent": "is_external is computed correctly. Sync runs reliably every 15 minutes. Token refresh is handled gracefully. calendar-upcoming.json gives EA Pack 7 days of look-ahead for meeting prep triggers."
+    }
+  },
+  "build_spec": "# Calendar Sync — Build Specification\n\n## Overview\n\nBuild a Google Calendar sync script. Reads OAuth token from openclaw.json, fetches events via the Calendar API, writes structured JSON to two cache files, runs every 15 minutes via launchd.\n\n---\n\n## File Layout\n\n```\nscripts/\n  calendar_sync.py       ← main CLI\nmemory/\n  calendar-today.json    ← today's events (auto-updated)\n  calendar-upcoming.json ← next 7 days events (auto-updated)\n```\n\n---\n\n## Auth: Reading the Token\n\nRead from openclaw.json → integrations.google_calendar:\n\n```python\nimport json\nfrom pathlib import Path\n\noc = json.loads(Path(\"/Users/{bot_id}/.openclaw/openclaw.json\").read_text())\ngcal_cfg = oc.get(\"integrations\", {}).get(\"google_calendar\", {})\ntoken = gcal_cfg.get(\"token\")  # dict with access_token, refresh_token, etc.\n```\n\nUse the `google-auth` and `google-api-python-client` libraries:\n```python\nfrom google.oauth2.credentials import Credentials\nfrom googleapiclient.discovery import build\n\ncreds = Credentials(\n    token=token[\"access_token\"],\n    refresh_token=token.get(\"refresh_token\"),\n    token_uri=\"https://oauth2.googleapis.com/token\",\n    client_id=token.get(\"client_id\"),\n    client_secret=token.get(\"client_secret\"),\n)\nservice = build(\"calendar\", \"v3\", credentials=creds)\n```\n\nIf token is missing or auth raises an exception: write empty arrays to both files and exit 0.\n\n---\n\n## is_external Computation\n\nRead the bot's primary email domain from openclaw.json → email:\n```python\nbot_email = oc.get(\"email\", \"\")\nbot_domain = bot_email.split(\"@\")[-1].lower() if \"@\" in bot_email else \"\"\n```\n\nFor each event:\n```python\ndef is_external(attendees: list[str], bot_domain: str) -> bool:\n    if not bot_domain:\n        return False\n    for email in attendees:\n        domain = email.split(\"@\")[-1].lower() if \"@\" in email else \"\"\n        if domain and domain != bot_domain:\n            return True\n    return False\n```\n\n---\n\n## Event Object Construction\n\nFor each Google Calendar event object returned by the API:\n\n```python\ndef build_event(gcal_event: dict, bot_domain: str) -> dict:\n    attendees = [\n        a[\"email\"] for a in gcal_event.get(\"attendees\", []) if \"email\" in a\n    ]\n    # Handle all-day events (date only, no time)\n    start = gcal_event[\"start\"].get(\"dateTime\") or gcal_event[\"start\"].get(\"date\") + \"T00:00:00\"\n    end = gcal_event[\"end\"].get(\"dateTime\") or gcal_event[\"end\"].get(\"date\") + \"T00:00:00\"\n    return {\n        \"id\": gcal_event[\"id\"],\n        \"title\": gcal_event.get(\"summary\", \"\"),\n        \"start_iso\": start,\n        \"end_iso\": end,\n        \"attendees\": attendees,\n        \"description\": gcal_event.get(\"description\", \"\"),\n        \"is_external\": is_external(attendees, bot_domain),\n        \"location\": gcal_event.get(\"location\"),\n    }\n```\n\n---\n\n## Atomic Write\n\n```python\nimport os, json, tempfile\nfrom pathlib import Path\n\ndef atomic_write(path: Path, data) -> None:\n    path.parent.mkdir(parents=True, exist_ok=True)\n    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=\".tmp\")\n    with os.fdopen(fd, \"w\") as f:\n        json.dump(data, f, indent=2)\n    os.replace(tmp, path)\n```\n\n---\n\n## CLI: scripts/calendar_sync.py\n\n### `sync`\n- Fetch today's events (timeMin = start of today, timeMax = end of today)\n- Fetch upcoming events (timeMin = now, timeMax = now + 7 days)\n- Build event objects for each\n- Write calendar-today.json and calendar-upcoming.json atomically\n- On any auth error: write [] to both files, exit 0\n\n### `today`\n- Print memory/calendar-today.json as formatted JSON\n- If file missing: print []\n\n### `upcoming`\n- `--days N` (default 7): filter upcoming events within N days from now\n- Print memory/calendar-upcoming.json as formatted JSON (filtered if --days < 7)\n\n---\n\n## LaunchAgent Plist\n\nWrite to `/Users/{bot_id}/Library/LaunchAgents/com.{bot_id}.calendar-sync.plist`:\n\n```xml\n<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\"\n  \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key>\n  <string>com.{bot_id}.calendar-sync</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>/usr/bin/python3</string>\n    <string>/Users/{bot_id}/.openclaw/workspace/scripts/calendar_sync.py</string>\n    <string>sync</string>\n  </array>\n  <key>StartInterval</key>\n  <integer>900</integer>\n  <key>StandardOutPath</key>\n  <string>/tmp/{bot_id}-calendar-sync.log</string>\n  <key>StandardErrorPath</key>\n  <string>/tmp/{bot_id}-calendar-sync-err.log</string>\n  <key>RunAtLoad</key>\n  <true/>\n</dict>\n</plist>\n```\n\n---\n\n## Test Suite\n\n```bash\n# 1. Syntax check\npython3 -m py_compile scripts/calendar_sync.py\n\n# 2. today command (reads cache or prints [])\npython3 scripts/calendar_sync.py today\n# Expected: valid JSON array (may be empty)\n\n# 3. upcoming command\npython3 scripts/calendar_sync.py upcoming\n# Expected: valid JSON array (may be empty)\n\n# 4. Validate output format if any events returned\npython3 -c \"\nimport json\nevents = json.load(open('memory/calendar-today.json'))\nfor e in events:\n    assert all(k in e for k in ['id','title','start_iso','end_iso','attendees','description','is_external','location']), 'Missing field'\nprint('OK: event schema valid')\n\" 2>/dev/null || echo 'OK: no events to validate'\n```",
+  "example_triggers": [
+    "What's on my calendar today?",
+    "Do I have any external meetings this week?",
+    "When is my next meeting?",
+    "Show my upcoming events for the next 3 days",
+    "Sync my calendar now"
+  ],
+  "test_cases": [
+    {
+      "trigger": "What's on my calendar today?",
+      "expected": "Read memory/calendar-today.json and return a formatted list of today's events with times and attendees"
+    },
+    {
+      "trigger": "Do I have any external meetings this week?",
+      "expected": "Read memory/calendar-upcoming.json, filter where is_external == true, return list of external meetings"
+    },
+    {
+      "trigger": "Sync my calendar",
+      "expected": "Call calendar_sync.py sync; confirm both cache files updated; report event count"
+    }
+  ],
+  "constraints": {
+    "safety": [
+      "Calendar sync is read-only — never create, modify, or delete calendar events",
+      "Auth failures must result in empty arrays, not exceptions that crash dependent apps",
+      "Atomic writes prevent partial file reads by other apps during sync"
+    ],
+    "boundaries": [
+      "Only syncs Google Calendar — no iCloud, Outlook, or other providers",
+      "Read-only access to calendar data — never writes back to Google Calendar",
+      "Does not store historical event data beyond the current sync window"
+    ]
+  },
+  "scheduled_actions": [
+    {
+      "id": "calendar-sync",
+      "mechanism": "launchd",
+      "trigger": {
+        "kind": "launchd"
+      },
+      "install": {
+        "plist_label": "ai.evolve.${bot_id}.calendar-sync",
+        "command": "/usr/bin/python3 ${workspace}/scripts/calendar_sync.py sync",
+        "cwd": "${workspace}",
+        "schedule": {
+          "every_minutes": 15
+        },
+        "exec_policy": "inherit"
+      },
+      "summary": "Incremental calendar sync every 15 minutes."
+    }
+  ],
+  "usage": {
+    "model": "scheduled",
+    "trigger_recognition": {
+      "pattern": "Calendar Sync runs every 15 minutes in the background; other apps read its cached files. When the user asks about calendar data, query the cached files via `today` / `upcoming` rather than waiting for the next sync.",
+      "hint_words": [
+        "calendar",
+        "next meeting",
+        "upcoming",
+        "today's schedule",
+        "external meeting"
+      ],
+      "requires_keyword": false
+    },
+    "auto_capture": {
+      "enabled": false,
+      "sources": []
+    },
+    "how_to_use": "The background sync keeps local JSON in step with Google Calendar; you don't need to trigger it. To answer calendar questions, run `today` or `upcoming` and read the returned events. Use `sync` only if data looks stale (last sync >30 min ago).",
+    "bot_voice_examples": [
+      "Your next meeting is 'Design review' at 2pm — internal, 30 minutes.",
+      "Tomorrow you have four meetings; first one is 9am with Alice.",
+      "Calendar data is fresh — pulling now."
+    ]
+  }
+}

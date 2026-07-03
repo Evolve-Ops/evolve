@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Security Page · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">security</span><span class="chip">audit</span><span class="chip">signals</span><span class="chip">exec-policy</span><span class="chip">sudoers</span><span class="chip">drift-detection</span></div><div class="reviewed">Last reviewed 2026-06-06</div></div><h1 id="help-security-page">Security Page</h1>
+<p>The Security page is the single home for every security-class signal Evolve emits. It runs a 15-minute audit (active threats and integrity violations), config-health checks (configuration that creates risk without being broken yet), and posture views over the configuration surfaces OpenClaw exposes — MCP servers, plugins, hooks, content scanned at session start, exec/sudoers permissions, and auto-memory hygiene.</p>
+<p><strong>Backup / drift detection moved.</strong> The git-backup status and recovery flow now live on the <a href="backup.html">Backup</a> page. The Security audit still uses the backup's last known-good commit as its baseline for SOUL/AGENTS/HEARTBEAT/openclaw.json drift checks — the data is the same, only the configuration surface moved.</p>
+<p><strong>Ask evo to investigate.</strong> Open the chat widget from any security view and
+describe what you're looking at — <em>"investigate the firing security signal on
+team-bot-a"</em>, <em>"audit team-bot-a's morning-brief app"</em>, <em>"which bot has the worst
+posture?"</em>. Evo can read the audit findings via <code>pod_state.audit</code>, audit
+specific apps via <code>action.app.audit</code>, snooze / dismiss / resolve signals, and
+apply any auth-drift proposals already in the queue. Faster than navigating
+between sub-tabs for triage.</p>
+<hr>
+<h2 id="sub-tabs">Sub-tabs</h2>
+<h3 id="audit">Audit</h3>
+<p>Every 15 minutes, <code>audit.py</code> runs across the pod and emits Signals for every finding. Categories:</p>
+<p><strong>Identity integrity:</strong>
+- SOUL.md, AGENTS.md, HEARTBEAT.md are hash-monitored against the last git-backup commit. Mismatch fires immediately.
+- Config changes to <code>openclaw.json</code> not traceable to an approved proposal are flagged.</p>
+<p><strong>Gateway security:</strong>
+- <strong>Bind address</strong> — must be <code>127.0.0.1</code>. Anything else (especially <code>0.0.0.0</code>) is CRITICAL.
+- <strong>Exec allowlist</strong> — unexpected new entries are flagged. Most common vector for unintended capability expansion.
+- <strong>Sudoers grant integrity</strong> — Evolve's sudoers rules shouldn't change outside the setup wizard.</p>
+<p><strong>Machine-level checks:</strong>
+- Firewall enabled · SSH <code>PasswordAuthentication</code> and <code>PermitRootLogin</code> disabled · listening ports match baseline · user accounts unchanged · OC binary mtime tracked.</p>
+<p><strong>Cost anomalies:</strong>
+- Spend spikes tracked alongside security events. Compromised keys and runaway prompts surface here.</p>
+<p><strong>Run Audit</strong> triggers an immediate run; results take 15–30 seconds. The <strong>Last run</strong> timestamp shows the most recent completion.</p>
+<h3 id="config-health">Config Health</h3>
+<p>Configuration that isn't broken but creates risk or cost: auth order, primary-model reachability, plugin version, gateway settings. Address within the week.</p>
+<h3 id="mcp-posture">MCP Posture</h3>
+<p>Cross-bot inventory of MCP servers configured in <code>openclaw.json → mcp.servers</code>. Each cell shows the server's vetting state:
+- <strong>Green</strong> — approved (in the pod's MCP catalog with no advisories)
+- <strong>Yellow</strong> — config drift (server present but config differs from the catalog entry)
+- <strong>Red</strong> — unknown server (not in the allowlist) or open CVE advisory</p>
+<p>Click <strong>↻ Re-scan</strong> to re-fetch advisories from the GHSA feed and re-check the inventory.</p>
+<p>Producer: <code>mcp_monitor</code>. Signal types: <code>mcp_unknown_server</code>, <code>mcp_config_drift</code>, <code>mcp_server_cve_match</code>, <code>mcp_credential_binding_missing</code>.</p>
+<p>Spec: <code>docs/spec-mcp-administration-2026-05-10.md</code>.</p>
+<h3 id="plugin-posture">Plugin Posture</h3>
+<p>Cross-bot view of every plugin entry. Each cell shows its enable state, role-vs-baseline classification, and <strong>install provenance</strong> — where the plugin came from (built-in / signed gallery / unsigned-but-allowed / unknown). Red = required-missing / denied-present / unknown install source. Yellow = unexpected-enabled, allow-list missing.</p>
+<p>The posture reshape shipped 2026-06-04 (<a href="https://github.com/evolve-ops/evolve/pull/2279">PR 2279</a> / <a href="https://github.com/evolve-ops/evolve/pull/2284">PR 2284</a>) replaces the old baseline-snapshot drift signals — which fired on every plugin version bump and produced noise — with provenance-based trust. The signal now fires on "the plugin was loaded from somewhere we can't vouch for," not on "the plugin's hash changed since last week."</p>
+<p>Producer: <code>plugin_monitor</code>. Spec: <code>docs/spec-plugin-posture-rework-2026-06-06.md</code> (current); <code>docs/spec-plugin-inventory-2026-05-10.md</code> covers the inventory layer.</p>
+<h3 id="hook-posture">Hook Posture</h3>
+<p>Two hook surfaces per bot watched in one view:</p>
+<p><strong>Webhook ingress</strong> — the <code>hooks{}</code> block in <code>openclaw.json</code>. The baseline expects every bot to have ingress disabled by default. Enabling requires explicit operator approval through <code>UpdateHookBaseline</code>. The monitor also hashes the <code>transformsDir</code> contents and signals on any change to the supply-chain surface.</p>
+<p><strong>Plugin typed hooks</strong> — per-plugin <code>allowConversationAccess</code> and <code>allowPromptInjection</code> flags. The April 2026 incident — Team-Bot-A's evolve-plugin <code>allowConversationAccess</code> flag silently dropped to false on an OC upgrade, severing the TurnObserver pipeline — is what motivated this view. The dedicated <code>hook_plugin_policy_silent_disable</code> signal specifically catches that class.</p>
+<p><code>allowPromptInjection=true</code> is auto-rejected for any plugin not in the baseline's <code>trusted_prompt_mutators</code> allowlist (default: empty). <code>UpdateHookBaseline.set_plugin_policy</code> also refuses to add an expectation that requires injection unless the plugin is already trusted — closing the "add yourself and flip" loop.</p>
+<p>Producer: <code>hook_monitor</code>. Signal types: <code>hook_webhook_unexpected_enabled</code>, <code>hook_webhook_mapping_changed</code>, <code>hook_webhook_transforms_dir_drift</code>, <code>hook_plugin_policy_silent_disable</code>, <code>hook_plugin_policy_unexpected</code>, <code>hook_command_gate_enabled</code>.</p>
+<p>Spec: <code>docs/spec-hook-governance-2026-05-10.md</code>.</p>
+<h3 id="content-scan">Content Scan</h3>
+<p>Scans the markdown files each bot reads at session start (<code>AGENTS.md</code>, <code>SOUL.md</code>, <code>HEARTBEAT.md</code>, <code>IDENTITY.md</code>, <code>TOOLS.md</code>, <code>USER.md</code>, <code>MEMORY.md</code>, <code>README.md</code>) and the pod-wide <code>POD_CONDUCT.md</code> for indirect-prompt-injection patterns. Today's identity audit catches <em>that</em> a file changed; this catches <em>what</em> suspicious thing got added.</p>
+<p>Three sub-views:</p>
+<p><strong>Summary</strong> — per-bot cards showing files scanned, files with matches, highest severity, last scan. Click a card to drill into a bot, click a file to see the match list with excerpts and ±1 line of context. Each match has a <strong>Mark Reviewed</strong> button that adds a 30-day suppression (per <code>(bot, file, pattern_id, line_range)</code>) and a <strong>View raw file</strong> modal that pulls the current file content through <code>sudo /bin/cat</code>.</p>
+<p><strong>Pattern Catalog</strong> — read-only view of the operator-curated pattern catalog at <code>{shared_dir}/policy/content-scan-patterns.json</code>. The v1 catalog ships 10 patterns:
+- <code>html_comment_unknown</code> — HTML comments whose marker isn't in the Evolve-marker allowlist (handles <code>&lt;!-- evolve-handoff:* --&gt;</code> regions correctly, including wildcards)
+- <code>zero_width_invisible</code> — zero-width / tag-style Unicode characters
+- <code>authority_impersonation</code> — <code>System: ignore previous instructions</code> framings
+- <code>instruction_negation</code> — classic prompt-injection negation phrasing
+- <code>long_base64_block</code> / <code>long_hex_block</code> — encoded payload staging (160+ base64 chars / 64+ hex bytes outside fenced code blocks)
+- <code>subcommand_chain_long</code> — SC Media's chain-bypass shape (8+ chained subcommands)
+- <code>credential_exfil_url</code> — <code>curl</code>/<code>wget</code> invocations that interpolate <code>SECRET</code>/<code>TOKEN</code>/<code>PASSWORD</code>/<code>KEY</code>/<code>API_KEY</code>
+- <code>single_line_oversize</code> — single lines past 2000 chars
+- <code>structural_emptiness</code> — file unexpectedly short (the April 2026 team-bot-a-<code>AGENTS.md</code> 14.9KB→583B truncation class). Per-file via <code>applies_to</code>.</p>
+<p>Edits to the catalog flow through <code>UpdateContentScanCatalog</code> proposals (<code>add_pattern</code> / <code>remove_pattern</code> / <code>set_evolve_markers_allowlist</code>).</p>
+<p><strong>Suppressions</strong> — every active Mark-Reviewed suppression across the pod, with expiry dates and the reviewer's note. <strong>Remove</strong> revokes a suppression; the underlying match re-fires on the next scan if still present.</p>
+<p>Producer: <code>content_scan</code>. Signal types:
+- <code>content_scan_match</code> — per-pattern severity inherited (info/warn/alert)
+- <code>content_scan_structural_anomaly</code> — alert; the April truncation class
+- <code>content_scan_file_disappeared</code> — alert; catalog says present but absent</p>
+<p>The scanner is observation-only — remediation rides existing <code>SoulEdit</code>/<code>AgentsAppend</code> rails.</p>
+<p>Spec: <code>docs/spec-prompt-injection-scanner-2026-05-10.md</code>.</p>
+<h3 id="intentional-deviations">Intentional Deviations</h3>
+<p>Every active <strong>config intent</strong> across the pod — the operator-acknowledged "this field is deliberately set to X because Y" records that suppress drift signals from <code>permission_monitor</code> and <code>auth_drift_filler</code>.</p>
+<p>The problem this solves: context-free drift generators ("if the field doesn't match the baseline, propose a revert") are wrong as soon as you have a deliberate per-bot deviation. Without an intent record, the same drift gets re-proposed every cycle and you reject the same proposal forever. With an intent recorded, the monitor matches the field + value + reason and suppresses the proposal.</p>
+<p>Each row shows the bot, the field path, the recorded value, the reason you gave when you set it, and how long ago it was recorded. Per-row actions:</p>
+<ul>
+<li><strong>Edit reason</strong> — update the recorded rationale if it no longer reflects reality. The intent stays in force; only the explanation changes.</li>
+<li><strong>Revoke</strong> — drops the intent record. The next monitor sweep will see the deviation as fresh drift and emit a proposal. Useful when the deviation is no longer deliberate (e.g., you took on a per-bot tweak as an experiment, decided it was wrong, and want the standard fix back).</li>
+</ul>
+<p>Revoking an intent does NOT change the underlying config field — that's a separate action via the Permissions tab.</p>
+<p><strong>How intents get recorded.</strong> Three paths:</p>
+<ol>
+<li><strong>Implicit at write time</strong> — when you flip an exec policy, edit a sudoers grant, or change any field the intent system tracks, the writer auto-stamps an intent with a short reason (e.g., "operator set exec policy = full via admin UI 2026-05-25"). This is the default — most intents land here without you doing anything special.</li>
+<li><strong>Explicit via chat</strong> — <em>"record an intent: team-bot-a exec policy stays full because the run-bash app needs it"</em> logs a more detailed reason than the auto-stamp.</li>
+<li><strong>Phase 3 LLM inference</strong> — for drift the system observes but doesn't have a paper trail for, an LLM pass infers the likely reason from session history and asks you to confirm. This shows up as a small banner on the queue (<a href="https://github.com/evolve-ops/evolve/pull/2326">PR 2326</a>, Phase 4.1 queued banner) — clicking through walks you through a one-question confirm.</li>
+</ol>
+<p>The system errs on the side of asking. Phase 3.1 added activity context so the inference has more to work with; Phase 4.1 added the queued banner so the work doesn't pile up invisibly.</p>
+<p>Spec: <a href="../spec-config-intent-system-2026-05-21.md">docs/spec-config-intent-system-2026-05-21.md</a>.</p>
+<hr>
+<h2 id="severity-levels">Severity Levels</h2>
+<table>
+<thead>
+<tr>
+<th>Icon</th>
+<th>Level</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>❌</td>
+<td>CRITICAL</td>
+<td>Immediate action required. Gateway exposed, identity compromised, new unknown user account.</td>
+</tr>
+<tr>
+<td>⚠️</td>
+<td>HIGH</td>
+<td>Significant risk. Should be addressed within 24 hours.</td>
+</tr>
+<tr>
+<td>⚠️</td>
+<td>MEDIUM</td>
+<td>Moderate risk. Address within the week.</td>
+</tr>
+<tr>
+<td>ℹ️</td>
+<td>LOW</td>
+<td>Minor issue or informational.</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="the-eight-hard-security-rules">The Eight Hard Security Rules</h2>
+<p>These rules apply to all improvement proposals. Proposals violating any of these are auto-rejected — they never reach human review:</p>
+<ol>
+<li>No gateway binding to <code>0.0.0.0</code></li>
+<li>No disabling auth</li>
+<li>No modifying Evolve's own scripts</li>
+<li>No writing credential files</li>
+<li>No <code>sudo</code> in proposed scripts</li>
+<li>No outbound network calls in proposed scripts</li>
+<li>No writes outside the target bot's workspace</li>
+<li>No modifying launchd plist files</li>
+</ol>
+<hr>
+<h2 id="common-questions">Common Questions</h2>
+<p><strong>The audit shows "SOUL.md hash changed" — is this serious?</strong>
+Yes. SOUL.md contains the bot's behavioral constraints. If it changed outside the proposal pipeline, something modified it directly. Compare the current file against the last git backup to see what changed. If Content Scan also fires on the same file, both signals appear as a unified incident on the file's detail page — that combination is the strongest evidence that the change was suspicious rather than benign.</p>
+<p><strong>Gateway is bound to 0.0.0.0 — how do I fix it?</strong>
+Open the bot's <code>openclaw.json</code> and set <code>gateway.bind</code> to <code>"127.0.0.1"</code>. Restart the gateway from Maintenance → Status. CRITICAL — a gateway on 0.0.0.0 is reachable from anything on your local network.</p>
+<p><strong>Content scan fired on a benign HTML comment — what do I do?</strong>
+Click the match's <strong>Mark Reviewed</strong> button. A modal asks for an optional note; the suppression sticks for 30 days. The match won't re-fire on subsequent scans unless the file changes significantly above the suppressed line range. If you find yourself marking the same false-positive class repeatedly, consider proposing a catalog tweak through <code>UpdateContentScanCatalog</code> — operator-curated patterns are how you tune precision.</p>
+<p><strong>A messaging plugin's <code>allowConversationAccess</code> silently went to false — what fired?</strong>
+That's the <code>hook_plugin_policy_silent_disable</code> signal. It specifically catches the April 2026 incident class: a required <code>allowConversationAccess=true</code> flag dropping to false on an enabled plugin (typical cause: OC upgrade resetting the flag). Re-set via <code>openclaw.json</code> and redeploy, or apply the auto-proposal the hook monitor emits.</p>
+<p><strong>An MCP server I haven't seen before is configured on a bot — alert or expected?</strong>
+The <code>mcp_unknown_server</code> signal fires for any <code>mcp.servers</code> entry not in the pod's MCP catalog. Two valid resolutions: (a) add the server to the catalog via <code>UpdateMcpCatalog</code> if it's legitimate (and the package is clean of advisories), or (b) issue an <code>UninstallMcpServer</code> proposal to remove it. The Posture cell stays red until reconciled.</p>
+<p><strong>A new macOS user account appeared — what should I do?</strong>
+Investigate immediately. If you didn't create it, this is a potential persistence mechanism. Check System Settings → Users &amp; Groups. If the account matches a bot you just added via the setup wizard, it's expected and you can dismiss the finding.</p>
+<p><strong>How do I see the full git backup diff?</strong>
+Backup configuration and history moved to the <a href="backup.html">Backup</a> page (Cloud subtab → per-bot commit history). You can also compare directly via <code>git diff HEAD~1 HEAD</code> in the backup repo or browse commits on GitHub.</p>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/security.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>

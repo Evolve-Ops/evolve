@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Optimization Page · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">model-tiers</span><span class="chip">providers</span><span class="chip">routing</span><span class="chip">model-catalog</span></div><div class="reviewed">Last reviewed 2026-06-06</div></div><h1 id="help-ai-optimization-page">AI Optimization Page</h1>
+<p>The AI Optimization page controls how each bot selects and routes models — which models are in the catalog, which tier each maps to, and how routing decisions are made. This is where you configure the model tier system that automatically routes sessions to the right model.</p>
+<hr>
+<h2 id="the-model-tier-system">The Model Tier System</h2>
+<p>Evolve routes every session to the appropriate model automatically. Code never references a model by name — only by tier. This means swapping a model is a one-line change here, not a code change.</p>
+<table>
+<thead>
+<tr>
+<th>Tier</th>
+<th>Name</th>
+<th>Role</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>tier0</td>
+<td>Judge</td>
+<td>Cross-model evaluation (must differ from tier2's provider)</td>
+<td>openai/gpt-4o</td>
+</tr>
+<tr>
+<td>tier1</td>
+<td>Power</td>
+<td>High-complexity tasks explicitly requested by the user</td>
+<td>anthropic/claude-opus-4-6</td>
+</tr>
+<tr>
+<td>tier2</td>
+<td>Workhorse</td>
+<td>Default for productive user-facing sessions</td>
+<td>anthropic/claude-sonnet-4-6</td>
+</tr>
+<tr>
+<td>tier3</td>
+<td>Grunt</td>
+<td>Background tasks, maintenance sessions, analysis</td>
+<td>anthropic/claude-haiku-4-5</td>
+</tr>
+</tbody>
+</table>
+<p><strong>How routing works:</strong>
+- Every session is anchored on <code>trigger_kind</code> (see "Tier cascade" below) and classified as <code>productive</code>, <code>maintenance</code>, or <code>ambiguous</code>
+- Maintenance and background → routed to tier3 automatically (saves significant cost)
+- Productive and ambiguous → tier2 by default, unless the operator or user has set a different default
+- User says "use your best model" → tier1
+- The tier0 constraint requires a different provider than tier2 (Goodhart's Law: a model can't fairly evaluate its own outputs)</p>
+<p>The mapping between tier3/tier2/tier1 and the user-facing labels:</p>
+<table>
+<thead>
+<tr>
+<th>Tier</th>
+<th>User-facing label</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>tier3</td>
+<td><code>fast</code></td>
+</tr>
+<tr>
+<td>tier2</td>
+<td><code>standard</code></td>
+</tr>
+<tr>
+<td>tier1</td>
+<td><code>power</code></td>
+</tr>
+</tbody>
+</table>
+<p>The labels are what appears on the per-bot default tier picker, in the <code>evo tier</code> keyword, and in the per-user-per-bot persistence layer. The numeric tiers are how the plugin's ModelRouter reasons internally.</p>
+<hr>
+<h2 id="tier-cascade-per-bot-per-user-per-turn">Tier cascade — per bot, per user, per turn</h2>
+<p>The routing decision is hierarchical (audit #69, three phases shipped May 2026):</p>
+<ol>
+<li><strong>Trigger-kind anchor.</strong> The session class is fixed on <code>trigger_kind</code> before model selection runs. Heartbeat sessions can't accidentally drift into tier1.</li>
+<li><strong>Per-user-per-bot default.</strong> If the user has set a default via <code>evo tier-default …</code> or the future per-user UI, that wins.</li>
+<li><strong>Operator's bot-wide default.</strong> The per-bot picker on this page.</li>
+<li><strong>Bot-level fallback.</strong> The original tier-routing rules below.</li>
+</ol>
+<p>The per-user layer lives at <code>{sharedDir}/{botId}/user-tier-prefs.json</code>, keyed by the same <code>derive_user_key(channel, ext_id)</code> used for wizard state and profiles. Setting a user's pref to <code>auto</code> deletes their entry rather than persisting a tombstone — the file stays small.</p>
+<h3 id="per-bot-default-tier-picker">Per-bot default tier picker</h3>
+<p>The headline control on this page. Pick <code>fast</code> / <code>standard</code> / <code>power</code> per bot. Single source of truth for the bot's ordinary turns when no per-user override is set.</p>
+<p>The picker writes through <code>evolve-tiers.json</code> (via the audited L2 applier path that goes through <code>/tmp</code> + <code>sudo /bin/cp</code> since the file is bot-owned). A post-deploy gate (<code>verify_tier_chain.sh</code>) fails CI if the chain is broken end-to-end.</p>
+<h3 id="evo-keyword-tier-control">Evo keyword tier control</h3>
+<p>Reachable from any bot's chat:</p>
+<ul>
+<li><code>evo tier &lt;fast|standard|power|auto&gt;</code> — set your own default on this bot. Persists per-user.</li>
+<li><code>evo tier-default &lt;fast|standard|power|auto&gt;</code> — set the bot's default (admin / primary only). Same write path as the picker on this page.</li>
+</ul>
+<p>Use <code>auto</code> to clear your override and fall back to the operator default.</p>
+<h3 id="tier-routing-disagreement-audit">Tier-routing disagreement audit</h3>
+<p>A passive live-pod audit (<code>tier_routing_disagreement</code> detector) watches for divergence between classifier intent and dispatched tier and surfaces the rate as a Signal. Useful for catching regressions where a routing change silently misroutes a class of sessions.</p>
+<hr>
+<h2 id="sections">Sections</h2>
+<h3 id="model-freshness">Model Freshness</h3>
+<p>Compares each bot's tier assignments to the latest recommended models for the providers you have keys configured for. If you're still pinned to a model that's been superseded, this card shows it. Click <strong>Check Now</strong> to refresh.</p>
+<h3 id="model-catalog">Model Catalog</h3>
+<p>The full list of models available to this bot, with tier assignment and enabled/disabled status. You can:
+- <strong>Add a model</strong> — click the + button and enter the model ID in <code>provider/model-name</code> format (e.g., <code>anthropic/claude-sonnet-4-6</code>, <code>google/gemini-2.0-flash</code>)
+- <strong>Edit tier assignment</strong> — drag a model to a different tier, or click edit to change it
+- <strong>Enable/disable</strong> — disabled models are excluded from routing even if they're in a tier's fallback list
+- <strong>↻ Refresh</strong> — reloads the catalog from the bot's <code>openclaw.json</code></p>
+<h3 id="tier-definitions">Tier Definitions</h3>
+<p>Shows which models are assigned to each tier, in priority order. The first model in the list is primary; subsequent models are fallbacks used when the primary is unavailable or rate-limited.</p>
+<p>Drag to reorder within a tier. Fallbacks are tried in order when the primary fails.</p>
+<h3 id="routing-rules">Routing Rules</h3>
+<p>Controls when each tier is selected:
+- <strong>maintenance_tier</strong> — which tier handles maintenance sessions (default: tier3)
+- <strong>background_tier</strong> — which tier handles cron/background jobs (default: tier3)
+- <strong>max_tier1_per_day_per_bot</strong> — daily limit for tier1 (Power) calls (default: 10)</p>
+<h3 id="fallback-configuration">Fallback Configuration</h3>
+<p>What happens when a model fails:
+- <strong>fallbackMode</strong> — <code>sequential</code> (try next in list), <code>random</code> (pick any available), or <code>off</code> (fail hard)
+- <strong>tierCascade</strong> — if all models in tier2 fail, should Evolve cascade to tier3 rather than fail the session?</p>
+<h3 id="cascade-toggle">Cascade toggle</h3>
+<p>Per-bot toggle on each row in Tier Definitions (<a href="https://github.com/evolve-ops/evolve/pull/2291">PR 2291</a>) — when on, the model router walks down the tier ladder on tier-2 errors or on bot-side "I need help" markers (e.g., tier1 → tier2 on a long-running tier1 turn). When off, a tier-2 failure fails the session. Off by default; this is a treatment-group experiment as of June 2026. The per-bot cost tile on Cost Optimization carries a <code>cascade-live</code> chip on bots where the toggle is on.</p>
+<h3 id="live-session-routing-status">Live Session Routing Status</h3>
+<p>Shows the current routing state for any active sessions — which tier is being used, which model was selected, and the session classification. Useful for verifying that routing changes took effect after a gateway restart. <em>(Marked Phase 2 — placeholder pending real-time event stream wiring.)</em></p>
+<h3 id="how-sessions-are-routed">How Sessions Are Routed</h3>
+<p>A static walkthrough of the routing decision tree (keyword classifier → tier resolver → fallback cascade). This is the read-only counterpart to Routing Rules — useful when you want to understand why a session ended up on the tier it did.</p>
+<hr>
+<h2 id="common-questions">Common Questions</h2>
+<p><strong>A gateway restart notification appeared at the top — why?</strong>
+When you save routing changes, the plugin (TypeScript code inside the OC gateway) needs to restart to pick up the new configuration. The banner reminds you to restart; click <strong>Restart</strong> in the banner or go to Maintenance → Status to restart the gateway for the affected bot.</p>
+<p><strong>How do I add a new model provider?</strong>
+1. Add the API key in Plugins → Credentials
+2. Come back to AI Optimization and add the model to the catalog with the correct <code>provider/model-name</code> string
+3. Assign it to a tier
+4. Restart the gateway</p>
+<p><strong>How do I know if tier routing is actually working?</strong>
+Check the Usage page → "By Model" breakdown. You should see your tier 3 model being used for a significant fraction of turns if your bots do any maintenance or background work. If everything is running on Sonnet, routing may not be active. Verify the plugin is installed (<code>evolve-admin deploy &lt;bot&gt;</code>) and the gateway has been restarted since the last config change.</p>
+<p><strong>Why does tier0 need to be a different provider than tier2?</strong>
+Goodhart's Law: if you use the same model to evaluate its own proposals, it will systematically favor its own style of answers. By requiring tier0 to be from a different provider (Anthropic → use OpenAI or Google; OpenAI → use Anthropic or Google), Evolve gets independent judgment for proposal evaluation and behavioral tests.</p>
+<p><strong>What model string format does Evolve expect?</strong>
+<code>provider/model-name</code> — for example:
+- <code>anthropic/claude-sonnet-4-6</code>
+- <code>openai/gpt-4o</code>
+- <code>google/gemini-2.0-flash</code>
+- <code>ollama/llama3.2</code> (for local Ollama)</p>
+<p>These must match the format OpenClaw expects. Check your OC documentation if a model isn't being recognized.</p>
+<p><strong>What's account routing?</strong>
+Account routing (if you have multiple auth profiles for one provider — e.g., two Anthropic accounts) lets you pin session types to specific accounts: productive sessions to your primary account, maintenance/background to a secondary account. This is optional and only useful with multiple profiles. Configure it in <code>network.json</code> under the <code>accounts</code> section.</p>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/ai-optimization.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>

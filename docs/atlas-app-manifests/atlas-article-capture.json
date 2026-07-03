@@ -1,0 +1,470 @@
+{
+  "pkg_id": "p-df9d99a3",
+  "pkg_version": "2026.05.26-1.0",
+  "gallery_version": "2026.05.26-1.0",
+  "schema_version": 13,
+  "manifest_shape": "v7-arc-pre",
+  "manifest_type": "evolve_application",
+  "display_name": "Atlas — Article Capture",
+  "author": "evolve",
+  "description": "Event-triggered companion to atlas-daily-digest. When a member of the configured Telegram group posts a URL, the bot fetches the article, summarizes it, classifies it into one of five buckets, files it in the same archive used by the daily digest, and reacts in-thread with a single bucket emoji so the member sees their contribution landed. Honors per-URL and per-user opt-out via slash commands.",
+  "objective": "Make every URL a community member shares into a classified, summarized, opt-out-respecting archive entry — with visible feedback that the contribution was filed.",
+  "id": "app_atlas_article_capture",
+  "name": "Atlas Article Capture",
+  "status": "active",
+  "dependencies": [],
+  "app_dependencies": [
+    {
+      "spec_id": "p-7b26ba5e",
+      "interface": [
+        "scripts/atlas_lib/*.py (read)",
+        "archive/index.json (read/append)",
+        "archive/{bucket}/*.md (write)"
+      ],
+      "version_compatibility": ">=1.0,<2.0"
+    }
+  ],
+  "requirements": {
+    "integrations": [
+      {
+        "id": "telegram",
+        "display_name": "Telegram",
+        "required": true,
+        "check_path": "openclaw.json → skills.telegram",
+        "setup_doc": "docs/skills/telegram-setup.md",
+        "reason": "Receives group messages + slash commands; posts reactions"
+      }
+    ],
+    "secrets": [],
+    "system": [],
+    "python_packages": []
+  },
+  "identity": {
+    "purpose": "Turn community link-sharing into a durable, classified, opt-out-respecting archive — and give the member visible confirmation their contribution was filed. The archive is shared with atlas-daily-digest and atlas-weekly-recap, so a member-shared link can show up in tomorrow's digest or this week's recap.",
+    "scope_includes": [
+      "When a group message contains one or more URLs: fetch each (respect robots.txt, 10s timeout, 5MB max), summarize, classify into one of the five Atlas buckets via the shared classifier",
+      "Write a Markdown archive entry to archive/{bucket}/ and append to archive/index.json",
+      "React in-thread on the source message with the bucket emoji (⚔️🛠🏆📚⚠️) so the member sees confirmation",
+      "When a member uses /optout <url>: register the opt-out (persistent — prevents re-capture) and delete any archive entry matching that URL",
+      "When a member uses /optout-all: remove every archive entry associated with the member's hashed ID",
+      "Maintain atlas/capture-log.jsonl with hashed member IDs (never raw)",
+      "Honor the guard layer — silently ignore events from strangers in DMs or foreign groups"
+    ],
+    "scope_excludes": [
+      "Capturing messages without URLs (text-only messages are ignored)",
+      "Capturing messages from the bot itself (no echo loop)",
+      "Quoting member usernames anywhere in the archive or downstream output",
+      "Posting textual messages into the group on URL capture (the reaction is the only outbound surface)",
+      "Capturing URLs in DM (DM URL-sharing has no archive context)",
+      "Bulk import — only real-time event-driven capture"
+    ],
+    "bot_interaction_pattern": "Event-driven via AGENTS.md guidance. The bot's Telegram skill surfaces incoming group messages + slash commands; AGENTS.md tells the bot when to invoke scripts/atlas_capture.py. The guard layer in atlas_lib enforces the trust boundary so strangers can't trigger captures.",
+    "user": "Members of the configured Telegram group, who get visible confirmation their links are filed."
+  },
+  "success_criteria": {
+    "observable_outcomes": [
+      "Within 30 seconds of a member posting a URL, the bot reacts with one of the five bucket emojis (or ♻️ for duplicate)",
+      "An archive entry appears under archive/{bucket}/ with captured_by = 'app_atlas_article_capture'",
+      "archive/index.json gains a new entry; member_id_hash field is a 16-char hex (never the raw user_id)",
+      "/optout <url> deletes the matching archive entry and emits CAPTURE_OPT_OUT_REGISTERED",
+      "Duplicate URLs (already archived) emit CAPTURE_DUPLICATE and do not double-file"
+    ],
+    "failure_signals": [
+      "CAPTURE_FAILED:<reason> — fetch, classifier, or write error",
+      "CAPTURE_SKIPPED:<reason> — guard refused (stranger DM, foreign group), or classifier returned 'skip'",
+      "Member posts URL but no emoji reaction appears within 60s — Telegram plugin or AGENTS.md guidance broken",
+      "/optout not honored — high-severity privacy bug"
+    ],
+    "quality_bar": {
+      "minimum": "Every URL from a verified group member results in either an archive entry + emoji reaction, or a CAPTURE_SKIPPED with a logged reason",
+      "excellent": "Classification matches the member's mental model; opt-out is never something a member has to do twice for the same link; stranger attempts are silently and reliably refused"
+    }
+  },
+  "constraints": {
+    "privacy": [
+      "Member identities stored only as salted SHA-256 hashes (first 16 hex chars); raw usernames or user_ids NEVER written to disk anywhere downstream",
+      "Article summaries derived from the article body only — never include surrounding chat context",
+      "/optout commands MUST delete archive entries unconditionally (no soft-delete, no flag)",
+      "Opt-out registry consulted on every capture attempt"
+    ],
+    "safety": [
+      "Article fetches honor robots.txt; 10s timeout; 5MB max body; UTF-8 best-effort decode",
+      "No external posting on member-shared sites (read-only fetch)",
+      "Classifier uses tier3 LLM (Haiku); per-call cost capped at $0.005",
+      "Malformed classifier output → item logged + skipped, never coerced into a bucket"
+    ],
+    "dependencies": [
+      "telegram (required) — for group messages, slash commands, reactions",
+      "atlas_lib/* (via p-7b26ba5e) — classifier, fetchers, archive, hashing, guard, telegram_api",
+      "archive/index.json (shared writer with p-7b26ba5e)",
+      "atlas/operator.json (required by guard.py for membership verification)",
+      "atlas/.capture-salt (shared with p-ec644a2a for member-ID hashing)"
+    ],
+    "boundaries": [
+      "URLs only — text-only messages ignored",
+      "One archive entry per URL — first capture wins on dedup",
+      "Reactions on the original member message only — never posts new messages into the group",
+      "Operator's BotFather privacy mode MUST be disabled — without it, the bot only sees @-mentions and capture cannot function"
+    ]
+  },
+  "privacy": {
+    "data_collected": [
+      {
+        "kind": "URLs shared in the configured group",
+        "retention": "indefinite (archive)",
+        "processed": "fetched, summarized, classified"
+      },
+      {
+        "kind": "telegram user_id of URL sharer",
+        "retention": "indefinite (hashed)",
+        "processed": "salted SHA-256 first 16 hex chars"
+      },
+      {
+        "kind": "telegram message_id of source",
+        "retention": "indefinite",
+        "processed": "raw (no user content)"
+      },
+      {
+        "kind": "classification cost per item",
+        "retention": "indefinite (audit telemetry)",
+        "processed": "raw"
+      }
+    ],
+    "retention": {
+      "archive": "indefinite — member removes via /optout or /optout-all",
+      "capture_log": "indefinite — hashed only; salt would have to be exfiltrated to reverse",
+      "optout_registry": "indefinite — persistent prevents re-capture"
+    },
+    "opt_out_signals": [
+      {
+        "signal": "telegram_command:/optout <url>",
+        "scope": "per_url",
+        "effect": "delete_archive_entry + register_to_prevent_recapture"
+      },
+      {
+        "signal": "telegram_command:/optout-all",
+        "scope": "per_user",
+        "effect": "delete_all_archive_entries_with_matching_member_hash"
+      }
+    ],
+    "consent_notice": {
+      "trigger": [
+        "install (pinned by atlas-daily-digest install)",
+        "on first /optout interaction"
+      ],
+      "channel": "primary_group_pinned",
+      "content_ref": "atlas-shared:intro-message (pinned by digest install — describes opt-out)"
+    },
+    "identifier_hashing": {
+      "salt_path": "atlas/.capture-salt",
+      "algorithm": "sha256-prefix-16",
+      "salt_generation": "secrets.token_urlsafe(32) on first capture; never logged"
+    },
+    "shareable_in_lessons": true
+  },
+  "audience_scoping": {
+    "operator_required": true,
+    "approved_surfaces": [
+      {
+        "surface_id": "primary_group",
+        "surface_type": "telegram_supergroup",
+        "addressing": {
+          "chat_id_var": "{telegram_chat_id}"
+        },
+        "default_role_in_surface": "member",
+        "permitted_actions": [
+          "react",
+          "process_message"
+        ]
+      },
+      {
+        "surface_id": "operator_dm",
+        "surface_type": "telegram_dm",
+        "addressing": {
+          "user_id_var": "{operator_telegram_user_id}"
+        },
+        "default_role_in_surface": "operator",
+        "permitted_actions": [
+          "opt-out",
+          "opt-out-all"
+        ]
+      }
+    ],
+    "role_capabilities": {
+      "operator": [
+        "all"
+      ],
+      "member": [
+        "share-url (auto-captured)",
+        "opt-out",
+        "opt-out-all"
+      ],
+      "stranger": []
+    },
+    "membership_verification": {
+      "method": "telegram_get_chat_member",
+      "cache_ttl_seconds": 300
+    },
+    "operator_bypasses": [],
+    "config_path": "atlas/operator.json"
+  },
+  "invocation_mode": "plugin_intercept",
+  "event_triggers": [
+    {
+      "id": "url_in_group_message",
+      "source": "telegram",
+      "audience": "members",
+      "invokes": "atlas_capture",
+      "match": {
+        "channel": "telegram_group",
+        "pattern": "\\bhttps?://\\S{4,2000}",
+        "exclude_pattern": "^\\s*/optout(?:-all)?\\b"
+      },
+      "invocation": {
+        "script": "scripts/atlas_capture.py",
+        "request_file_template": "/tmp/atlas-capture-{message_id}.json",
+        "request_payload": {
+          "mode": "process",
+          "message_text": "{message_text}",
+          "member_id": "{from_id}",
+          "message_id": "{message_id}",
+          "chat_id": "{chat_id}",
+          "chat_type": "{chat_type}"
+        },
+        "stdout_protocol": "atlas_capture",
+        "on_failure": "silent"
+      }
+    },
+    {
+      "id": "optout_slash_command",
+      "source": "telegram",
+      "audience": "members",
+      "invokes": "atlas_capture",
+      "match": {
+        "channel": "any",
+        "pattern": "^\\s*/optout\\b(?!-all)",
+        "exclude_pattern": null
+      },
+      "invocation": {
+        "script": "scripts/atlas_capture.py",
+        "request_file_template": "/tmp/atlas-capture-{message_id}.json",
+        "request_payload": {
+          "mode": "opt-out",
+          "message_text": "{message_text}",
+          "member_id": "{from_id}",
+          "message_id": "{message_id}",
+          "chat_id": "{chat_id}",
+          "chat_type": "{chat_type}"
+        },
+        "stdout_protocol": "atlas_capture",
+        "on_failure": "post_fallback",
+        "fallback_text": "Couldn't process the opt-out — try again in a few minutes."
+      }
+    },
+    {
+      "id": "optout_all_slash_command",
+      "source": "telegram",
+      "audience": "members",
+      "invokes": "atlas_capture",
+      "match": {
+        "channel": "any",
+        "pattern": "^\\s*/optout-all\\b",
+        "exclude_pattern": null
+      },
+      "invocation": {
+        "script": "scripts/atlas_capture.py",
+        "request_file_template": "/tmp/atlas-capture-{message_id}.json",
+        "request_payload": {
+          "mode": "opt-out-all",
+          "message_text": "{message_text}",
+          "member_id": "{from_id}",
+          "message_id": "{message_id}",
+          "chat_id": "{chat_id}",
+          "chat_type": "{chat_type}"
+        },
+        "stdout_protocol": "atlas_capture",
+        "on_failure": "post_fallback",
+        "fallback_text": "Couldn't process the opt-out — try again in a few minutes."
+      }
+    }
+  ],
+  "bot_guidance": [
+    {
+      "section": "Atlas — Article Capture",
+      "content": "**Triggers:** (a) a group message containing one or more URLs, OR (b) an `/optout <URL>` or `/optout-all` slash command in either group or DM.\n\nWhen you receive a group message containing one or more URLs:\n\nFor **each URL**:\n1. Write a JSON file at `/tmp/atlas-capture-<msg.id>-<idx>.json` (use a zero-based index per URL in the same message) containing:\n   ```\n   {\"mode\": \"process\",\n    \"url\": \"<URL>\",\n    \"message_id\": \"<msg.id>\",\n    \"member_id\": \"<from.id>\",\n    \"chat_id\": \"<chat.id>\",\n    \"chat_type\": \"<chat.type>\"}\n   ```\n2. Run: `python3 scripts/atlas_capture.py /tmp/atlas-capture-<msg.id>-<idx>.json`\n   (no flags — OpenClaw exec preflight blocks complex invocations per `openclaw#87371`.)\n3. The script reads the JSON, deletes it, and prints one of:\n   - `CAPTURE_ARCHIVED:<bucket>` → react in-thread with bucket emoji: ⚔️ competitive_landscape, 🛠 new_tools, 🏆 use_cases, 📚 case_studies, ⚠️ warnings\n   - `CAPTURE_DUPLICATE` → react with ♻️\n   - `CAPTURE_OPTED_OUT` or `CAPTURE_FAILED:*` or `CAPTURE_SKIPPED:*` → do nothing visible (logs capture the reason)\n4. Do not post a text message in response. The reaction is the only outbound surface.\n\nWhen you receive an `/optout <URL>` slash command, write `/tmp/atlas-capture-<msg.id>.json` with `{\"mode\": \"opt-out\", \"url\": \"<URL>\", \"member_id\": \"<from.id>\", \"chat_id\": \"<chat.id>\", \"chat_type\": \"<chat.type>\"}` and run the same script with that path. React with ✅. Do not post a count publicly (privacy).\n\nWhen you receive an `/optout-all` slash command, write the JSON with `{\"mode\": \"opt-out-all\", \"member_id\": \"<from.id>\", \"chat_id\": \"<chat.id>\", \"chat_type\": \"<chat.type>\"}` and run the script. React with ✅. Do not post a count publicly.\n\n**Capture is group-only.** If a URL arrives in a DM, do not invoke atlas_capture — there's no archive context.\n\nDo NOT freelance: if the script invocation fails, do nothing visible. Silence is the documented behavior for any capture failure."
+    }
+  ],
+  "recursive_llm": {
+    "purposes": [
+      {
+        "name": "5-bucket classifier (shared with daily-digest)",
+        "intent": "classify item into one of 5 buckets or 'skip'; JSON-only output",
+        "expected_cost_per_day_usd": 0.15,
+        "notes": "Capture frequency varies by group activity. The bot's daily_cap_usd is the authoritative protection against accidental flood."
+      }
+    ],
+    "transport": "openclaw_headless",
+    "fallback_required": true,
+    "retry_policy": "exponential_backoff_max_3",
+    "fallback_strategy": "If the bot gateway is unreachable, emit CAPTURE_FAILED:classifier_unreachable and DO NOT react. Member will see the message wasn't filed; they can retry by re-sharing the URL later."
+  },
+  "shared_modules": [
+    {
+      "name": "atlas_lib.classifier",
+      "owner_spec_id": "p-7b26ba5e",
+      "expected_exports": [
+        "classify",
+        "CLASSIFY_THRESHOLD"
+      ]
+    },
+    {
+      "name": "atlas_lib.fetchers",
+      "owner_spec_id": "p-7b26ba5e",
+      "expected_exports": [
+        "fetch_url"
+      ]
+    },
+    {
+      "name": "atlas_lib.archive",
+      "owner_spec_id": "p-7b26ba5e",
+      "expected_exports": [
+        "read_index",
+        "find_duplicate",
+        "write_item",
+        "delete_by_url",
+        "delete_by_member",
+        "normalize_url"
+      ]
+    },
+    {
+      "name": "atlas_lib.hashing",
+      "owner_spec_id": "p-7b26ba5e",
+      "expected_exports": [
+        "read_or_create_salt",
+        "hash_member"
+      ]
+    },
+    {
+      "name": "atlas_lib.guard",
+      "owner_spec_id": "p-7b26ba5e",
+      "expected_exports": [
+        "classify"
+      ]
+    },
+    {
+      "name": "atlas_lib.config",
+      "owner_spec_id": "p-7b26ba5e",
+      "expected_exports": [
+        "workspace_root",
+        "read_json",
+        "write_json_atomic"
+      ]
+    },
+    {
+      "name": "atlas_lib.oc_dispatch",
+      "owner_spec_id": "p-7b26ba5e",
+      "expected_exports": [
+        "dispatch",
+        "parse_json_reply"
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "scripts/atlas_capture.py",
+      "layer": "script",
+      "data_kind": null,
+      "owned_by": "p-df9d99a3",
+      "shared_with": [],
+      "purpose": "Main CLI: process | opt-out | opt-out-all | stats."
+    },
+    {
+      "path": "atlas/capture-log.jsonl",
+      "layer": "data",
+      "data_kind": "runtime-generated",
+      "owned_by": "p-df9d99a3",
+      "shared_with": [],
+      "purpose": "Append-only audit log of every capture attempt. Hashed member IDs only."
+    },
+    {
+      "path": "atlas/optout.json",
+      "layer": "data",
+      "data_kind": "runtime-generated",
+      "owned_by": "p-df9d99a3",
+      "shared_with": [],
+      "purpose": "Persistent opt-out registry. Consulted before every capture."
+    },
+    {
+      "path": "atlas/.capture-salt",
+      "layer": "data",
+      "data_kind": "runtime-generated",
+      "owned_by": "p-df9d99a3",
+      "shared_with": [
+        "p-ec644a2a"
+      ],
+      "purpose": "Salt for member-ID hashing. Generated fresh on first use; never logged; 0600 perms. Recipient generates their own on import — does not travel."
+    }
+  ],
+  "build_spec": "# Atlas Article Capture — Blueprint\n\n## Overview\n\nEvent-driven companion to atlas-daily-digest. The bot's Telegram skill surfaces incoming group messages and slash commands; AGENTS.md guidance instructs the bot to invoke `scripts/atlas_capture.py`. The script processes URLs into the shared archive (writing through `atlas_lib.archive`) and handles /optout. Uses the guard from atlas_lib to refuse stranger DMs and foreign groups internally as defense-in-depth.\n\nThis app does NOT own atlas_lib — it depends on p-7b26ba5e for the shared modules. All imports come from there.\n\n## File layout\n\n```\nscripts/\n  atlas_capture.py           ← main CLI: process | opt-out | opt-out-all | stats\natlas/\n  capture-log.jsonl          ← created on first capture\n  optout.json                ← created on first opt-out\n  .capture-salt              ← created on first capture (0600)\n```\n\nNo cron, no plist — entirely event-driven via AGENTS.md guidance.\n\n## Per-file specs\n\n### scripts/atlas_capture.py\n- **Purpose:** Main CLI. Subcommands: `process` (URL → archive), `opt-out` (delete + register opt-out), `opt-out-all` (delete all entries for hashed member), `stats` (last-N-days summary).\n- **Inputs:** flags `--url`, `--message-id`, `--member-id`, `--chat-id`, `--chat-type`, `--bot-id`, `--days` (stats only).\n- **Guard FIRST (defense-in-depth):** at the top of every subcommand, call `atlas_lib.guard.classify(member_id, chat_id, chat_type, bot_id=bot_id)`. For `process`, refuse anything that's not `(approved_group, member|operator)`. For `opt-out`/`opt-out-all`, allow `approved_group` or `(dm, operator|member)`.\n- **process pipeline:** guard check → opt-out check (atlas/optout.json) → duplicate check (atlas_lib.archive.find_duplicate) → fetch URL (atlas_lib.fetchers.fetch_url) → extract summary (HTML tag stripping; first ~800 chars) → classify (atlas_lib.classifier.classify) → if skip → CAPTURE_SKIPPED; if classified → write to archive (atlas_lib.archive.write_item) → emit CAPTURE_ARCHIVED:<bucket>.\n- **opt-out pipeline:** guard check → register in atlas/optout.json (atomic write) → atlas_lib.archive.delete_by_url → emit CAPTURE_OPT_OUT_REGISTERED <url> <count>.\n- **opt-out-all pipeline:** guard check → atlas_lib.archive.delete_by_member(hash) → emit CAPTURE_OPT_OUT_ALL_REGISTERED <member_hash> <count>.\n- **Logging:** every call appends to atlas/capture-log.jsonl with hashed member_id. Best-effort: if workspace doesn't exist (smoke tests), log to stderr and skip the file write.\n- **First-run safety:** if optout.json or capture-log.jsonl don't exist, treat as empty.\n\n## Integration with atlas-daily-digest\n\nAll the heavy lifting lives in `atlas_lib/*` which p-7b26ba5e owns. This app **imports** from those modules — never redefines them. Key imports:\n\n- `from atlas_lib import guard, hashing` — trust boundary + ID hashing\n- `from atlas_lib import classifier as clf` — 5-bucket classifier (name-collision with guard.classify; alias on import)\n- `from atlas_lib import archive as arch` — atomic archive read/write\n- `from atlas_lib import fetchers, config` — URL fetch + config\n\nIf any import fails at runtime (atlas_lib not yet installed because p-7b26ba5e isn't deployed), exit non-zero with a clear error referencing the missing dependency.\n\nThe `archive/` directory and `archive/index.json` are SHARED state with p-7b26ba5e. Atlas-daily-digest writes via the same atlas_lib.archive.write_item — atomic writes prevent corruption under concurrent access.\n\n## Recursive LLM concerns\n\nClassifier routes through `atlas_lib.oc_dispatch` (shared with digest; `openclaw_headless` transport). Per recursive_llm contract: exponential backoff max 3, on permanent failure → atlas_lib.classifier returns `bucket: 'skip'`. atlas_capture treats `skip` differently here than digest does: digest skips the item silently, but capture should emit `CAPTURE_FAILED:classifier_unreachable` so the bot KNOWS not to react (and member knows their link wasn't filed by absence of reaction).\n\n## Guard layer details\n\nThe guard in atlas_lib.guard runs on every CLI invocation. It needs atlas/operator.json (declared as a file owned by p-7b26ba5e but required by capture too). Without operator.json, ALL events return `(foreign_group, stranger)` and capture refuses everything — that's the safe default, but it means the operator MUST configure operator.json before this app does anything useful.\n\nMembership verification uses Telegram's getChatMember; results cached in atlas/.membership-cache.json (created on first DM from each member) for 5 minutes per (user, chat) pair.\n\n## Test surface\n\nValidate:\n- `atlas_capture.py process` against a stranger DM returns `CAPTURE_SKIPPED:not_in_approved_group` (guard works).\n- `atlas_capture.py process` against an approved group member with a known URL returns `CAPTURE_ARCHIVED:<bucket>`.\n- Re-running same URL same day returns `CAPTURE_DUPLICATE`.\n- `atlas_capture.py opt-out --url <url> --member-id <id>` removes the archive entry.\n- Raw member IDs never appear in capture-log.jsonl (privacy invariant).\n\nThe `test_command` is a fast offline compile + help + stats-empty check; behavioral tests are in `test_cases`.\n\n## What NOT to include\n\n- No new shared modules — depend on p-7b26ba5e's atlas_lib only.\n- No cron, no LaunchDaemon, no scheduled execution — entirely event-driven.\n- No backfill / bulk-import — only real-time event processing.\n- No textual reply messages (the reaction is the only outbound surface).\n- No reaction-event handling — OC's Telegram plugin doesn't currently route reactions to bot sessions, so 🤐 reaction-based opt-out is deferred. Use slash commands.\n",
+  "example_triggers": [
+    "(A member shares a URL in the group)",
+    "(A member uses /optout https://example.com/x)",
+    "(A member uses /optout-all)",
+    "How many captures has Atlas done this week?"
+  ],
+  "test_command": "python3 -m py_compile scripts/atlas_capture.py && python3 scripts/atlas_capture.py --help > /dev/null && python3 scripts/atlas_capture.py stats --days 1 > /dev/null",
+  "test_cases": [
+    {
+      "id": "tc-001",
+      "description": "Stranger DM is refused (guard works)",
+      "trigger": "python3 scripts/atlas_capture.py process --url https://example.com/x --message-id m1 --member-id 999 --chat-id 999 --chat-type private",
+      "expected": "Stdout contains 'CAPTURE_SKIPPED:not_in_approved_group context=dm role=stranger'. Exit 0 (silent refusal)."
+    },
+    {
+      "id": "tc-002",
+      "description": "Foreign group is refused",
+      "trigger": "python3 scripts/atlas_capture.py process --url https://example.com/x --message-id m1 --member-id <approved-member-id> --chat-id -1099999999 --chat-type supergroup",
+      "expected": "Stdout contains 'CAPTURE_SKIPPED:not_in_approved_group context=foreign_group'. Exit 0."
+    },
+    {
+      "id": "tc-003",
+      "description": "Approved-group URL is archived",
+      "trigger": "python3 scripts/atlas_capture.py process --url https://www.anthropic.com/news --message-id smoke1 --member-id <approved-member-id> --chat-id <approved-chat-id> --chat-type supergroup",
+      "expected": "Stdout contains 'CAPTURE_ARCHIVED:' followed by a valid bucket name. archive/index.json gains an entry. Exit 0."
+    },
+    {
+      "id": "tc-004",
+      "description": "Duplicate URL emits CAPTURE_DUPLICATE",
+      "trigger": "Re-run tc-003 with a different --message-id",
+      "expected": "Stdout contains 'CAPTURE_DUPLICATE'. archive/index.json does NOT gain a second entry. Exit 0."
+    },
+    {
+      "id": "tc-005",
+      "description": "Opt-out deletes archive entry",
+      "trigger": "python3 scripts/atlas_capture.py opt-out --url https://www.anthropic.com/news --member-id <approved-member-id> --chat-id <approved-chat-id> --chat-type supergroup",
+      "expected": "Stdout contains 'CAPTURE_OPT_OUT_REGISTERED'. archive/index.json no longer has that URL. atlas/optout.json gains an entry. Exit 0."
+    },
+    {
+      "id": "tc-006",
+      "description": "Raw member IDs never appear in capture log (privacy invariant)",
+      "trigger": "grep '<raw-member-id-from-tc-003>' atlas/capture-log.jsonl || echo absent",
+      "expected": "Stdout contains 'absent' — raw member IDs never appear in the log."
+    }
+  ],
+  "rsigrade_signals": [
+    "captures_per_day",
+    "duplicate_rate",
+    "optout_rate",
+    "classification_skip_rate",
+    "fetch_failure_rate",
+    "guard_refusal_rate"
+  ],
+  "application_tags": [
+    "community-research",
+    "event-driven",
+    "telegram-community",
+    "privacy-by-design",
+    "atlas"
+  ],
+  "workspace_files_source": "docs/atlas-app-manifests/"
+}

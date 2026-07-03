@@ -1,0 +1,38 @@
+# RELEASES.yaml — Evolve release classification.
+#
+# One entry per release that earns a tier above "maintenance". Versions
+# omitted from this file are treated as "maintenance" — the quiet default.
+# Newest first.
+#
+# Schema (see docs/spec-release-tiers-2026-05-16.md for details):
+#   version:  required — must match YYYY.MMDD.PR from _compute_version()
+#   tier:     required — one of: security | feature | maintenance
+#   headline: required if tier != maintenance — one-sentence user-facing copy
+#   details:  optional — 1–3 sentences shown on banner expand
+#   link:     optional — repo-relative path or URL to notes/spec
+
+- version: "2026.0516.1211"
+  tier: feature
+  headline: "Update banner now classifies releases by significance"
+  details: |
+    Updates are tagged as security, feature, or maintenance, and the
+    Overview banner styles to match. Quiet by default; loud when warranted.
+  link: docs/spec-release-tiers-2026-05-16.md
+
+- version: "2026.0516.1199"
+  tier: feature
+  headline: "Multi-bot handover flow for new pod owners"
+  details: |
+    Replaces the single-bot setup wizard with a guided multi-bot flow,
+    aimed at people setting up a Diana-shape pod (multiple personal bots).
+  link: docs/spec-evo-wizard-2026-05-05.md
+
+- version: "2026.0516.1195"
+  tier: feature
+  headline: "Errors and Feedback consolidated into one surface"
+
+- version: "2026.0516.1194"
+  tier: feature
+  headline: "Tier-3 semantic app audit"
+  details: |
+    Adds LLM-driven semantic checks on top of the static app-audit pipeline.

@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Meta-health (rolled into Recommendations + Alerts) · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="banner banner-deprecated">This page is retired. Its content moved — see below for where to look now.</div><div class="topic-meta"><div class="chips"><span class="chip">meta-health</span><span class="chip">watchdog-events</span><span class="chip">alerts</span><span class="chip">calibration-snapshots</span></div><div class="reviewed">Last reviewed 2026-06-05</div></div><h1 id="help-meta-health-rolled-into-recommendations-alerts">Meta-health (rolled into Recommendations + Alerts)</h1>
+<p>The standalone Meta-health page was retired during the Better Engine pipeline unification (May 2026). Its three surfaces now live elsewhere:</p>
+<ul>
+<li><strong>Events</strong> → the Alerts page (Reports → Alerts). Watchdog events are emitted as Signals with the <code>meta_health:*</code> signature prefix; severity, scope, and event-type filters all work the same way.</li>
+<li><strong>Snapshots</strong> → still reachable via <code>/api/calibration/snapshots</code>, surfaced inside the Recommendations page's "Coaches" subtab as a per-generator history block.</li>
+<li><strong>Observations</strong> → the Observations subtab on Recommendations.</li>
+</ul>
+<p>The rest of this doc describes the original page's contents — useful as a glossary of event types and snapshot kinds, which still exist under their new homes.</p>
+<hr>
+<h2 id="events">Events</h2>
+<p>Every event is something the Evolve Watchdog noticed about the system itself, not about your bots. Severity-colored cards, newest first.</p>
+<h3 id="the-event-types">The event types</h3>
+<table>
+<thead>
+<tr>
+<th>Event type</th>
+<th>What it means</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>proposal_volume_deviation</code></td>
+<td>A generator is emitting significantly more (or fewer) proposals than its baseline.</td>
+</tr>
+<tr>
+<td><code>auto_revert_rate_spike</code></td>
+<td>Auto-revert rate has jumped — generators are producing changes that fail verification.</td>
+</tr>
+<tr>
+<td><code>rejection_rate_spike</code></td>
+<td>Users are rejecting proposals from a generator at an above-baseline rate.</td>
+</tr>
+<tr>
+<td><code>verification_reliability_drop</code></td>
+<td>A generator's verified-success rate has dropped below baseline.</td>
+</tr>
+<tr>
+<td><code>generator_dominance</code></td>
+<td>One generator is producing an outsized share of pod-wide proposals.</td>
+</tr>
+<tr>
+<td><code>calibration_drift</code></td>
+<td>Calibration parameters have drifted from their baseline values.</td>
+</tr>
+<tr>
+<td><code>observation_extraction_drift</code></td>
+<td>The observation-extraction step is producing materially different outputs than before.</td>
+</tr>
+<tr>
+<td><code>meta_layer_cost_spike</code></td>
+<td>The arbiter + verify + watchdog layer is costing more in resources than its baseline.</td>
+</tr>
+<tr>
+<td><code>gateway_instability</code></td>
+<td>A bot's gateway is restarting more often than baseline (raised by <code>sysadmin_watchdog</code>).</td>
+</tr>
+<tr>
+<td><code>config_drift_unexplained</code></td>
+<td>A bot's <code>openclaw.json</code> or identity files differ from the last applied state without an approved proposal trail.</td>
+</tr>
+<tr>
+<td><code>test_failure_pattern</code></td>
+<td>An app's test suite has failed repeatedly enough to warrant a system-level look.</td>
+</tr>
+</tbody>
+</table>
+<p>Each card shows severity (info/warn/alert), scope (pod-wide or a specific bot), a one-line description, and the event's raw details (generator_id, ratio, current vs. baseline values). Hover the badge for the tooltip.</p>
+<h3 id="when-an-event-becomes-a-proposal">When an event becomes a proposal</h3>
+<p>Watchdog events are observations, not actions. The Evolve Watchdog generator reads its own event log and <em>emits proposals</em> in response — typically ThrottleGenerator or PauseGenerator. Those land in the Proposals queue for you to act on. So the typical flow is:</p>
+<ol>
+<li>An alert appears here.</li>
+<li>A few minutes later, a proposal shows up on the Proposals page ("pause generator X — its auto-revert rate tripled").</li>
+<li>You act on the proposal there.</li>
+</ol>
+<p>This page is the raw signal; the Proposals page is where you respond.</p>
+<h3 id="filters">Filters</h3>
+<ul>
+<li><strong>Type</strong> — one of the eight event types.</li>
+<li><strong>Severity</strong> — info, warn, or alert.</li>
+<li><strong>Since</strong> — days back to look. Default 14.</li>
+</ul>
+<p>The nav badge counts alerts; if any alerts exist, a number appears next to "Meta-health" in the sidebar.</p>
+<hr>
+<h2 id="snapshots">Snapshots</h2>
+<p>Calibration snapshots are point-in-time copies of a tunable layer. They're taken:</p>
+<ul>
+<li>Weekly, for every layer (scheduled snapshot).</li>
+<li>On-demand, when a calibration change is made.</li>
+</ul>
+<p>Three kinds, all listed newest first:</p>
+<ul>
+<li><strong>user</strong> — a bot's dimension weights at a moment. Restore rewrites <code>{bot}.md</code>'s frontmatter weights and appends an audit-log entry.</li>
+<li><strong>generator</strong> — a generator's config at a moment. Restore overwrites the record's <code>config</code> dict via the registry.</li>
+<li><strong>signal</strong> — signal-threshold calibration. Restore not yet implemented (501); snapshots are preserved for manual review until the storage layer wires in.</li>
+</ul>
+<h3 id="how-to-restore">How to restore</h3>
+<p>Click <strong>Restore</strong>. Confirm the dialog. For user targets you'll be prompted for the bot_id; for generator targets, the generator_id. (They're also stored in the snapshot's <code>data</code> if it was taken that way — those get used as defaults.)</p>
+<p>The restore is idempotent: reapplying the same snapshot produces the same state. For user restores, the profile's audit-log section records the snapshot_id and timestamp.</p>
+<h3 id="when-to-restore">When to restore</h3>
+<ul>
+<li>You changed a dimension weight, regretted it, and want to go back to what you had.</li>
+<li>A generator's config tuning has been counterproductive — restore the previous config.</li>
+<li>Before an experiment, take a snapshot (future work — not yet a UI action) and restore when done.</li>
+</ul>
+<p>A restore never removes evidence of the intermediate state — the old record isn't deleted, just overwritten, and the audit log preserves what happened.</p>
+<hr>
+<h2 id="observations">Observations</h2>
+<p>The observation browser lets you inspect the raw (noun × verb × mood × engagement) tuples that the extraction layer produces from session turns. This is the evidence pool that every generator reads from; browsing it tells you what the system is actually seeing.</p>
+<h3 id="filters_1">Filters</h3>
+<ul>
+<li><strong>Bot</strong> — required.</li>
+<li><strong>Since</strong> — days back (default 7).</li>
+<li><strong>Noun</strong> — partial match against the noun field (<code>fitness</code>, <code>email</code>, <code>code</code>, …).</li>
+<li><strong>Verb</strong> — one of the fixed 20-word verb vocabulary (drafting, planning, troubleshooting, …).</li>
+<li><strong>Mood</strong> — one of neutral / urgent / enthusiastic / frustrated / reflective / uncertain, or unspecified.</li>
+</ul>
+<h3 id="what-the-summary-shows">What the summary shows</h3>
+<ul>
+<li>Window range, total tuples in window, matched count, engagement total.</li>
+<li>Mood distribution across matched tuples.</li>
+<li>Top 10 verbs and top 10 nouns, by count.</li>
+<li>Sample table of up to 30 matched tuples: when, noun, verb, mood, engagement, session id prefix.</li>
+</ul>
+<h3 id="when-to-use-this">When to use this</h3>
+<ul>
+<li>Debugging a generator that surfaced a surprising proposal: filter by the noun or verb the proposal cites and see how many tuples back it up.</li>
+<li>Understanding which verbs dominate a bot's usage (if it's overwhelmingly "drafting" and "reviewing", you probably don't need an "exploring"-targeted proposal).</li>
+<li>Sanity-checking the extraction layer after a model change — if top nouns or mood distribution shift sharply, the extractor may be drifting.</li>
+</ul>
+<p>If the tuple stream isn't available (pre-L3 annotation data, or a fresh bot with no observations), you'll see an error with a pointer to <code>{shared_dir}/observations/&lt;bot&gt;/</code>.</p>
+<hr>
+<h2 id="common-questions">Common questions</h2>
+<p><strong>A watchdog alert fired but no proposal appeared on the Proposals page. Why?</strong>
+The Watchdog generator runs on a cadence (typically daily or weekly depending on its charter). Alerts in the event log are immediate; the proposals are produced on the next Watchdog pass. Check the Generators page → evolve_watchdog → recent_proposals.</p>
+<p><strong>I restored a user snapshot — why didn't the weights on the Profile page change instantly?</strong>
+They did, at the API layer. The Profile page caches the last-loaded state; refresh the page or reselect the bot.</p>
+<p><strong>Can I take a snapshot manually?</strong>
+Not from this UI yet — snapshots are taken on a cadence and when calibration changes apply. Spec work for user-initiated snapshots is tracked in the Phase 3 follow-up list.</p>
+<p><strong>Observations show 0 tuples but my bot has had sessions.</strong>
+Tuple extraction is an L3 feature; it runs alongside the session annotator. If your bot predates L3 or the extractor hasn't run yet, there won't be tuples. The session-quality page still works — it reads the annotation JSONL directly rather than tuples.</p>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/meta-health.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>

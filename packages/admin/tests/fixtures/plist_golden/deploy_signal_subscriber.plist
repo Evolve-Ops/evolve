@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.evolve.evolve.signal-subscriber</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/Shared/evolve-venv/bin/python3</string>
+        <string>/Users/Shared/evolve-repo/packages/analyzer/signal_subscriber_runner.py</string>
+        <string>--shared-dir</string>
+        <string>/Users/Shared/evolve</string>
+        <string>--network</string>
+        <string>/Users/Shared/evolve/network.json</string>
+    </array>
+    <key>UserName</key>
+    <string>evolve</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/evolve/.openclaw/logs/evolve-signal-subscriber.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/evolve/.openclaw/logs/evolve-signal-subscriber.err.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>PYTHONPATH</key>
+        <string>/Users/Shared/evolve-repo/packages/analyzer</string>
+        <key>EVOLVE_NETWORK</key>
+        <string>/Users/Shared/evolve/network.json</string>
+        <key>EVOLVE_SHARED</key>
+        <string>/Users/Shared/evolve</string>
+    </dict>
+</dict>
+</plist>

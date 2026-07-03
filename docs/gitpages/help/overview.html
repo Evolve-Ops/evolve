@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Evolve — What It Is and How It Works · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">what-is-evolve</span><span class="chip">architecture</span><span class="chip">three-layer</span><span class="chip">evo</span><span class="chip">pods</span><span class="chip">better-engine</span></div><div class="reviewed">Last reviewed 2026-06-05</div></div><h1 id="evolve-what-it-is-and-how-it-works">Evolve — What It Is and How It Works</h1>
+<p>Evolve packages OpenClaw for households, professional services, and small operators — the way <strong>Ubuntu packages Linux</strong> or <strong>Plex packages media files</strong>. It runs on the same host as your bots (macOS and Linux/Ubuntu) and adds pod-level visibility, cost control, security monitoring, paired-user management, backup, and a Better Engine adaptation loop on top of OpenClaw. At the center is <strong>evo</strong> — an OpenClaw bot that knows your pod end-to-end and resolves things in conversation.</p>
+<hr>
+<h2 id="the-three-layer-architecture">The Three-Layer Architecture</h2>
+<pre><code>Layer 1: Bot users (admin-bot, team-bot-a, etc.)
+         → Run OC gateways. Do the actual work via Telegram/Slack/Discord.
+
+Layer 2: evolve user (dedicated OS user)
+         → Manages and monitors the pod. Runs admin server, analysis, security audits.
+         → Cannot be influenced by the bots it manages.
+
+Layer 3: Admin user (you — the human operator)
+         → Has sudo access. Approves proposals, manages keys, deploys updates.
+         → The only human in the loop.
+</code></pre>
+<h2 id="three-buckets-plus-floating-chat-dashboard-and-a-developer-bucket">Three Buckets (plus floating Chat / Dashboard and a Developer bucket)</h2>
+<p><strong>Operate</strong> — Observe current pod state + handle what's broken.
+- Usage, Reports, Plugins, Security, Maintenance, Backup, Terminal</p>
+<p><strong>Improve</strong> — Add new capabilities + tune existing + review recommendations.
+- Skills, Apps, Recommendations, AI Optimization, Cost Optimization</p>
+<p><strong>Settings</strong> — Configure who + what + how.
+- Getting Started, Settings, Users, Help</p>
+<p><strong>Developer</strong> — For pod owners working on Evolve itself.
+- Inbox, Errors, Feedback</p>
+<p>Floating above the buckets: <strong>Chat</strong> (evo conversation surface) and <strong>Dashboard</strong> (live pod status).</p>
+<h3 id="openclaw-admin-coverage">OpenClaw admin coverage</h3>
+<p>Evolve has end-to-end coverage of every config surface OpenClaw exposes — each one inventoried, baselined, and changeable only through approved proposals:</p>
+<ul>
+<li><strong>MCP servers</strong> — pod-curated catalog of vetted servers, install/remove/update through proposals, advisory feed from GHSA, posture view on the Security tab. (Spec: <code>docs/spec-mcp-administration-2026-05-10.md</code>)</li>
+<li><strong>Plugins</strong> — per-bot inventory of <code>plugins.entries</code>, allow/deny lists, install-source allowlist, load paths, plus a curator generator that proposes the right allow list for each bot. (Spec: <code>docs/spec-plugin-inventory-2026-05-10.md</code>)</li>
+<li><strong>Hooks</strong> — webhook ingress block + per-plugin typed-hook policies (<code>allowConversationAccess</code> / <code>allowPromptInjection</code>), trusted-mutator allowlist, transforms-dir integrity hashing. (Spec: <code>docs/spec-hook-governance-2026-05-10.md</code>)</li>
+<li><strong>Content scan</strong> — pattern catalog over the markdown files each bot reads at session start, catching HTML-comment injection / zero-width Unicode / authority-impersonation / encoded-payload / structural-emptiness shapes. Mark-Reviewed suppression flow with 30-day TTL. (Spec: <code>docs/spec-prompt-injection-scanner-2026-05-10.md</code>)</li>
+<li><strong>Permissions posture</strong> — read-only inventory of the per-bot permission stack. (Spec: <code>docs/spec-permission-posture-2026-05-10.md</code>)</li>
+</ul>
+<hr>
+<h2 id="key-concepts">Key Concepts</h2>
+<p><strong>Bot</strong>: An OpenClaw instance running as a dedicated OS user (e.g., <code>admin-bot</code>). Each has its own gateway, API keys, and channels.</p>
+<p><strong>Pod</strong>: The full set of bots managed by a single Evolve installation on one host.</p>
+<p><strong>Gateway</strong>: The OC server process that handles each bot's messaging. Runs as a launchd service.</p>
+<p><strong>Plugin</strong>: TypeScript code that runs in-process inside each bot's OC gateway. Annotates every turn, routes models, exposes metrics. Installed via <code>evolve-admin deploy &lt;bot&gt;</code>.</p>
+<p><strong>Shared directory</strong>: <code>/Users/Shared/evolve/</code> — single source of truth for pod state. All bots write here; none can delete each other's files.</p>
+<p><strong>Model tiers</strong>: Evolve routes every session to the right model automatically.
+- <strong>tier1 / <code>power</code></strong>: Opus-class — explicit user requests for deep work
+- <strong>tier2 / <code>standard</code></strong>: Sonnet-class — default for productive sessions
+- <strong>tier3 / <code>fast</code></strong>: Haiku-class — background tasks, maintenance sessions, analysis
+- <strong>tier0 (Judge)</strong>: Different provider from tier2 — unbiased evaluation</p>
+<p><strong>Session class</strong>: Every session is classified as <code>productive</code> (real user work), <code>maintenance</code> (debugging, config), or <code>ambiguous</code>. The dispatched tier follows a cascade: trigger-kind anchor → per-user-per-bot default → operator's bot-wide default → fallback. Maintenance sessions are automatically routed to tier3 to save cost.</p>
+<p><strong>Per-user tier</strong>: Anyone using a bot can set their own default tier via <code>evo tier fast|standard|power|auto</code> — persisted per user per bot. Operators set the bot-wide default on the AI Optimization page or with <code>evo tier-default</code>.</p>
+<p><strong>Suggestions</strong>: Changes the analysis engine wants to make to a bot. Always require human approval. Go through security review, forge validation, and auto-rollback on failure.</p>
+<hr>
+<h2 id="the-improvements-loop-better-engine">The Improvements Loop (Better Engine)</h2>
+<pre><code>Session happens → plugin annotates every turn → observation tuples land in {shared_dir}
+  ↓ on each coach's cadence (on_demand / hourly / daily / weekly)
+A coach reads observations + system state → emits a Suggestion
+  ↓ at ingest
+The arbiter checks the charter's invariants → routes the suggestion to the queue
+  ↓ every refresh cycle
+The referee ranks the queue (urgency × track record + tiebreak)
+  ↓ you approve / snooze / dismiss / reject in Recommendations
+apply.py executes config patches; Apps → Forge Jobs handles heavier changes
+  ↓ for suggestions carrying a falsifiable claim
+Check-in verifies the metric in the claim's window (1d / 7d / 30d)
+  → claim confirmed: coach's track record rises
+  → claim refuted: revert / flag / escalate per the suggestion's revert plan
+</code></pre>
+<p>The legacy v1 pattern-detector pipeline was retired in the Better Engine pipeline unification (May 2026). All scoreboard, compliance, and suggestion paths now flow through the unified Signals → Proposals stream. Whimsy is guaranteed when the queue is otherwise empty.</p>
+<hr>
+<h2 id="common-cli-commands">Common CLI Commands</h2>
+<pre><code class="language-bash"># Check pod status
+evolve-admin status
+
+# Deploy/update Evolve plugin on a bot
+evolve-admin deploy &lt;bot-id&gt;
+
+# List pending improvement suggestions
+evolve-admin proposals list
+
+# Approve a suggestion
+evolve-admin proposals approve &lt;id&gt;
+
+# View task queue
+evolve-admin tasks list
+
+# Check model assignments
+evolve-admin models list
+</code></pre>
+<hr>
+<h2 id="admin-ui-pages">Admin UI Pages</h2>
+<table>
+<thead>
+<tr>
+<th>Page</th>
+<th>Bucket</th>
+<th>What it's for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Chat</td>
+<td>(floating)</td>
+<td>Conversation surface with evo — chat-as-home, with per-page session context</td>
+</tr>
+<tr>
+<td>Dashboard</td>
+<td>(floating)</td>
+<td>Live pod status at a glance, plus the Better Engine recommendations strip</td>
+</tr>
+<tr>
+<td>Usage</td>
+<td>Operate</td>
+<td>Spend by model, channel, source — Sessions tab: productive vs maintenance ratios, session browser</td>
+</tr>
+<tr>
+<td>Reports</td>
+<td>Operate</td>
+<td>User-configured digest subscriptions and report history</td>
+</tr>
+<tr>
+<td>Plugins</td>
+<td>Operate</td>
+<td>Per-bot external capabilities. Sub-tabs: <strong>Plugins</strong> (Messaging / LLM Providers / Tools / Infrastructure sections), <strong>Credentials</strong>, <strong>Embeddings</strong>, <strong>MCP Servers</strong>, <strong>Hooks</strong>. Bot header chip strip shows runtime + reachable-via at a glance.</td>
+</tr>
+<tr>
+<td>Security</td>
+<td>Operate</td>
+<td>Per-bot audit (eight categories), config health, drift detection, plus posture views: <strong>MCP Posture</strong>, <strong>Plugin Posture</strong>, <strong>Hook Posture</strong>, <strong>Content Scan</strong> (markdown-file injection-pattern catalog with Mark-Reviewed suppressions)</td>
+</tr>
+<tr>
+<td>Maintenance</td>
+<td>Operate</td>
+<td>Gateway status, cron jobs, infra jobs, OC version, logs, admin server, MCP bridge, system upgrade, pod health</td>
+</tr>
+<tr>
+<td>Backup</td>
+<td>Operate</td>
+<td>Cloud (private GitHub per bot), Local (Time Machine), Data (per-bot default tier + per-app overrides), Recovery (rollback from latest backup)</td>
+</tr>
+<tr>
+<td>Terminal</td>
+<td>Operate</td>
+<td>In-browser shell into bot accounts (for the cases the UI doesn't yet cover)</td>
+</tr>
+<tr>
+<td>Skills</td>
+<td>Improve</td>
+<td>Per-bot skill inventory — catalog, installed skills, credentials, activity</td>
+</tr>
+<tr>
+<td>Apps</td>
+<td>Improve</td>
+<td>App manifests, files registry, orphan scan, test status — Installed / Gallery / Forge Jobs / Reliability tabs</td>
+</tr>
+<tr>
+<td>Recommendations</td>
+<td>Improve</td>
+<td>The arbiter proposal queue. Sub-pages: Generators (charters + track records), Snapshots (calibration), Observations (raw signal stream).</td>
+</tr>
+<tr>
+<td>AI Optimization</td>
+<td>Improve</td>
+<td>Model catalog, per-bot default tier picker, tier definitions, routing rules</td>
+</tr>
+<tr>
+<td>Cost Optimization</td>
+<td>Improve</td>
+<td>Per-bot tile row, efficiency scoring, context settings, daily caps (auto-trip L1 breaker), Model × Audience table, Spike Explorer</td>
+</tr>
+<tr>
+<td>Getting Started</td>
+<td>Settings</td>
+<td>Onboarding tour</td>
+</tr>
+<tr>
+<td>Settings</td>
+<td>Settings</td>
+<td>Pod / Network / Bot config and module enable/disable/tune</td>
+</tr>
+<tr>
+<td>Users</td>
+<td>Settings</td>
+<td>Pod admins, self-claim passphrases, per-bot owners, paired users per channel, auto-approval</td>
+</tr>
+<tr>
+<td>Help</td>
+<td>Settings</td>
+<td>Per-page help docs</td>
+</tr>
+<tr>
+<td>Inbox</td>
+<td>Developer</td>
+<td>Issues filed by users via <code>evo bug</code> / <code>evo feature</code></td>
+</tr>
+<tr>
+<td>Errors</td>
+<td>Developer</td>
+<td>Aggregated error reports across the pod</td>
+</tr>
+<tr>
+<td>Feedback</td>
+<td>Developer</td>
+<td>User-submitted feedback collected by evo</td>
+</tr>
+</tbody>
+</table>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/overview.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>

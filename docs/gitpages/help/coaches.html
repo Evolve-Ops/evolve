@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Coaches Page · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">coaches</span><span class="chip">generators</span><span class="chip">charters</span><span class="chip">track-record</span><span class="chip">authority-factor</span></div><div class="reviewed">Last reviewed 2026-06-06</div></div><h1 id="help-coaches-page">Coaches Page</h1>
+<p>The Coaches page (accessible from the Recommendations page) shows every charter the registry has loaded, plus each one's record: track record, authority factor, current status. Click a row for the charter inspector, recent suggestions, and pause/resume controls.</p>
+<p>Coaches are the source of all v2 suggestions. They fall into three types, and the page colors their icons accordingly.</p>
+<p>The active portfolio (under <code>packages/analyzer/generators/</code>, June 2026): <code>app_birth_detector</code>, <code>app_permission_drift</code>, <code>app_permission_review</code>, <code>app_suggester</code>, <code>auth_drift_filler</code>, <code>bloat_investigator</code>, <code>bot_config_integrity</code>, <code>budget_hawk</code>, <code>cache_ttl_tuner</code>, <code>cost_root_cause_correlator</code>, <code>cost_spike</code>, <code>cron_caps_filler</code>, <code>efficiency_hawk</code>, <code>engagement_amplifier</code>, <code>evolve_watchdog</code>, <code>exec_outcome_investigator</code>, <code>gateway_diagnostician</code>, <code>manifest_quality</code>, <code>model_discovery</code>, <code>persona_tuner</code>, <code>pod_capability_lift</code>, <code>security_warden</code>, <code>session_quality</code>, <code>sysadmin_watchdog</code>, <code>user_profile_inferrer</code>, <code>workspace_inventory</code>, <code>workspace_security</code>. Charters ship in code at <code>packages/analyzer/generators/&lt;id&gt;/charter.yaml</code> (what this coach watches for) and are immutable at runtime.</p>
+<p>Generators added or retired since May 2026:</p>
+<ul>
+<li><strong>New (June 2026):</strong> <code>engagement_amplifier</code> (pattern-deepening proposals), <code>pod_capability_lift</code> (cross-bot capability-gap aggregator).</li>
+<li><strong>Retired:</strong> <code>primary_model_floor_advisor</code> (<a href="https://github.com/evolve-ops/evolve/pull/2214">PR 2214</a>) — its job is now done by the routing-disagreement audit and the Cost Efficiency Score's tier-routing component. <code>plugin_curator</code> (2026-06-06) — the triggers it remediated were retired in the plugin-posture rework (<a href="../spec-plugin-posture-rework-2026-06-06.md">spec</a>). <code>test_failure_responder</code> + <code>test_gate_backfill</code> (2026-06-08) — removed with the app-test surface (<a href="../decision-app-tests-2026-06-08.md">decision memo</a>); their coverage moved to the audit + coherence systems.</li>
+<li><strong>Investigate-before-propose:</strong> <code>bloat_investigator</code>, <code>exec_outcome_investigator</code>, and (newly) <code>cron_caps_filler</code> (<a href="https://github.com/evolve-ops/evolve/pull/2319">PR 2319</a>) consult the config_intent record before proposing reverts so deliberate deviations don't generate noise.</li>
+</ul>
+<hr>
+<h2 id="types">Types</h2>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Purpose</th>
+<th>How it earns attention</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>optimizer</strong></td>
+<td>Proposes improvements — new apps, tighter configs, tone shifts.</td>
+<td>Competes on track record × urgency × dimension weight.</td>
+</tr>
+<tr>
+<td><strong>guardian</strong></td>
+<td>Runs at duty — checks for problems and annotates other suggestions.</td>
+<td>Runs at track record 1.0; doesn't compete for slots.</td>
+</tr>
+<tr>
+<td><strong>meta_guardian</strong></td>
+<td>Watches the system itself (volume deviations, check-in drops).</td>
+<td>Feeds the Meta-health tab.</td>
+</tr>
+</tbody>
+</table>
+<p>Guardians and meta_guardians don't suffer track record penalties when they "miss" — they run on every cycle regardless. Optimizers are the ones whose track record moves with verified outcomes.</p>
+<hr>
+<h2 id="columns">Columns</h2>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Coach</td>
+<td>Charter ID. Icon shows type.</td>
+</tr>
+<tr>
+<td>Dimension</td>
+<td>Which quality this coach contributes to (cost, safety, utility, …).</td>
+</tr>
+<tr>
+<td>Status</td>
+<td><strong>active</strong> (green), <strong>paused</strong> (yellow), <strong>paused for review</strong> (red).</td>
+</tr>
+<tr>
+<td>Track record</td>
+<td>Bounded [0.5, 1.5]. Computed from verified wins and losses: <code>1.0 + 0.3 × (wins − losses) / n</code>, clamped.</td>
+</tr>
+<tr>
+<td>Wins / Losses</td>
+<td>Verified successes vs. failures from the check-in. The percentage is the success rate over the verified subset.</td>
+</tr>
+<tr>
+<td>Emitted</td>
+<td>Lifetime suggestions emitted.</td>
+</tr>
+<tr>
+<td>Last check-in</td>
+<td>When the check-in last graded one of this coach's suggestions.</td>
+</tr>
+</tbody>
+</table>
+<p>The table sorts active first, then paused, then paused for review; within a status, highest emissions lead.</p>
+<p><strong>Load errors:</strong> if a charter fails to parse or its fingerprint doesn't match the stored record, a red-bordered error card appears above the table. This usually means the charter (what this coach watches for) changed in code but the record on disk wasn't reconciled; fix it by reviewing the change, then either updating the record manually or reverting the charter.</p>
+<hr>
+<h2 id="inline-pause-resume-on-the-table">Inline Pause / Resume on the table</h2>
+<p>Each row carries an inline Pause or Resume button (<a href="https://github.com/evolve-ops/evolve/pull/2153">PR 2153</a>) — no need to open the detail modal for the common "this coach is too noisy, mute it" case. Clicking prompts for a reason that's recorded on the coach's track record.</p>
+<hr>
+<h2 id="detail-modal">Detail modal</h2>
+<p>Click a row for:</p>
+<ul>
+<li><strong>Header</strong> — ID, type pill, dimension pill, cadence (on_demand / hourly / daily / weekly), budget policy (competitive / duty / meta), current status.</li>
+<li><strong>Purpose line</strong> — the human-readable why from the charter.</li>
+<li><strong>Stat cards</strong> — track record, emitted, applied, verified ✓/✗, rejected, vetoed.</li>
+<li><strong>Pause / Resume</strong> — same action as the inline button above; the modal's Pause records a longer reason.</li>
+<li><strong>Charter invariants</strong> — the machine-checked rules the charter declares. Each is <code>invariant_id — check_kind: {params}</code>. These run at ingest: a suggestion that violates an invariant is rejected before it enters the queue.</li>
+<li><strong>Recent suggestions</strong> — last 10 emitted, with status and urgency badges, newest first.</li>
+</ul>
+<hr>
+<h2 id="when-to-pause-a-coach">When to pause a coach</h2>
+<ul>
+<li>It's emitting lots of suggestions you keep rejecting (even after the rejection_rate_spike watchdog event). Pausing while you investigate is better than rejecting ten more.</li>
+<li>Its track record is at the floor (0.5) and you're confident the dimension isn't something you want addressed right now.</li>
+<li>You're running an experiment that the coach would interfere with.</li>
+</ul>
+<p>When you pause, the reason you enter is stored on the record. Resume the coach to clear the pause.</p>
+<p><strong>Paused for review</strong> is different from paused — it's set by the arbiter's internal checks (fingerprint mismatch, repeated charter violations). It's not a button in the UI; it's a state you read. To exit this state, fix the underlying issue (usually a charter mismatch) and the registry reactivates on next load.</p>
+<hr>
+<h2 id="common-questions">Common questions</h2>
+<p><strong>Track record is 1.00 for a coach that's emitted 50 suggestions — why?</strong>
+Track record only moves on <em>verified</em> outcomes. If the check-in hasn't graded any of this coach's suggestions yet, the denominator is zero and track record stays at its 1.0 default. Check the "Wins / Losses" column: if it reads 0/0, the coach has no verified track record.</p>
+<p><strong>Why doesn't my guardian have variable track record?</strong>
+Guardians run at duty (budget_policy = duty). Their track record is fixed at 1.0 — they don't compete for attention, they observe and annotate. Only optimizers move with their track record.</p>
+<p><strong>A coach has a high rejection rate but high track record. How?</strong>
+Track record tracks <em>check-in outcomes</em>, not human rejections. A coach can suggest things verifiers confirm ("this reduces gateway restarts") even if humans reject most of them as not-worth-it. The two numbers tell different stories; look at both before acting.</p>
+<p><strong>What happens to the coach's code when I pause it?</strong>
+Nothing. The charter and code stay on disk. Pausing just flips a flag on the record so the arbiter's <code>active_generators()</code> skips it on the next cycle.</p>
+<p><strong>Can I edit a charter from here?</strong>
+No — charters are immutable at runtime. Changes ship as code (PR-reviewed). The registry enforces this via the fingerprint check. If you want to change a coach's behavior, edit <code>packages/analyzer/generators/&lt;id&gt;/charter.yaml</code> and ship it.</p>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/coaches.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>

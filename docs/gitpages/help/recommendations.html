@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Recommendations Page · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">recommendations</span><span class="chip">proposals</span><span class="chip">arbiter</span><span class="chip">coaches</span><span class="chip">approval</span><span class="chip">snooze</span></div><div class="reviewed">Last reviewed 2026-06-06</div></div><h1 id="help-recommendations-page">Recommendations Page</h1>
+<p>The Recommendations page (in the <strong>Improve</strong> bucket) is the unified suggestion queue — Better Engine's output, ranked and filterable. Every change a coach wants to make to your pod surfaces here for you to approve, snooze, dismiss, or reject.</p>
+<p><strong>You don't need to handle proposals from this page.</strong> Open the chat widget
+and tell evo what you want — <em>"apply the cron-caps proposal"</em>, <em>"snooze the
+improvement proposals for a week"</em>, <em>"reject the model-switch proposal — it's
+not a fit"</em>. Evo runs the same applier this page's inline buttons drive, then
+verifies the change landed. The Recommendations page is the visual inventory;
+chat is the fast lane to action.</p>
+<p>When chatting from this page, evo gets the current pending-proposals context
+automatically. Try:</p>
+<ul>
+<li><code>what proposals are pending?</code></li>
+<li><code>apply the cron-caps proposal</code></li>
+<li><code>snooze improvement proposals for a week</code></li>
+<li><code>mark complete the morning-brief investigation</code> <em>(for deferred-completion kinds)</em></li>
+</ul>
+<hr>
+<h2 id="how-suggestions-come-to-be">How suggestions come to be</h2>
+<pre><code>A coach notices a pattern in observations or system state
+  ↓
+It self-checks the suggestion against its charter's invariants
+  ↓
+The suggestion lands here for you to decide on
+  ↓
+You approve, reject, snooze, or dismiss
+  ↓
+For approved + testable changes: validation runs
+  ↓
+Apply — automatically for config edits, manually for hand-rolled instructions
+  ↓
+For suggestions carrying a falsifiable claim: the check-in verifies 7 days later
+  → if the claim fails: revert / flag / escalate per the suggestion's revert plan
+</code></pre>
+<p>Your decision is the gate. No suggestion touches a production bot until you act on it.</p>
+<hr>
+<h2 id="the-how-it-works-pipeline-strip">The "How it works" pipeline strip</h2>
+<p>Across the top of the page is a six-step illustration: Spot → Self-check → You decide → Test → Apply → Check-in. The "You decide" step is highlighted because that's what this page is for. Below the strip, the <strong>Active coaches</strong> row lists every charter currently producing suggestions, pulled live from <code>/api/arbiter/generators</code>.</p>
+<hr>
+<h2 id="what-a-suggestion-is">What a suggestion is</h2>
+<p>Every entry in the queue is a structured <strong>Suggestion</strong> with these fields:</p>
+<ul>
+<li><strong>dimension</strong> — which quality the suggestion affects. One of: <code>substrate_health</code>, <code>cost</code>, <code>safety</code>, <code>utility</code>, <code>capability_growth</code>, <code>efficiency</code>, <code>voice_fit</code>, <code>hygiene</code>, <code>meta_health</code>.</li>
+<li><strong>urgency</strong> — how soon it wants attention. <code>security_critical</code> → <code>operational_urgent</code> → <code>cost_alert</code> → <code>substrate_warn</code> → <code>improvement</code> → <code>hygiene</code> → <code>whimsy</code>.</li>
+<li><strong>generator_id</strong> — which coach emitted it (e.g., <code>sysadmin_watchdog</code>, <code>budget_hawk</code>, <code>adjacency_explorer</code>).</li>
+<li><strong>action kind</strong> — what clicking <em>Act</em> would do (<code>ConfigPatch</code>, <code>AgentsAppend</code>, <code>InstallApp</code>, <code>Investigation</code>, …).</li>
+<li><strong>approval audience</strong> — who's supposed to respond (<code>pod_operator</code>, <code>bot_primary_user</code>, <code>both</code>).</li>
+<li><strong>claim</strong> (optional) — the falsifiable promise it makes ("this reduces gateway restarts by ≥30% over 7 days"). The check-in verifies it later.</li>
+<li><strong>revert plan</strong> (optional) — what rollback looks like if the claim fails.</li>
+<li><strong>guardian annotations</strong> — other coaches flagging concerns ("Security Warden: this touches auth scopes").</li>
+<li><strong>adjacency</strong> — for exploration suggestions, how close to current behavior this is (<code>near</code> / <code>medium</code> / <code>far</code>).</li>
+<li><strong>conflicts_with</strong> — related suggestions that touch the same thing; they're grouped on-screen.</li>
+</ul>
+<hr>
+<h2 id="the-card">The card</h2>
+<p>Each card shows everything above as small badges with the urgency color on the left edge:</p>
+<ul>
+<li>The ⏳ / ✓ / ✗ at top-left is the <strong>check-in status</strong> — pending, confirmed, refuted, or unknown. This is the claim-follow-up signal.</li>
+<li>The colored badge next to the title is the <strong>urgency</strong>. Red for <code>security_critical</code>, orange for <code>operational_urgent</code>, down through blue for <code>improvement</code>, grey for <code>hygiene</code>.</li>
+<li>The dimension pill, action-kind pill, and approval audience pill are self-describing.</li>
+<li>An "adjacency: near" (or medium/far) chip appears when the suggestion comes from an Adjacency Explorer; hover to see the underlying type.</li>
+<li>Guardian warnings appear as "⚠ security_warden · high" mini-badges.</li>
+<li>The bottom line shows bot, coach, age, plus a <strong>rank #N · score X.XX ▾</strong> chip. Click the chip to expand the scoring breakdown: <code>urgency × track record + tiebreak = score</code>. This is how the referee ordered the queue.</li>
+</ul>
+<hr>
+<h2 id="actions">Actions</h2>
+<ul>
+<li><strong>Act</strong> — marks the suggestion <code>approved_human</code> and runs the applier. For <code>Investigation</code>-kind suggestions, nothing is applied; the status just advances to <code>applied</code> so it drops from the queue.</li>
+<li><strong>Snooze 1w</strong> — moves the suggestion to the snoozed subdir until a week from now, then the snooze-wake daemon promotes it back. Use this when something is real but not right now.</li>
+<li><strong>Dismiss</strong> — silently drops it. No learning signal.</li>
+<li><strong>Reject</strong> — drops it and records "not a fit" in the coach's track record. Use this when the pattern is real but the suggested fix is wrong. Over time, the coach's track record drops, which lowers its rank on the next cycle.</li>
+</ul>
+<p>Conflict groups (two suggestions touching the same thing with opposite intent) are bordered and labeled "Conflict group — pick one." Acting on one of them doesn't automatically resolve the others; they remain in the queue until you handle them.</p>
+<hr>
+<h2 id="filters-and-the-rate-limit-banner">Filters and the rate-limit banner</h2>
+<p>The top banner shows <strong>N of 7 surfaced this week · M surfaceable now · K held</strong>.</p>
+<ul>
+<li>The 7/week cap is a rate limit so the queue doesn't drown you. <code>security_critical</code> and <code>operational_urgent</code> bypass it — they always surface.</li>
+<li>"Held" suggestions exist but aren't displayed this week; they surface next week (or immediately when you act on or dismiss enough current ones).</li>
+</ul>
+<p>Filter by dimension, urgency, audience, or coach to narrow the list. <strong>Include snoozed</strong> shows deferred suggestions alongside active ones.</p>
+<hr>
+<h2 id="what-happens-after-act">What happens after Act</h2>
+<p>The arbiter snapshots the "before" state and routes the suggestion based on its action kind:</p>
+<ul>
+<li><strong>Config patches</strong> apply automatically through <code>apply.py</code> — backup, write, gateway restart, health check, auto-rollback if the health check fails.</li>
+<li><strong>Heavy changes</strong> (<code>InstallApp</code>, <code>SoulEdit</code>, anything touching auth/tools/channel_config) are flagged by Security Warden and routed to the Forge bot for validation first; you'll see a Forge job appear on the Apps → Forge Jobs tab.</li>
+<li><strong>Investigations</strong> carry no executable change. Acting on them just acknowledges the pattern.</li>
+</ul>
+<p>A day or a week later (depending on the claim's <code>window_days</code>), the check-in verifies whether the metric moved in the claimed direction. If not: the fallback fires per the revert plan — revert the change, flag for review, or escalate to a watchdog event.</p>
+<hr>
+<h2 id="common-questions">Common questions</h2>
+<p><strong>Why did a low-urgency suggestion outrank a high-urgency one?</strong>
+The score is <code>urgency × track record + tiebreak</code>. If a coach has a low track record (more verified failures than successes), its suggestions sink. A high-urgency suggestion from a coach with track record 0.5 can lose to a lower-urgency suggestion from a coach with track record 1.5 if the urgencies are close enough.</p>
+<p><strong>What's "Rank #1 · score 840 ▾"?</strong>
+Click the chip — it expands the breakdown. Useful when a rank surprises you.</p>
+<p><strong>Can I see what a suggestion will change before I click Act?</strong>
+The card shows the action kind and, when present, the claim and revert-plan summary. For heavy changes the arbiter routes to Forge validation by default — there is no autonomous apply for those.</p>
+<p><strong>A guardian annotation is flagging something I don't understand.</strong>
+The annotation's severity and reason are shown on the badge. They come from other coaches running their own rules on this suggestion. Treat medium/high as "read carefully before acting"; critical means a guardian actively objects and your Act may still succeed but you're overriding its veto.</p>
+<p><strong>The page is empty — should I be worried?</strong>
+Probably not. New pods or pods with little session activity won't have enough observations to feed the coaches. Check the Coaches page: if you see zero or only a handful of "Emitted" counts, the substrate is just quiet. Coaches run on staggered cadences (some on_demand, some daily, some weekly), so the queue can populate gradually.</p>
+<p><strong>How do I respond to a 7-day check-in outcome message?</strong>
+Check-in outcomes show up automatically in the queue with <code>verify_status</code> set to <code>confirmed</code> or <code>refuted</code>. Refuted suggestions trigger their revert plan automatically — you don't need to act unless escalation routes back to you. The legacy v1 Telegram-based check-in flow (<code>outcome.py</code> 7-day ping) was retired in the Better Engine pipeline unification (May 2026); everything now runs through the verify daemon on the unified pipeline.</p>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/recommendations.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>

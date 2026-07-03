@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Continuity Page · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">continuity-engine</span><span class="chip">deferred-intent</span><span class="chip">inline-python</span><span class="chip">agent-session</span><span class="chip">idle-detection</span></div><div class="reviewed">Last reviewed 2026-06-05</div></div><h1 id="help-continuity-page">Continuity Page</h1>
+<p>The Continuity page is the dashboard for the Continuity Engine (CE) — the system that extracts deferred tasks from session transcripts, queues them, and runs them asynchronously. It makes stateless OC bots feel like they remember and follow through on commitments.</p>
+<hr>
+<h2 id="what-the-continuity-engine-does">What the Continuity Engine Does</h2>
+<p>When a bot says "I'll write that to memory tonight" or "remind me to follow up on that," those commitments normally evaporate when the session ends. The CE intercepts them:</p>
+<ol>
+<li><strong>Extracts</strong> deferred intents from session turns (keyword matching + LLM enrichment)</li>
+<li><strong>Queues</strong> them as structured tasks with type, authorization level, and conditions</li>
+<li><strong>Executes</strong> them at the right time:
+   - <code>inline_python</code> tasks (simple file writes, git commits, HTTP checks) run every 15 minutes, always
+   - <code>agent_session</code> tasks (tasks needing the full bot) run only when the human is idle (no heartbeat for 15+ minutes)</li>
+<li><strong>Reports</strong> results via Telegram morning digest (08:00 daily)</li>
+</ol>
+<hr>
+<h2 id="stats-grid">Stats Grid</h2>
+<p>Four counters at the top:
+- <strong>Pending</strong> — tasks waiting to run (includes those awaiting approval)
+- <strong>Needs Approval</strong> — tasks extracted by the LLM that require your explicit approval before running
+- <strong>Running</strong> — tasks currently being executed
+- <strong>Completed (7d)</strong> — tasks finished in the past week</p>
+<hr>
+<h2 id="tabs">Tabs</h2>
+<h3 id="task-queue">Task Queue</h3>
+<p>Shows pending tasks with status filter (All, Pending, Needs Approval, Running).</p>
+<p><strong>Columns:</strong>
+- <strong>Title</strong> — action-oriented description of what the task will do
+- <strong>Bot</strong> — which bot will execute it
+- <strong>Type</strong> — <code>inline_python</code> (no AI cost) or <code>agent_session</code> (AI cost, runs when idle)
+- <strong>Auth level</strong> — <code>autonomous</code> (runs automatically) or <code>needs_approval</code> (waits for you)
+- <strong>Status</strong> — current state in the task lifecycle
+- <strong>Created</strong> — when the task was extracted</p>
+<p><strong>Task lifecycle:</strong></p>
+<pre><code>pending → (if needs_approval) → needs_approval → approved → running → done
+                                                                     ↓
+                                                                  blocked → cancelled
+</code></pre>
+<p><strong>Approving a task:</strong> Click the approve button on a <code>needs_approval</code> task. Once approved, it will run on the next runner cycle (within 15 minutes).</p>
+<p><strong>Cancelling a task:</strong> Click cancel. The task won't run and is moved to cancelled state.</p>
+<h3 id="completed">Completed</h3>
+<p>History of finished tasks — both successful (<code>done</code>) and failed (<code>blocked</code>). Shows what the task did, when it ran, and the result message from the bot.</p>
+<p><code>blocked</code> tasks couldn't complete — the bot reported an error (e.g., permission denied, file not found). They stay in the history for review. If the underlying issue is fixed, you can re-create the task manually.</p>
+<h3 id="schedule-config">Schedule Config</h3>
+<p>Runner settings:
+- <strong>Runner enabled</strong> — master on/off switch for the Continuity Engine
+- <strong>Idle threshold</strong> — how many minutes of no heartbeat before agent tasks are allowed to run (default: 15 min)
+- <strong>Max agent tasks per run</strong> — how many agent tasks can dispatch per 15-minute cycle (default: 3)
+- <strong>Daily budget cap</strong> — agent tasks stop dispatching when this fraction of daily budget is spent
+- <strong>LLM extraction enabled</strong> — whether to use LLM enrichment for task extraction (costs one tier3 call per session with deferred intent signals)</p>
+<hr>
+<h2 id="common-questions">Common Questions</h2>
+<p><strong>What kinds of tasks get extracted?</strong>
+The extractor looks for deferred intent signals in session turns:
+- Time-based deferrals: "I'll do that later / tonight / tomorrow / next week"
+- Reminders: "remind me to...", "remember to..."
+- Follow-ups: "let's revisit / follow up on..."
+- Monitoring: "keep an eye on...", "check if..."
+- Multi-step work: "we should tackle X systematically"
+- External actions: "send an email / message / slack"</p>
+<p><strong>Why do LLM-extracted tasks always require approval?</strong>
+Security rule: the LLM could theoretically extract a malicious task from a session (prompt injection). Requiring human approval for all LLM-extracted tasks means the runner never executes unreviewed AI-generated code autonomously. Only keyword-classified inline tasks (simple file writes, git commits) can run autonomously.</p>
+<p><strong>What's the difference between inline_python and agent_session tasks?</strong>
+- <code>inline_python</code> — runs Python-only actions directly: write a file, append to a log, run a git commit, send a notification, check if a URL is up. No AI cost. Runs every 15 minutes regardless of idle state.
+- <code>agent_session</code> — starts a full OC bot session to accomplish the task. Has AI cost. Only dispatches when the human is idle (no heartbeat for 15+ minutes) to avoid interfering with real sessions.</p>
+<p><strong>A task shows as "blocked" — what happened?</strong>
+The bot reported that it couldn't complete the task. The <code>result</code> field shows the error message. Common causes: permission errors (file path the bot can't write), missing tool (API key not configured), or an ambiguous task that the bot couldn't interpret.</p>
+<p><strong>How do I add a task manually?</strong>
+Use the CLI: <code>evolve-admin tasks add --title "..." --description "..." --execution-type inline_python --action append_file --action-params '{"path": "...", "content": "..."}'</code>. The UI doesn't currently have a manual task creation form — the task queue is populated by the extractor.</p>
+<p><strong>The morning digest says tasks ran overnight — where do I see results?</strong>
+In the Completed tab. Each completed task shows the result message from the bot and when it ran. The Telegram morning digest is a summary; the UI has the full history.</p>
+<p><strong>Tasks aren't being extracted from sessions — why?</strong>
+Possible causes:
+1. The Evolve plugin isn't installed on the bot (<code>evolve-admin deploy &lt;bot&gt;</code>)
+2. LLM extraction is disabled in Schedule Config
+3. Sessions have fewer than 3 turns (LLM extraction only fires for longer sessions)
+4. The session didn't contain deferred intent language that matches the extractor's patterns</p>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/continuity.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,312 @@
+{
+  "pkg_id": "p-c866a3cd",
+  "pkg_version": "2026.05.26-1.0",
+  "gallery_version": "2026.05.26-1.0",
+  "schema_version": 13,
+  "manifest_shape": "v7-arc-pre",
+  "manifest_type": "evolve_application",
+  "display_name": "Atlas — Weekly Recap",
+  "author": "evolve",
+  "description": "Weekly synthesis app. Every Sunday at a configured time, reads the past 7 days of archive entries (written by atlas-daily-digest and atlas-article-capture), ranks the 3-5 highest-signal items per bucket, runs a pattern-detection pass to surface emergent themes, and posts a longer-form Team_bot_a-style recap to the configured Telegram group.",
+  "objective": "Give the community a higher-altitude view of the week — surface patterns no single day's digest can show.",
+  "id": "app_atlas_weekly_recap",
+  "name": "Atlas Weekly Recap",
+  "status": "active",
+  "dependencies": [],
+  "app_dependencies": [
+    {
+      "spec_id": "p-7b26ba5e",
+      "interface": [
+        "scripts/atlas_lib/*.py (read)",
+        "archive/index.json (read)",
+        "archive/{bucket}/*.md (read)",
+        "atlas/operator.json (read)"
+      ],
+      "version_compatibility": ">=1.0,<2.0"
+    },
+    {
+      "spec_id": "p-df9d99a3",
+      "interface": [
+        "atlas/optout.json (read — to suppress opted-out items from the recap)"
+      ],
+      "version_compatibility": ">=1.0,<2.0",
+      "required": false
+    }
+  ],
+  "requirements": {
+    "integrations": [
+      {
+        "id": "telegram",
+        "display_name": "Telegram",
+        "required": true,
+        "check_path": "openclaw.json → skills.telegram",
+        "setup_doc": "docs/skills/telegram-setup.md",
+        "reason": "Posts the weekly recap to the configured group"
+      }
+    ],
+    "secrets": [],
+    "system": [],
+    "python_packages": []
+  },
+  "identity": {
+    "purpose": "Convert a week of bucketed archive entries into a single signal-dense recap. Surface 3-5 top items per bucket (ranked by source weight × recency × cross-source-duplicate-count) plus 1-3 emergent patterns the LLM identifies across the week.",
+    "scope_includes": [
+      "Read archive/index.json for the past 7 days (Mon 00:00 → Sun 23:59 local)",
+      "Filter out items present in atlas/optout.json",
+      "Group by bucket; rank within each bucket by composite score (source weight × recency × similar-domain-count)",
+      "Select top 3-5 items per non-empty bucket (configurable)",
+      "Pattern-detection pass: feed the top 15-25 items to Haiku asking for 1-3 cross-item themes",
+      "Compose a Team_bot_a-style recap (composer.compose_recap) with pattern header + bucket sections",
+      "Post to the configured Telegram group",
+      "Write recap/{YYYY-WW}.md as local audit",
+      "Emit RECAP_SENT: / RECAP_FAILED: / RECAP_EMPTY: signals for the verify daemon"
+    ],
+    "scope_excludes": [
+      "Re-fetching source articles (works purely from the archive)",
+      "Re-classifying items (uses the bucket from when the item was captured)",
+      "Speculation beyond what the week's items support — pattern detection has a 'quiet week' fallback when confidence is low",
+      "Strategic recommendations ('the community should...' — out of scope)",
+      "Multi-week aggregation (one ISO week per run; future month/quarter apps could build on this)"
+    ],
+    "bot_interaction_pattern": "Cron-driven daemon. Same execution model as atlas-daily-digest. The bot is not invoked as a session — the script handles everything end-to-end via direct API calls.",
+    "user": "Members of the configured Telegram group + the operator. Same recipients as the daily digest."
+  },
+  "success_criteria": {
+    "observable_outcomes": [
+      "A recap arrives in the group every Sunday within 2 minutes of the configured time",
+      "Recap references at least one item from each non-empty bucket of the past week",
+      "Pattern section contains 1-3 themes (or a clear 'quiet week' note when confidence < 0.6)",
+      "recap/{YYYY-WW}.md exists for every completed week",
+      "RECAP_SENT: signal emitted weekly; verify daemon shows no gap > 10 days"
+    ],
+    "failure_signals": [
+      "RECAP_FAILED:<reason> — archive read failed, synthesizer failed, or Telegram send failed",
+      "RECAP_EMPTY:<iso_week> — archive had < 3 items for the week; recap is suppressed (acceptable)",
+      "No RECAP_SENT: for 10+ days — daemon not loaded",
+      "Pattern section hallucinates connections — confidence threshold needs tightening"
+    ],
+    "quality_bar": {
+      "minimum": "Recap accurately reflects the week's archive — every cited item is real and findable in archive/index.json",
+      "excellent": "Members read the recap and feel they've caught up on the whole week; the pattern header surfaces something they wouldn't have noticed from daily digests alone"
+    }
+  },
+  "constraints": {
+    "privacy": [
+      "Same archive-privacy rules as atlas-daily-digest — never quote community members by name",
+      "Items in atlas/optout.json MUST be excluded from the recap (re-check at compose time, not just at read time)",
+      "Member metadata in archive entries (member_id_hash from atlas-article-capture) is NOT referenced in the recap output"
+    ],
+    "safety": [
+      "Read-only against archive/ — never modifies items",
+      "Pattern-detection has a token-budget cap (default 5000 tokens / week)",
+      "If pattern-detection confidence < 0.6, output the 'quiet week' fallback rather than speculative connections",
+      "Telegram posting only to the configured group; same surface as daily-digest"
+    ],
+    "dependencies": [
+      "telegram (required) — for posting",
+      "atlas_lib/* (via p-7b26ba5e) — archive, composer, config, telegram_api",
+      "archive/index.json (read-only) — written by p-7b26ba5e and p-df9d99a3",
+      "atlas/optout.json (read-only, optional) — written by p-df9d99a3; missing is OK"
+    ],
+    "boundaries": [
+      "One recap per ISO week — never two for the same week",
+      "Operates on the past 7 days (the completed week); does not look further back",
+      "Does not draw from sources outside archive/",
+      "Does not post mid-week — only on the configured day"
+    ]
+  },
+  "privacy": {
+    "data_collected": [],
+    "retention": {
+      "recap_history": "indefinite — local audit under recap/{YYYY-WW}.md"
+    },
+    "opt_out_signals": [],
+    "consent_notice": {
+      "trigger": [
+        "covered by digest install"
+      ],
+      "channel": "primary_group_pinned",
+      "content_ref": "atlas-shared:intro-message"
+    },
+    "identifier_hashing": null,
+    "shareable_in_lessons": true
+  },
+  "audience_scoping": {
+    "operator_required": true,
+    "approved_surfaces": [
+      {
+        "surface_id": "primary_group",
+        "surface_type": "telegram_supergroup",
+        "addressing": {
+          "chat_id_var": "{telegram_chat_id}"
+        },
+        "default_role_in_surface": "member",
+        "permitted_actions": [
+          "post"
+        ]
+      }
+    ],
+    "role_capabilities": {
+      "operator": [
+        "all"
+      ],
+      "member": [
+        "receive-recap"
+      ],
+      "stranger": []
+    },
+    "membership_verification": {
+      "method": "n/a — outbound-only surface",
+      "cache_ttl_seconds": 0
+    },
+    "operator_bypasses": [],
+    "config_path": "atlas/operator.json"
+  },
+  "event_triggers": [],
+  "bot_guidance": [],
+  "recursive_llm": {
+    "purposes": [
+      {
+        "name": "pattern detection",
+        "intent": "identify 1-3 cross-item patterns from a week of titles+buckets+sources; JSON-only output with confidence",
+        "expected_cost_per_week_usd": 0.05,
+        "notes": "One pass per week over top 15-25 items. Confidence threshold 0.6; below that, output 'quiet week' fallback."
+      }
+    ],
+    "transport": "openclaw_headless",
+    "fallback_required": true,
+    "retry_policy": "exponential_backoff_max_3",
+    "fallback_strategy": "If the bot gateway is unreachable, output the 'quiet week — nothing emergent surfaced' fallback header and still ship the recap with bucket sections. A recap without patterns is still useful; better than no recap."
+  },
+  "shared_modules": [
+    {
+      "name": "atlas_lib.archive",
+      "owner_spec_id": "p-7b26ba5e",
+      "expected_exports": [
+        "items_in_range",
+        "read_index",
+        "normalize_url"
+      ]
+    },
+    {
+      "name": "atlas_lib.composer",
+      "owner_spec_id": "p-7b26ba5e",
+      "expected_exports": [
+        "compose_recap"
+      ]
+    },
+    {
+      "name": "atlas_lib.config",
+      "owner_spec_id": "p-7b26ba5e",
+      "expected_exports": [
+        "telegram_token",
+        "workspace_root",
+        "read_json"
+      ]
+    },
+    {
+      "name": "atlas_lib.oc_dispatch",
+      "owner_spec_id": "p-7b26ba5e",
+      "expected_exports": [
+        "dispatch",
+        "parse_json_reply"
+      ]
+    },
+    {
+      "name": "atlas_lib.telegram_api",
+      "owner_spec_id": "p-7b26ba5e",
+      "expected_exports": [
+        "send_message"
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "scripts/atlas_recap.py",
+      "layer": "script",
+      "data_kind": null,
+      "owned_by": "p-c866a3cd",
+      "shared_with": [],
+      "purpose": "Main CLI: send | preview | status."
+    },
+    {
+      "path": "scripts/atlas-recap-cron.sh",
+      "layer": "script",
+      "data_kind": null,
+      "owned_by": "p-c866a3cd",
+      "shared_with": [],
+      "purpose": "Cron trigger invoked by LaunchDaemon every Sunday."
+    },
+    {
+      "path": "recap/{YYYY-WW}.md",
+      "layer": "data",
+      "data_kind": "user-data",
+      "owned_by": "p-c866a3cd",
+      "shared_with": [],
+      "purpose": "Posted recap text + source archive IDs. Local audit trail; does not travel."
+    },
+    {
+      "path": "/Library/LaunchDaemons/com.{bot_id}.atlas-weekly-recap.plist",
+      "layer": "script",
+      "data_kind": null,
+      "owned_by": "p-c866a3cd",
+      "shared_with": [],
+      "purpose": "LaunchDaemon plist. Sunday at configured local time."
+    }
+  ],
+  "build_spec": "# Atlas Weekly Recap — Blueprint\n\n## Overview\n\nCron-driven weekly recap. Every Sunday at the configured local time, reads the past week's archive (written by digest + capture), ranks items per bucket, runs a pattern-detection LLM pass, composes a Team_bot_a-style recap, and posts it to the configured Telegram group.\n\nDepends on p-7b26ba5e for atlas_lib (archive read, composer, config, telegram_api). Also reads optout.json from p-df9d99a3 (if present) to suppress opted-out items.\n\n## File layout\n\n```\nscripts/\n  atlas_recap.py             ← main CLI: send | preview | status\n  atlas-recap-cron.sh        ← cron trigger (rendered below)\nrecap/\n  {YYYY-WW}.md               ← one file per ISO week (local audit)\n/Library/LaunchDaemons/\n  com.{bot_id}.atlas-weekly-recap.plist  ← weekly trigger (rendered below)\n```\n\n## Per-file specs\n\n### scripts/atlas_recap.py\n- **Purpose:** Main CLI. Subcommands: `send` (full pipeline), `preview` (skip Telegram post + recap log write), `status` (read latest recap file).\n- **Inputs:** flags `--bot-id`, `--chat-id`, `--week ISO_YEAR-WNN` (default = previous 7 days), `--detail concise|standard|detailed`, `--max-items-per-bucket N`.\n- **send pipeline:**\n  1. Resolve target ISO week (from `--week` or default to previous 7 days ending now).\n  2. Read archive entries in that range via `atlas_lib.archive.items_in_range(start, end, archive_dir)`.\n  3. Filter out items whose URL is in `atlas/optout.json` (if present).\n  4. If filtered set has < 3 items, emit `RECAP_EMPTY: <iso_week>` and exit 0.\n  5. Rank within each bucket via composite score (source_weight × recency_decay × similar_domain_count); pick top N per bucket.\n  6. Run pattern-detection LLM pass on top items (titles + buckets + sources, NO full bodies).\n  7. Compose recap via `atlas_lib.composer.compose_recap(items, patterns, detail, week_start, week_end)`.\n  8. Post via `atlas_lib.telegram_api.send_message`.\n  9. Write `recap/{YYYY-WW}.md` with posted_at header + recap text + source archive IDs.\n 10. Emit `RECAP_SENT: <iso_week> <total_items>`.\n- **preview pipeline:** same up through compose; print to stdout; do NOT post or write recap file.\n- **status:** read recap/ dir; print latest posted week + first line, or 'no recaps posted yet'.\n- **First-run safety:** if archive_dir doesn't exist or has 0 items, emit RECAP_EMPTY.\n\n### scripts/atlas-recap-cron.sh\nBash trigger invoked by LaunchDaemon. Rendered as a `## FILE:` block below.\n\n## Composite ranking score\n\n```python\nscore = source_weight(item.source) * recency_decay(item.age_days) * dup_signal(item.domain, all_items)\n\n# Source weights (default):\nsource_weights = {\n    'anthropic-blog': 1.0, 'openai-blog': 1.0, 'google-blog-ai': 1.0,\n    'openclaw-blog': 1.2, 'hn-frontpage': 0.8,\n    'r-LocalLLaMA': 0.7, 'telegram-member': 0.7,\n}\n# github-release:<repo> → 0.9 (prefix match)\n# brave-search:<query> → 0.6 (prefix match)\n\n# Recency: 1.0 today, decays 0.1 per day, floor 0.4 at day 7+\nrecency = max(0.4, 1.0 - 0.1 * age_days)\n\n# Dup signal: items in same bucket from same domain boost each other (cross-source confirmation)\nsimilar = count_items_in_bucket_with_same_domain(item, all_items)\ndup_signal = 1.0 + 0.2 * (similar - 1)\n```\n\nThis surfaces items multiple sources are talking about (cross-source confirmation), penalizes single-source noise, and gracefully handles old items still in the week.\n\n## Pattern detection prompt\n\nGiven top 15-25 items (titles + buckets + sources only — no full bodies):\n\n> You are looking at the past week of items archived by Atlas, an OpenClaw / AI-agent ecosystem digest bot. Identify 1-3 patterns visible ACROSS items — themes that connect multiple items, not commentary on any single one.\n>\n> Items this week (title, bucket, source):\n> {items}\n>\n> Rules:\n> - Patterns are OBSERVATIONS, not recommendations.\n> - If you see fewer than 2 items supporting a pattern, don't list it.\n> - If you genuinely see nothing emergent, return {{\"patterns\": [], \"confidence\": 0.0}}.\n>\n> Return JSON only: {\"patterns\": [\"...\", \"...\"], \"confidence\": 0.0-1.0}\n> If confidence < 0.6, return patterns: [].\n\nIf the LLM returns patterns: [] (or fails), the recap header is 'Quiet week — nothing emergent surfaced. Highlights below.' rather than fabricated themes.\n\n## Recap format (Team_bot_a-style)\n\n```\n📰 Atlas weekly recap — week of {start_date} to {end_date} ({YYYY-WW})\n{total} item(s) archived this week.\n\n🧭 Patterns this week\n• {pattern 1}\n• {pattern 2}\n(or: 'Quiet week — nothing emergent surfaced.')\n\n⚔️ Competitive landscape (top {n})\n• {title} ({source}) — {short-url}\n…\n\n🛠 New tools (top {n})\n…\n\n🏆 Use cases (top {n})\n…\n\n📚 Case studies (top {n})\n…\n\n⚠️ Warnings (top {n})\n…\n\n— Full archive in @atlas's workspace; /ask for focused research; /optout <link> to remove an item.\n```\n\nBuckets with 0 items omitted entirely. Pattern section mandatory (either content or 'quiet week' note).\n\n## Configuration file templates\n\n## FILE: scripts/atlas-recap-cron.sh\n```bash\n#!/bin/bash\n# atlas-recap-cron.sh — weekly-recap cron trigger. Installed by atlas-weekly-recap.\nWORKSPACE=\"/Users/{bot_id}/.openclaw/workspace\"\nLOGFILE=\"/tmp/{bot_id}-atlas-recap.log\"\n\npython3 \"$WORKSPACE/scripts/atlas_recap.py\" send \\\n  --bot-id \"{bot_id}\" \\\n  --chat-id \"{telegram_chat_id}\" \\\n  --detail \"{recap_detail}\" \\\n  >> \"$LOGFILE\" 2>&1\n\nexit 0\n```\n\n## FILE: /Library/LaunchDaemons/com.{bot_id}.atlas-weekly-recap.plist\n```xml\n<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\"\n  \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key>\n  <string>com.{bot_id}.atlas-weekly-recap</string>\n  <key>UserName</key>\n  <string>{bot_id}</string>\n  <key>GroupName</key>\n  <string>staff</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>/bin/bash</string>\n    <string>/Users/{bot_id}/.openclaw/workspace/scripts/atlas-recap-cron.sh</string>\n  </array>\n  <key>EnvironmentVariables</key>\n  <dict>\n    <key>TZ</key>\n    <string>{briefing_tz_env}</string>\n  </dict>\n  <key>StartCalendarInterval</key>\n  <dict>\n    <key>Weekday</key>\n    <integer>0</integer>\n    <key>Hour</key>\n    <integer>{briefing_hour}</integer>\n    <key>Minute</key>\n    <integer>{briefing_minute}</integer>\n  </dict>\n  <key>StandardOutPath</key>\n  <string>/tmp/{bot_id}-atlas-recap-out.log</string>\n  <key>StandardErrorPath</key>\n  <string>/tmp/{bot_id}-atlas-recap-err.log</string>\n  <key>RunAtLoad</key>\n  <false/>\n</dict>\n</plist>\n```\n\nNote: Weekday=0 = Sunday in launchd. Hour/Minute are derived from a 'recap_time' template var by the provisioner the same way digest uses briefing_time. Until v7 introduces multi-cron-per-app, this app uses its own briefing_time slot.\n\n## Integration with sibling apps\n\nReads from `archive/` (shared state owned by p-7b26ba5e, also written by p-df9d99a3). Read-only — recap never modifies the archive.\n\nReads `atlas/optout.json` if present (owned by p-df9d99a3). The check happens at compose time, not just at read time — so even if a member opts out mid-week, the recap won't include their items.\n\nNo write conflicts with siblings: recap only writes to its own `recap/` directory.\n\n## Recursive LLM concerns\n\nOne LLM purpose (pattern detection). Per recursive_llm contract: exponential backoff max 3, on permanent failure fall back to 'quiet week' header and still ship the recap. The fallback is acceptable because the bucket sections are still useful without patterns.\n\n## Test surface\n\nValidate:\n- `atlas_recap.py preview --week <some-week-with-items>` produces formatted recap with at least one bucket section.\n- A week with < 3 archived items produces RECAP_EMPTY.\n- Items in atlas/optout.json do not appear in the preview output.\n- `atlas_recap.py status` against a workspace with no posted recaps yet returns 'no recaps posted yet' (no crash).\n- Plist passes `plutil -lint` after rendering.\n\n## What NOT to include\n\n- No interactive surface — purely cron-driven.\n- No re-classification — uses bucket from archive at capture time.\n- No re-fetching of source articles.\n- No multi-week aggregation in this app — one ISO week per run.\n- No member-specific output — recap is the same for everyone in the group.\n",
+  "example_triggers": [
+    "Preview last week's recap",
+    "When does Atlas's weekly recap run?",
+    "What patterns did Atlas surface this week?",
+    "Show me the recap status"
+  ],
+  "test_command": "python3 -m py_compile scripts/atlas_recap.py && python3 scripts/atlas_recap.py --help > /dev/null && python3 scripts/atlas_recap.py status > /dev/null",
+  "test_cases": [
+    {
+      "id": "tc-001",
+      "description": "Preview produces a non-empty recap when archive has items",
+      "trigger": "python3 scripts/atlas_recap.py preview --week 2026-W20",
+      "expected": "Stdout contains 'Atlas weekly recap', a 'Patterns this week' section, and at least one bucket section. Exit 0."
+    },
+    {
+      "id": "tc-002",
+      "description": "Empty-week handling",
+      "trigger": "Run preview against a week with fewer than 3 archive entries",
+      "expected": "Stdout indicates RECAP_EMPTY or a 'Quiet week' message. Exit 0."
+    },
+    {
+      "id": "tc-003",
+      "description": "Opted-out items do not appear",
+      "trigger": "Add a known URL to atlas/optout.json, then run preview against the week containing that URL",
+      "expected": "Preview output does NOT reference the opted-out URL or its title."
+    },
+    {
+      "id": "tc-004",
+      "description": "Status returns 'no recaps' on fresh install",
+      "trigger": "python3 scripts/atlas_recap.py status",
+      "expected": "Stdout contains 'no recaps posted yet'. Exit 0. No crash, no workspace creation."
+    },
+    {
+      "id": "tc-005",
+      "description": "Quiet-week fallback when pattern confidence is low",
+      "trigger": "Run preview against a week with diverse, unrelated items (no pattern would be confident)",
+      "expected": "Pattern section reads 'Quiet week — nothing emergent surfaced.' rather than fabricated themes."
+    }
+  ],
+  "rsigrade_signals": [
+    "items_synthesized_per_week",
+    "pattern_detection_confidence_avg",
+    "pattern_detection_quiet_week_rate",
+    "optout_filter_count",
+    "recap_post_latency_ms"
+  ],
+  "application_tags": [
+    "community-research",
+    "weekly-synthesis",
+    "telegram-community",
+    "pattern-detection",
+    "atlas"
+  ],
+  "workspace_files_source": "docs/atlas-app-manifests/"
+}

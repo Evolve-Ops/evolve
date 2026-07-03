@@ -1,0 +1,43 @@
+id: auth_drift_filler
+schema_version: 1
+type: guardian
+dimension: safety
+bucket: operate
+# Surface routing: drift. Restores drifted permission-config fields to baseline. Hygiene the
+#   operator confirms; not a fire.
+# Spec: docs/spec-recommendations-rework-2026-06-02.md §"Generator routing".
+surface: drift
+purpose: >
+  Consume ``perm_config_drift`` Signals from permission_monitor and surface
+  UpdatePermissionConfig Proposals that restore each drifted permission-config
+  field to its baseline value. Closes another resolver-pattern gap (companion
+  to ``cron_caps_filler``): when the operator's bot has drifted from its
+  permission baseline, the proposal queue has a one-click restore-to-baseline
+  ready for evo to apply via action.proposal.apply.
+  The applier is UpdatePermissionConfig, which routes through
+  permissions.writer.write_openclaw_fields (the canonical /tmp + sudo writer)
+  and enforces a permission-config field whitelist. One proposal per drifted
+  field — when a bot has three drifted fields, three proposals queue (each
+  individually applyable so the operator can selectively accept).
+cadence: daily
+resolves_when_silent: true
+invariants:
+  - id: action_kind_allowed
+    description: >
+      The filler only emits typed UpdatePermissionConfig proposals that
+      restore baseline values on the bot's openclaw.json. No
+      Investigation (we know the field + the expected value), no
+      UpsertCronJob, no broader auth resets, no generic ConfigPatch
+      (which would bypass the permission-config field whitelist and the
+      canonical /tmp + sudo writer).
+    check_kind: action_kind_allowed
+    params:
+      allowlist: [UpdatePermissionConfig]
+  - id: touches_forbidden
+    description: >
+      Filler only touches the auth corner of permission config — by design
+      it doesn't reach cron, plugins, or channel config (those have their
+      own filler / responder generators).
+    check_kind: touches_forbidden
+    params:
+      forbidden: [plugins, channel_config, gateway_core, cron_config]

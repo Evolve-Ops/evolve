@@ -1,0 +1,5 @@
+# ci-quarantine-baseline — frozen `wc -l` ceiling for ci-quarantine.txt
+# (roadmap 6.5). The ratchet (tools/quarantine-ratchet) blocks any growth
+# past this number, so it may only ratchet DOWN. MONTHLY TARGET: net >=10
+# lines removed per calendar month; re-baseline on each reduction PR.
+400

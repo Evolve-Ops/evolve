@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Apps Page · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">applications</span><span class="chip">forge</span><span class="chip">app-install</span><span class="chip">app-audit</span><span class="chip">app-gallery</span><span class="chip">app-reliability</span></div><div class="reviewed">Last reviewed 2026-06-06</div></div><h1 id="help-apps-page">Apps Page</h1>
+<p>The Apps page (in the <strong>Improve</strong> bucket) is where you manage installable applications and the forge jobs that build them. It has four tabs: <strong>Installed</strong>, <strong>Gallery</strong>, <strong>Forge Jobs</strong>, and <strong>Reliability</strong>.</p>
+<p><strong>Coherence + Reconciliation surface.</strong> Each installed app's card now carries small <strong>Coherence</strong> and <strong>Drift</strong> chips along its top edge — the operator-facing surface for the coherence + reconciliation framework shipped 2026-06 (<a href="../spec-app-coherence-and-reconciliation-2026-06-05.md">spec</a>). The full breakdown is in the <a href="#coherence--drift-per-app-in-the-manifest-modal">manifest modal</a> section below.</p>
+<p><strong>Ask evo to install or audit.</strong> Chat shortcuts that work from this page:</p>
+<ul>
+<li><em>"install morning-brief on team-bot-a"</em> — direct gallery install via
+  <code>action.app.install</code>. Forge runs the install asynchronously; evo polls
+  the job status for you.</li>
+<li><em>"audit team-bot-a's morning-brief app"</em> / <em>"audit all apps on team-bot-a"</em> — kicks the
+  Tier-3 semantic audit; regressed findings surface as new firing signals.</li>
+<li><em>"check the status of job j-abc12345"</em> — <code>pod_state.forge_job</code> returns
+  the job's current step + completed steps.</li>
+</ul>
+<hr>
+<h2 id="installed-tab-app-manifests">Installed tab — app manifests</h2>
+<p>The Installed tab manages <strong>app manifests</strong> — the structured contracts that define what each bot is supposed to do, which files implement it, how to verify it's working, and whether it's improving over time. Manifests are the source of truth for every app running on a bot.</p>
+<h3 id="what-an-app-manifest-is">What an App Manifest Is</h3>
+<p>A manifest is a JSON document that answers four questions about one named application:</p>
+<ol>
+<li><strong>Identity</strong> — What does this app exist to do, what's in scope, what's explicitly out of scope?</li>
+<li><strong>Success criteria</strong> — What observable outcomes prove it's working? What are the failure signals?</li>
+<li><strong>Constraints</strong> — What privacy rules, safety limits, and dependencies apply?</li>
+<li><strong>Satisfaction</strong> — How well is it actually working for you right now?</li>
+</ol>
+<p>These four sections are called the <strong>RSI core</strong> and feed directly into the Better Engine. The analysis engine reads them to understand what "working" means for each app, runs the app's test suite, and generates proposals when tests fail or satisfaction scores are low.</p>
+<p>Beyond the RSI core, manifests also carry:
+- A <strong>files registry</strong> listing every file the app owns or shares, with stable IDs
+- A <strong>crons list</strong> for scheduled tasks belonging to the app
+- <strong>Source provenance</strong> recording how and when the manifest was created
+- <strong>Timestamps</strong> for when it was created and last updated</p>
+<h3 id="how-manifests-are-created">How Manifests Are Created</h3>
+<p>Every manifest has a <code>source</code> field recording its origin. This matters because it affects trust level, quality expectations, and how the system handles it.</p>
+<table>
+<thead>
+<tr>
+<th>Source</th>
+<th>How it happened</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>discovered</code></td>
+<td>The workspace scanner found the app by analyzing cron jobs, workspace directories, scripts, and data files. This is the most common source for pre-existing bots.</td>
+</tr>
+<tr>
+<td><code>user_created</code></td>
+<td>You built it manually in the admin UI.</td>
+</tr>
+<tr>
+<td><code>bot_created</code></td>
+<td>The bot was instructed to build an app (via a direct instruction or conversation), and created its own manifest as part of that work.</td>
+</tr>
+<tr>
+<td><code>rsi_proposed</code></td>
+<td>The Better Engine's RSI loop proposed and auto-generated it based on usage patterns.</td>
+</tr>
+<tr>
+<td><code>file_imported</code></td>
+<td>You uploaded a manifest JSON directly (import workflow).</td>
+</tr>
+<tr>
+<td><code>gallery_installed</code></td>
+<td>Installed from the App Gallery via a forge run. This source also sets a stable <code>pkg_id</code> linking the manifest to its gallery blueprint.</td>
+</tr>
+</tbody>
+</table>
+<p>The <code>source_detail</code> field carries additional context — for discovered manifests it's the scan timestamp, for forge-built manifests it's the forge job ID.</p>
+<p>All manifests also record <code>created_at</code> (when the manifest was first created) and <code>updated_at</code> (when it last changed). These are ISO 8601 UTC timestamps and are always populated.</p>
+<h3 id="component-file-provenance">Component File Provenance</h3>
+<p>Every file that belongs to an app — scripts, data files, markdown logs, JSON stores — carries an embedded <strong>provenance marker</strong> that links it back to its manifest. This creates a bidirectional reference:</p>
+<ul>
+<li><strong>Manifest → files</strong>: the manifest's <code>files</code> list records every component file with its path, stable ID, layer, and ownership</li>
+<li><strong>File → manifest</strong>: each file has an embedded marker in its first lines pointing back to the owning app(s)</li>
+</ul>
+<h4 id="what-markers-look-like">What markers look like</h4>
+<p>The marker format varies by file type but is always in the first few lines:</p>
+<pre><code class="language-python"># evolve: pkg=p-a3f91c8b@2026.04.15-1.3 file=f-d4e8f901@2026.04.15.1
+</code></pre>
+<pre><code class="language-markdown">&lt;!-- evolve: pkg=p-a3f91c8b@2026.04.15-1.3 file=f-d4e8f901@2026.04.15.1 --&gt;
+</code></pre>
+<pre><code class="language-json">{&quot;_evolve&quot;: {&quot;pkg&quot;: &quot;p-a3f91c8b@2026.04.15-1.3&quot;, &quot;file&quot;: &quot;f-d4e8f901@2026.04.15.1&quot;}, ...}
+</code></pre>
+<p><code>pkg</code> is the app's stable package ID (<code>p-</code> prefix). <code>file</code> is that specific file's stable ID (<code>f-</code> prefix). Both carry version info.</p>
+<h4 id="files-shared-across-apps">Files shared across apps</h4>
+<p>A file can belong to more than one app. When that happens, all owning app IDs appear in the marker, comma-separated:</p>
+<pre><code class="language-python"># evolve: pkg=p-a3f91c8b@2026.04.15-1.3,p-b2e04d1a@2026.04.10-1.1 file=f-d4e8f901@2026.04.15.1
+</code></pre>
+<p>The file entry in each manifest records <code>owned_by</code> (the primary app that created it) and <code>shared_with</code> (other apps that use it). The global file index at <code>/Users/Shared/evolve/file_index.json</code> maps every file ID to its current location, bot, ownership, and lifecycle state.</p>
+<h3 id="file-layers">File Layers</h3>
+<p>Every file in a manifest's registry has a <code>layer</code> that describes its role. Layer determines removal behavior when an app is deleted.</p>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>What it is</th>
+<th>Safe to remove on app deletion?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>script</code></td>
+<td>Executable Python or shell logic</td>
+<td>Yes — pure logic, no user value without the app</td>
+</tr>
+<tr>
+<td><code>skill</code></td>
+<td>Routable procedure invoked by the bot</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>policy</code></td>
+<td>Operator-tunable behavioral constraints</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>orchestrator</code></td>
+<td>Thin coordinator/dispatcher</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>test</code></td>
+<td>Test files</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td><code>reference</code></td>
+<td>Documentation files</td>
+<td>Ask — may be user notes, not just app docs</td>
+</tr>
+<tr>
+<td><code>data</code></td>
+<td>Structured data stores (JSON, etc.)</td>
+<td><strong>No</strong> — may contain records the user still needs</td>
+</tr>
+<tr>
+<td><code>state</code></td>
+<td>Living state maintained by the bot (markdown logs, task lists, etc.)</td>
+<td><strong>No</strong> — user data outlives the app</td>
+</tr>
+</tbody>
+</table>
+<p>When you remove an app, Evolve removes its logic files but <strong>never auto-deletes <code>data</code> or <code>state</code> layer files</strong>. Those are surfaced to you as unowned files for you to decide what to do with.</p>
+<h3 id="file-lifecycle-states">File Lifecycle States</h3>
+<p>Every registered file has a lifecycle state that reflects its current relationship to the app system:</p>
+<table>
+<thead>
+<tr>
+<th>State</th>
+<th>What it means</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>owned</code></td>
+<td>Marker present, owning app is active</td>
+</tr>
+<tr>
+<td><code>shared</code></td>
+<td>Marker present, owned by one active app and used by at least one other</td>
+</tr>
+<tr>
+<td><code>orphaned</code></td>
+<td>Marker present but one or more of the app IDs in the marker no longer have a live manifest</td>
+</tr>
+<tr>
+<td><code>unowned</code></td>
+<td>No marker — file predates the provenance system, was never claimed, or was a <code>data</code>/<code>state</code> file whose app was removed but whose contents were preserved</td>
+</tr>
+</tbody>
+</table>
+<p>Lifecycle states are visible in the file index and surfaced in the admin UI's orphan scan results.</p>
+<h3 id="how-discovery-works">How Discovery Works</h3>
+<p>When you click <strong>↻ Re-scan</strong> on the Installed tab, Evolve runs a 5-phase pipeline:</p>
+<p><strong>Phase 1 — Inventory (~5s)</strong>
+Reads the bot's workspace: cron jobs with script content, named directories, recurring memory/log files, JSON data stores, Python and shell scripts, markdown files, and identity files (SOUL.md, AGENTS.md).</p>
+<p><strong>Phase 2 — LLM discovery (~35s)</strong>
+An LLM reads the inventory and clusters workspace signals into named applications. Cron jobs are the strongest signal — if a user configured a cron, it almost certainly serves an app. Named directories and recurring data files are also strong. Infrastructure scripts (gateway health, backup, git commits) are filtered out.</p>
+<p><strong>Phase 3 — Merge (~1s)</strong>
+Deduplicates LLM results by evidence overlap and name similarity. Manifests that clearly describe the same app are merged.</p>
+<p><strong>Phase 4 — Manifest generation (~20s, parallel)</strong>
+For each newly discovered app, generates a full 4-section RSI manifest using the file content as context. Falls back to a minimal stub if the LLM call fails. Already-existing manifests are not overwritten.</p>
+<p><strong>Phase 5 — File stamping</strong>
+For each newly generated manifest:
+1. Assigns a stable <code>pkg_id</code> if the manifest doesn't have one
+2. Resolves the evidence files to real on-disk paths
+3. Assigns a <code>file_id</code> to each found file and infers its layer from the file extension
+4. Embeds a provenance marker in each file (merge-aware — existing markers from other apps are preserved)
+5. Re-saves the manifest with the complete v6 files registry</p>
+<p>After scanning, the global file index is rebuilt to reflect all new ownership records.</p>
+<p><strong>Gallery apps</strong> go through a different path (forge run #0) but end up with the same structure: a manifest with full RSI core, a files registry with <code>file_id</code> entries per file, and provenance markers in every generated file.</p>
+<h3 id="the-application-grid">The Application Grid</h3>
+<p>Shows all manifests for the selected bot, filterable by:
+- <strong>Status</strong> — Active, Draft, Paused, Dormant, Archived (use <strong>Show archived</strong> to include Archived in any view)
+- <strong>Health</strong> — Passing (all tests green), Failing (1+ tests red), No tests (untested)</p>
+<p>Each card shows:
+- App name and stable ID (e.g., <code>health-tracking</code>, <code>slack-comms</code>)
+- Source badge — where this manifest came from (<code>discovered</code>, <code>gallery</code>, etc.)
+- Test health summary (X/Y tests passing)
+- Satisfaction score (1–5 stars, set by you)
+- Last scan / created / last reviewed dates</p>
+<p>Click a card to expand it and see identity, success criteria, constraints, tests, files registry, and improvement history.</p>
+<h3 id="app-removal-and-data-preservation">App Removal and Data Preservation</h3>
+<p>Removing an app from the Installed tab triggers a careful teardown sequence:</p>
+<ol>
+<li>The manifest is deleted</li>
+<li>Each file in the manifest's registry is evaluated by layer:
+   - <code>script</code>, <code>skill</code>, <code>policy</code>, <code>orchestrator</code>, <code>test</code> — offered for deletion
+   - <code>reference</code> — flagged for your decision
+   - <code>data</code>, <code>state</code> — <strong>preserved unconditionally</strong>, their markers are stripped, they become <code>unowned</code></li>
+<li>For files shared with other apps: the removed app's <code>pkg_id</code> is removed from the marker, but the file stays and retains its other owners</li>
+<li>The global file index is rebuilt to reflect the new lifecycle states</li>
+<li>Any files now in <code>unowned</code> state are surfaced in the UI for you to assign, archive, or leave</li>
+</ol>
+<p><strong>Example</strong>: you install a medication reminder app that logs to <code>memory/medications.md</code>. Later you remove the app because you don't want the reminders. The reminder script is offered for deletion. <code>medications.md</code> is <code>state</code> layer — it's preserved as an unowned file. A future app can claim it.</p>
+<h3 id="coherence-drift-per-app-in-the-manifest-modal">Coherence + Drift (per-app, in the manifest modal)</h3>
+<p>Every app card on the Installed tab carries two chips along its top edge:</p>
+<ul>
+<li><strong>Coherence chip</strong> — does the manifest's claims hang together internally? (Does the description claim a recurring behavior with no cron? Does a declared output have no code path producing it?)</li>
+<li><strong>Drift chip</strong> — does what's on disk match what the manifest says it owns? (Has the bot edited a file? Added one? Removed one?)</li>
+</ul>
+<p>Click either chip to open the manifest modal scrolled to the <strong>Coherence + Drift</strong> section. Empty when there's nothing to report; populated when the audit framework's coherence passes (<a href="https://github.com/evolve-ops/evolve/pull/2270">PR 2270</a> Pass C1 / <a href="https://github.com/evolve-ops/evolve/pull/2271">PR 2271</a> Pass C2+C3) or the reconciliation pass find something.</p>
+<p>The section is the operator-facing surface for <a href="../spec-app-coherence-and-reconciliation-2026-06-05.md">spec-app-coherence-and-reconciliation-2026-06-05.md</a>. Three concepts cleanly separated:</p>
+<table>
+<thead>
+<tr>
+<th>Concern</th>
+<th>Question</th>
+<th>Where it surfaces</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Reconciliation</strong></td>
+<td>Does the manifest match what's on disk?</td>
+<td>Drift chip + Reconciliation drift block</td>
+</tr>
+<tr>
+<td><strong>Provenance</strong></td>
+<td>Was this field operator-authored, or did the scanner observe it?</td>
+<td>Per-field affordance (the "authored" pill on drifted rows); modulates whether a drift becomes operator-facing</td>
+</tr>
+<tr>
+<td><strong>Coherence</strong></td>
+<td>Does the manifest describe something that could work?</td>
+<td>Coherence chip + Coherence findings block</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Pass A</strong> walks the manifest graph in pure Python (description claims a behavior → does a mechanism produce it?). <strong>Pass C1</strong> is static analysis of the bot-authored code shape. <strong>Pass C2 + C3</strong> are LLM-tiered checks that run only when A and C1 surface ambiguity — cheap-handles-routine, expensive-handles-complex.</p>
+<h4 id="actions-on-findings">Actions on findings</h4>
+<p>The Coherence + Drift section header has a row of action buttons:</p>
+<ul>
+<li><strong>Approve drift</strong> — accept the current observational state. Reconciliation drift clears; the manifest's observational fields catch up to disk.</li>
+<li><strong>Promote to authored</strong> — flip observational provenance entries to <code>bot_authored</code>. The fields stop being "snapshots" and start being "contract." Next time disk drifts away from these fields, the operator gets a normal drift proposal rather than a silent re-sync.</li>
+<li><strong>Flag…</strong> — escalate a concern to the operator. Useful when you're not sure what to do and want to come back to it.</li>
+<li><strong>Repair (coming soon)</strong> — will route a repair session to the bot's <code>audit_inbox/</code> once the audit_runner <code>--repair</code> mode lands. The bot fixes the discrepancy itself; you approve the result.</li>
+<li><strong>Override pre-deploy gate…</strong> <em>(only when status is <code>incoherent</code>)</em> — bypass the pre-deploy coherence gate (<a href="https://github.com/evolve-ops/evolve/pull/2263">PR 2263</a> / <a href="https://github.com/evolve-ops/evolve/pull/2325">PR 2325</a>) for the current finding set. Use sparingly; the gate exists to keep visibly-broken manifests off the bot.</li>
+</ul>
+<p>Per-finding affordances (<strong>Mute</strong> / <strong>Snooze 7d</strong>) live next to each row. Mute is durable until you re-enable; Snooze is a 7-day suppression for findings you intend to fix.</p>
+<p><strong>Bot-side coherence repair.</strong> When you approve a drift or accept a finding, the bot itself can be tasked to land the change (<a href="https://github.com/evolve-ops/evolve/pull/2336">PR 2336</a>) — the admin daemon dispatches a repair turn into the bot's session and you can watch the result in Forge Jobs. The same grammar is reachable via chat: <em>"evo app-changes"</em> lists pending coherence findings across all apps; <em>"evo app-coherence team-bot-a morning-brief"</em> drills into one app.</p>
+<h3 id="orphan-detection">Orphan Detection</h3>
+<p>The <strong>Orphan Scan</strong> (available from the Installed tab) runs two passes against a bot's workspace:</p>
+<p><strong>Forward scan</strong> — checks that every file registered in a manifest actually exists on disk. Files listed in the manifest but missing from disk are <code>missing_from_disk</code> issues.</p>
+<p><strong>Reverse scan</strong> — walks all workspace files with embedded markers and checks whether every <code>pkg_id</code> in those markers corresponds to a live manifest. Files whose markers point at removed apps show up as <code>orphaned</code>.</p>
+<p>Orphan scan results show each affected file with:
+- Its path and file ID
+- Which pkg_ids are stale (removed app) vs. which are still live
+- Its layer (to indicate whether it's safe to remove)
+- A <code>safe_to_remove</code> flag — True only for non-data, non-state layer files with no remaining live owners</p>
+<p>You decide what to do with each orphaned file. Evolve doesn't auto-delete.</p>
+<h3 id="common-questions-installed-tab">Common Questions — Installed tab</h3>
+<p><strong>How do I create a manifest for a new app?</strong>
+Option 1 (recommended): Click <strong>↻ Re-scan</strong> — the scanner detects apps from workspace evidence and generates manifests automatically, including assigning IDs and embedding markers in all found files.</p>
+<p>Option 2: Build it in the Gallery tab using Forge — install a gallery blueprint and the forge run creates everything from scratch.</p>
+<p>Option 3: Click <strong>+ New App</strong> to open the inline create wizard — collects name, description, a test trigger phrase, and the expected response. The wizard scaffolds a minimal manifest and lands a Forge job to flesh it out.</p>
+<p>Option 4: Create the JSON manually and place it at <code>{shared_dir}/applications/{bot_id}/{app_id}.json</code>. If you do this, run a re-scan afterward so Phase 5 can assign file IDs and embed markers.</p>
+<p><strong>What does the <code>pkg_id</code> on a manifest mean?</strong>
+It's the app's stable package identity — a random 8-character hex ID with a <code>p-</code> prefix (e.g. <code>p-a3f91c8b</code>). It never changes, even if the app is renamed or restructured. For gallery apps, the <code>pkg_id</code> is assigned at gallery creation and stays the same across all bots that install it. For discovered apps, it's assigned at scan time. The <code>pkg_id</code> is what gets embedded in every component file's marker.</p>
+<p><strong>What's a <code>file_id</code> and do I need to worry about it?</strong>
+A <code>file_id</code> is a stable <code>f-</code> prefixed ID assigned to each file the first time it's registered. It's embedded in the file's provenance marker and used by the global file index. You don't need to manage these — they're assigned and maintained automatically. If you see them in manifest JSON, that's normal.</p>
+<p><strong>A file I edited now shows a version mismatch in the orphan scan — is that a problem?</strong>
+No. Version drift (where the file's embedded version doesn't match the manifest's recorded version) is a warning, not an error. It means the file was edited outside of a forge run. The Better Engine will detect this and may propose updating the manifest to reflect the current state. The app still works.</p>
+<p><strong>Can a file belong to two apps?</strong>
+Yes. When app B needs a file that app A already owns, B's <code>pkg_id</code> is added to the file's marker alongside A's. The manifest has a <code>shared_with</code> list for these. The file index tracks both. This is how shared utilities and shared data stores work.</p>
+<p><strong>An app shows "Failing" — what does that mean?</strong>
+One or more of its tests failed on the last test run. Click the app card to see which tests failed and why. Common causes:
+- API token no longer valid
+- File the test checks no longer exists (workspace restructure)
+- Bot behavior drifted from what the behavioral test expects</p>
+<p>The analysis engine will generate a proposal about persistent failures (2+ consecutive for <code>feature</code> priority, 1 for <code>core</code>).</p>
+<p><strong>How do I update a manifest?</strong>
+Edit it in the admin UI (click the card, then Edit) or directly in the JSON at <code>{shared_dir}/applications/{bot_id}/{app_id}.json</code>. Changes made outside the UI won't re-embed markers in files — run a re-scan afterward to keep everything in sync.</p>
+<p><strong>What's the satisfaction score?</strong>
+Your 1–5 rating of how well this app is working for you. The analysis engine uses it: a score of 3 or below, combined with session evidence of corrections or failures in this domain, triggers a proposal. Rate honestly — a 4 with no issues is better than a 3 with vague notes.</p>
+<p><strong>How often should I review manifests?</strong>
+- <code>core</code> apps: every 3 months
+- <code>feature</code> apps: every 6 months
+- <code>optional</code> apps: annually or when the underlying feature changes</p>
+<p>Manifests go stale as bots evolve. Stale tests that always pass (or always fail) are noise that degrades proposal quality.</p>
+<p><strong>The re-scan found an app I don't recognize — what is it?</strong>
+The scanner may infer an app from a recurring data file or cron job you forgot about. Click the card to see its evidence files — those are the workspace files the scanner used to identify it. If it's not a real app (e.g. it inferred a "system administration" app from infrastructure scripts), you can delete the manifest. The files it references won't be touched.</p>
+<hr>
+<h2 id="gallery-tab-installable-blueprints">Gallery tab — installable blueprints</h2>
+<p>The Gallery tab is a library of packaged app blueprints — Morning Brief, Email Manager, Home Controller, Travel Assistant, EA Pack, and more. Installing a gallery app is Forge run #0: the bot builds everything in its own environment from a spec, not pre-packaged code.</p>
+<h3 id="how-gallery-apps-work">How Gallery Apps Work</h3>
+<p>Installing a gallery app is not "copy files to the bot." It's a <strong>forge run</strong> — the bot receives a detailed spec and builds the application from scratch in its own workspace. This means:</p>
+<ul>
+<li>Two bots installing the same app produce different implementations, each suited to their workspace and context</li>
+<li>The bot owns the code it generates — it can maintain, modify, and improve it</li>
+<li>Every subsequent improvement cycle is another forge run with richer usage data</li>
+<li>All artifacts carry embedded provenance markers linking them to the app (<code>pkg_id</code>) and the specific file identity (<code>file_id</code>) — see the Installed tab section above for how this works</li>
+</ul>
+<h3 id="app-grid">App Grid</h3>
+<p>Browse available apps. Each card shows:
+- App name and description
+- Category (productivity, communication, home, health, etc.)
+- Install status per bot (installed / not installed)
+- Skill count badge (e.g. <strong>4 skills</strong>) — apps with multiple routable applications show a count
+- Version / last updated</p>
+<p><strong>Search</strong> — filter by app name or description.</p>
+<p><strong>Status filter</strong> — show All, Installed only, or Not installed only.</p>
+<p><strong>↻ Refresh</strong> — reloads the gallery app list.</p>
+<h3 id="app-detail-view">App Detail View</h3>
+<p>Click an app card to open the detail panel. Tabs:</p>
+<p><strong>Description</strong> — objective, tags, author, version history.</p>
+<p><strong>Skills</strong> — each skill the app contributes, with its name and routing description (the signal the bot uses to decide which skill to invoke for a given message). Apps with multiple skills show the full roster here.</p>
+<p><strong>Files</strong> — all files the forge will create, color-coded by layer:
+- <code>skill</code> (blue) — routable procedure
+- <code>policy</code> (orange) — operator-tunable config
+- <code>state</code> (yellow) — live data the bot maintains; <strong>preserved if the app is later removed</strong>
+- <code>data</code> (green) — structured data stores; <strong>preserved if the app is later removed</strong>
+- <code>orchestrator</code> (purple) — thin dispatcher
+- <code>script</code> (gray) — code files</p>
+<p>Layer matters for removal: logic files (<code>script</code>, <code>skill</code>, <code>policy</code>, <code>orchestrator</code>) can be safely deleted when an app is removed. Data and state files are always preserved — they may contain user records that outlive the app.</p>
+<p><strong>Crons</strong> — scheduled turns, showing session target (<code>main</code> or <code>isolated</code>) and delivery disposition (silent or announce to channel).</p>
+<h3 id="installing-an-app">Installing an App</h3>
+<ol>
+<li>Click an app card to open the detail view</li>
+<li>Review the Skills, Files, and Crons tabs to understand what the app creates</li>
+<li>Click <strong>Install</strong></li>
+<li>The Install modal appears — select which bot(s) to install on</li>
+<li>If the app has placeholder values (e.g. a Telegram chat ID for delivery), a form appears to collect them before install</li>
+<li>Click <strong>Install</strong> — this creates a Forge run</li>
+</ol>
+<p>Before the forge builds anything, it runs a <strong>skill discovery scan</strong>: it queries the bot's file index for existing skills that overlap with what the app needs. If a suitable skill already exists, the forge adopts it as a shared dependency rather than building a duplicate. You'll see this step in the Forge Jobs tab.</p>
+<p>The Forge run appears in the <strong>Forge Jobs tab</strong>. Installation takes minutes to hours depending on the app's complexity. You can track progress there.</p>
+<p><strong>Note:</strong> Installation requires:
+- The target bot's gateway to be running
+- Relevant API keys configured (the app description lists what's needed)
+- Your approval at the forge review gate (you'll be prompted in Forge Jobs when the bot needs a decision)</p>
+<h3 id="importing-an-app">Importing an App</h3>
+<p>Click <strong>+ Import App</strong> to import an app from a JSON package. This allows sharing custom apps or importing from other Evolve installations.</p>
+<p>Paste the app package JSON into the textarea and click <strong>Import</strong>. The app appears in the gallery and can be installed on any bot.</p>
+<h3 id="common-questions-gallery-tab">Common Questions — Gallery tab</h3>
+<p><strong>What apps are available?</strong>
+The gallery includes:
+- <strong>EA Pack</strong> — core personal assistant applications (calendar, email, tasks, health tracking)
+- <strong>Morning Brief</strong> — daily summary delivered via your messaging channel
+- <strong>Email Manager</strong> — structured email triage and response drafting
+- <strong>Home Controller</strong> — Home Assistant integration for smart home control
+- <strong>Travel Assistant</strong> — itinerary building, booking research, trip planning
+- And more as the gallery grows</p>
+<p><strong>How long does installation take?</strong>
+Varies by app complexity. A simple single-application app might complete in 5–10 minutes. A full EA Pack with multiple integrated applications can take 30–60 minutes. Monitor progress in the Forge Jobs tab.</p>
+<p><strong>The install button is greyed out — why?</strong>
+The Install button may be disabled if:
+- The bot's gateway isn't running (check Maintenance → Alerts)
+- The bot doesn't have required API keys (check Plugins)
+- A forge run for this app is already in progress on this bot (check Forge Jobs)</p>
+<p><strong>Can I install the same app on multiple bots?</strong>
+Yes — in the Install modal, check all the bots you want to install on. Each gets an independent forge run, producing a separate implementation suited to each bot's workspace.</p>
+<p><strong>What happens to the app if I upgrade Evolve?</strong>
+Apps installed by forge runs are part of the bot's workspace — they're independent of Evolve's version. Evolve upgrades don't touch installed app code. The forge system can propose improvements to existing apps through the normal Better Engine cycle.</p>
+<p><strong>Can I modify an app after installation?</strong>
+The bot owns its installed app code. You or the bot can modify it directly in the workspace. However, Evolve's forge system may later propose improvements based on usage data — those go through the normal proposal/approval flow and will update the relevant files.</p>
+<hr>
+<h2 id="forge-jobs-tab">Forge Jobs tab</h2>
+<p>The Forge Jobs tab tracks all active and recent forge runs — app installations from the gallery, improvement cycles for existing apps, and proposal validation runs. Each row is a forge job showing what's being built, which bot is building it, and what step it's on.</p>
+<h3 id="what-is-a-forge-run">What is a Forge Run?</h3>
+<p>A forge run is a structured, multi-step process where a bot builds or improves an app in its own workspace. There are three types:</p>
+<ul>
+<li><strong>Forge run #0 (Installation)</strong> — triggered by installing from the Gallery tab. The bot receives a detailed spec and builds the app from scratch.</li>
+<li><strong>Improvement cycle</strong> — triggered by the Better Engine when a proposal is approved. The bot refines an existing app based on usage data and proposal context.</li>
+<li><strong>Validation run</strong> — triggered by the proposal pipeline. The bot validates a proposed change against its test suite in an isolated environment.</li>
+</ul>
+<h3 id="the-jobs-table">The Jobs Table</h3>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>What it shows</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>App</strong></td>
+<td>The app being built or improved</td>
+</tr>
+<tr>
+<td><strong>Bot</strong></td>
+<td>Which bot is running this forge job</td>
+</tr>
+<tr>
+<td><strong>Type</strong></td>
+<td><code>install</code> / <code>improvement</code> / <code>validation</code></td>
+</tr>
+<tr>
+<td><strong>Progress</strong></td>
+<td>Where in the forge process this job is right now</td>
+</tr>
+<tr>
+<td><strong>Status</strong></td>
+<td><code>running</code>, <code>awaiting_approval</code>, <code>completed</code>, <code>failed</code>, <code>rejected</code></td>
+</tr>
+<tr>
+<td><strong>Started</strong></td>
+<td>When the forge run began</td>
+</tr>
+<tr>
+<td><strong>(actions)</strong></td>
+<td>Approve / reject buttons when awaiting your input</td>
+</tr>
+</tbody>
+</table>
+<p><strong>↻ Refresh</strong> — reloads the jobs list.</p>
+<h3 id="forge-job-lifecycle">Forge Job Lifecycle</h3>
+<pre><code>Created → Running (bot is building)
+       → Awaiting Approval (bot needs your input at a review gate)
+       → Running (resumed after approval)
+       → Completed (success)
+       → Failed (error; see logs)
+       → Rejected (you rejected at review gate)
+</code></pre>
+<p>Most forge runs have one or more <strong>review gates</strong> — points where the bot has produced something (an implementation plan, initial code, test results) and needs your confirmation before proceeding. These appear as <code>awaiting_approval</code> with an <strong>Approve or Reject Job</strong> panel.</p>
+<h3 id="the-approval-panel">The Approval Panel</h3>
+<p>When a job is awaiting your approval, clicking it shows the full context:</p>
+<ul>
+<li><strong>Metrics bar</strong> — what was built, file count, line count, test pass/fail summary</li>
+<li><strong>Test output</strong> (collapsible) — the full test runner output. The summary line indicates whether tests passed.</li>
+<li><strong>Generated implementation</strong> (collapsible) — the actual code/manifest the bot produced for this step.</li>
+<li><strong>Interface contract</strong> (collapsible) — the contract/spec the bot is committing to honor (skills it provides, files it owns, etc.).</li>
+<li><strong>Notes (optional)</strong> — any feedback you want the bot to incorporate in the next step</li>
+</ul>
+<p><strong>✓ Approve</strong> — the forge run continues to the next step.</p>
+<p><strong>✗ Reject</strong> — the forge run stops. A <strong>Rejection reason</strong> textarea appears; provide a reason so the system can learn what didn't work. The rejection is logged and feeds back into the Better Engine.</p>
+<h3 id="common-questions-forge-jobs-tab">Common Questions — Forge Jobs tab</h3>
+<p><strong>A forge job has been "running" for a long time — is it stuck?</strong>
+Forge jobs can legitimately take a long time (30–60 minutes for complex installs). However, if a job has been in <code>running</code> state for more than 2 hours without any progress, check Gateway Logs in Maintenance for the bot to see if there's an error. If the bot's session appears stuck, you may need to restart the gateway.</p>
+<p><strong>What happens if I reject a forge job?</strong>
+The job stops. Your rejection reason is logged. If this was an improvement proposal, the proposal is marked as rejected and this outcome feeds into the Better Engine (the coach that generated the proposal may be recalibrated).</p>
+<p><strong>How many forge jobs can run simultaneously?</strong>
+One per bot at a time. If two apps are being installed on the same bot, the second will queue until the first completes.</p>
+<p><strong>A forge job shows "Failed" — what do I do?</strong>
+Click the job row to see the error. Common causes:
+- Bot ran out of context during a complex build step (try again; the bot may do better with a fresh context)
+- Required API key missing or expired (check Plugins)
+- File write permission error (check Maintenance for permission issues)</p>
+<p>Failed jobs can usually be retried by installing the app again from the gallery, or re-approving the proposal that triggered the job.</p>
+<p><strong>What does "validation run" mean?</strong>
+Before applying an approved improvement proposal to a production bot, Evolve validates it on the Forge bot (an isolated OC instance). The forge validation run deploys the change there, runs the app's test suite, and only proceeds to production if tests pass. You may be asked to approve the production application step.</p>
+<p><strong>Can I see what the bot actually built?</strong>
+The forge run logs (in Gateway Logs for the target bot during the job) show the full session. After completion, the installed files appear in the bot's workspace at the paths specified in the app spec. Every file the forge creates has an embedded provenance marker in its first lines linking it back to the app's <code>pkg_id</code> and a stable <code>file_id</code>. These markers are how Evolve tracks ownership, detects orphaned files, and safely handles app removal. See the Installed tab section above for the full provenance model.</p>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/apps.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>

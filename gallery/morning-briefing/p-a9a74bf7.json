@@ -1,0 +1,305 @@
+{
+  "pkg_id": "p-a9a74bf7",
+  "pkg_version": "2026.06.12-2.3",
+  "gallery_version": "2026.06.12-2.3",
+  "schema_version": 5,
+  "manifest_type": "evolve_application",
+  "display_name": "Morning Briefing",
+  "author": "evolve",
+  "description": "Composes a single daily morning message from the data files produced by Calendar Sync and (optionally) Email Integration, then delivers it via the bot's primary channel at a configured time (default 7 AM local). A day-1 bot with nothing connected still gets a useful first briefing — what the bot is set up to do and what it's waiting on — instead of silence.",
+  "objective": "Compose data the bot already has — today's calendar and the email digest — into one tight morning message, so the operator starts the day informed without opening five apps. Does not call Google APIs directly; reads memory/calendar-today.json and memory/email-digest.json from the prerequisite data-foundation apps.",
+  "id": "app_morning_briefing",
+  "name": "Morning Briefing",
+  "status": "active",
+  "dependencies": [],
+  "app_dependencies": [
+    {
+      "pkg_id": "p-fe9acef3",
+      "display_name": "Calendar Sync",
+      "required": true,
+      "reason": "Morning Briefing reads memory/calendar-today.json (and optionally memory/calendar-upcoming.json for tomorrow preview) produced by Calendar Sync. Install Calendar Sync first."
+    },
+    {
+      "pkg_id": "p-341576fa",
+      "display_name": "Email Integration",
+      "required": false,
+      "reason": "If installed, Morning Briefing reads memory/email-digest.json to surface the top 2-5 unread emails. If absent, the briefing degrades to schedule-only and still delivers."
+    }
+  ],
+  "requirements": {
+    "integrations": [],
+    "secrets": [],
+    "system": [],
+    "python_packages": []
+  },
+  "interface_contract": {
+    "populated_by_forge": false,
+    "extracted_at": null,
+    "data_files": [
+      {
+        "path": "memory/briefing-runs/YYYY-MM-DD.json",
+        "description": "Per-day briefing run metadata — delivery time, counts of events and emails surfaced, which data sources were available, which composer (llm | template) produced the message, and the rendered message body. One file per day; idempotency is enforced by checking for today's file before sending.",
+        "schema": {
+          "storage_format": "JSON object",
+          "fields": {
+            "date": "ISO date YYYY-MM-DD (also the filename stem)",
+            "mode": "string — 'standard' for a data-backed briefing, 'no_data' for the day-one getting-started briefing (no data source was readable)",
+            "sent_at": "ISO 8601 datetime with timezone offset — when the channel accepted the send",
+            "channel_delivery": "string — short label of the channel the send was routed to (e.g. 'telegram', 'slack'); the channel resolve_route picked",
+            "events_count": "integer — number of calendar events surfaced",
+            "events_first": "string — title of the first event (for the status command preview)",
+            "emails_unread": "integer — total unread emails in the digest at briefing time",
+            "emails_surfaced": "integer — number of emails included in the message body (capped per detail mode)",
+            "sources_available": "object — {calendar: bool, email: bool} indicating which data files existed and parsed",
+            "composer": "string — 'llm' if the configured LLM produced the message, 'template' if the deterministic fallback was used, 'partial' if LLM started but failed mid-render and template completed it",
+            "detail": "string — concise | standard | detailed",
+            "message": "string — the exact message body delivered (kept for status command and audit)"
+          }
+        }
+      },
+      {
+        "path": "morning_briefing/config.json",
+        "description": "Per-bot configuration. Created on first run if absent; the operator edits it freely afterward.",
+        "schema": {
+          "storage_format": "JSON object",
+          "fields": {
+            "delivery_time": "HH:MM in 24-hour format (default '07:00')",
+            "time_zone": "IANA timezone string (default 'America/Los_Angeles')",
+            "user_name": "string — how the briefing greets the operator (default '')",
+            "mission": "string — one line describing the bot's job, surfaced by the day-one briefing ('My job here: …'); empty omits the line (default '')",
+            "detail": "concise | standard | detailed (default 'standard')",
+            "include_email": "bool — include the email section when Email Integration is installed (default true)",
+            "include_tomorrow_preview": "bool — include a one-line tomorrow preview when memory/calendar-upcoming.json exists (default true)",
+            "email_max_age_hours": "integer — only consider unread emails newer than this when scoring (default 12)",
+            "model": "string — LLM model id used by the composer (default 'claude-haiku-4-5'); empty string forces the template composer"
+          }
+        }
+      }
+    ],
+    "cli": [
+      {
+        "command": "python3 scripts/morning_briefing.py send",
+        "key_flags": [
+          "--detail concise|standard|detailed",
+          "--force (ignore today's idempotency record and re-send)"
+        ],
+        "output_signals": [
+          "BRIEFING_SENT:",
+          "BRIEFING_FAILED:",
+          "BRIEFING_SKIPPED:"
+        ]
+      },
+      {
+        "command": "python3 scripts/morning_briefing.py preview",
+        "key_flags": [
+          "--detail concise|standard|detailed"
+        ],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/morning_briefing.py status",
+        "key_flags": [],
+        "output_signals": []
+      }
+    ],
+    "key_paths": {
+      "cli": "scripts/morning_briefing.py",
+      "cron_trigger": "scripts/morning-briefing-cron.sh",
+      "config": "morning_briefing/config.json",
+      "runs_dir": "memory/briefing-runs/",
+      "launchd_plist": "/Library/LaunchDaemons/ai.evolve.{bot_id}.morning-briefing.plist"
+    },
+    "signal_prefixes": [
+      "BRIEFING_SENT:",
+      "BRIEFING_FAILED:",
+      "BRIEFING_SKIPPED:"
+    ],
+    "cron_schedule": "{delivery_time} daily (local timezone)"
+  },
+  "files": [],
+  "install_job": null,
+  "improvement_history": [],
+  "identity": {
+    "purpose": "Compose a single morning message from data the bot's other apps have already gathered. Morning Briefing is a thin composer-and-delivery layer over Calendar Sync (required) and Email Integration (optional). It does not authenticate with Google, does not call any third-party API on its own, and does not store email content — it reads the structured cache files those apps maintain and renders them into one tight message delivered via the bot's primary channel.",
+    "scope_includes": [
+      "Read memory/calendar-today.json (produced by Calendar Sync) for today's events",
+      "Read memory/calendar-upcoming.json (produced by Calendar Sync) for an optional one-line tomorrow preview",
+      "Read memory/email-digest.json (produced by Email Integration) and surface the top 2-5 unread items, when present",
+      "Compose the message via the bot's configured LLM (claude-haiku-4-5 by default — cheap, deterministic shape) using the bot's existing Anthropic credentials",
+      "Fall back to a deterministic template composer when the LLM is unavailable or the API call fails",
+      "Apply the operator's detail preference (concise | standard | detailed) to cap event and email counts",
+      "Deliver the message to the bot's primary user via `openclaw message send` (route from network.json primary_user.external_ids)",
+      "Write memory/briefing-runs/YYYY-MM-DD.json with run metadata + the exact message body",
+      "Enforce one-briefing-per-day idempotency by checking for today's run file before sending (overridable with --force)",
+      "Emit BRIEFING_SENT: / BRIEFING_FAILED: / BRIEFING_SKIPPED: signal lines for the delivery monitor and reliability tile",
+      "Degrade gracefully: missing calendar data → 'no schedule available' line; missing email digest → omit email section entirely; deliver whatever is available",
+      "No-data (day one) mode: when NO data source is readable, deliver a short getting-started briefing instead of skipping — what the bot is set up to do (config 'mission', when non-empty) and what it's waiting on ('connect a calendar and I'll put your day here'). The run file is still written only after successful delivery, with mode='no_data'"
+    ],
+    "scope_excludes": [
+      "Calling Google Calendar, Gmail, or any third-party API directly — all external data is mediated by the prerequisite apps",
+      "Authenticating with Google, refreshing OAuth tokens, or handling integration credentials",
+      "Sending, forwarding, deleting, labeling, or archiving emails or calendar events",
+      "Fetching weather data — explicitly out of scope for v1 (see Future Companions note in build_spec)",
+      "Fetching news, RSS, or any other content source — explicitly out of scope for v1",
+      "Cross-bot data sharing or per-user routing — the message goes to the bot's own primary channel only",
+      "Storing email or event body content beyond the rendered message in the run file (no full bodies, no raw API responses cached separately)",
+      "Suggesting or taking actions on behalf of the operator (no auto-replies, no calendar edits)"
+    ],
+    "bot_interaction_pattern": "The LaunchDaemon fires once daily at the configured time and runs morning_briefing.py send unattended — no human-in-the-loop. The bot's agent does not need new tools; the operator can ask the bot conversationally ('preview today's briefing', 'did the briefing run this morning?') and the bot invokes morning_briefing.py preview or status as a regular shell command. The agent never crafts or sends the briefing message itself.",
+    "user": "The bot operator. The briefing is delivered to the channel resolved from the user's recorded ids and the bot's enabled channels (Telegram, Slack, Signal, etc.). Morning Briefing resolves that channel itself — the highest-priority match (most personal first) between the user's recorded ids in network.json and the bot's enabled channels — and delivers via `openclaw message send`. It never reads the gateway port or token."
+  },
+  "success_criteria": {
+    "observable_outcomes": [
+      "Operator receives a single morning message on their configured channel within 2 minutes of {delivery_time} every day",
+      "Message correctly counts today's events and names the next one",
+      "When Email Integration is installed and include_email=true, message names the top 2-5 unread emails with sender + subject",
+      "memory/briefing-runs/YYYY-MM-DD.json exists by 30 minutes after {delivery_time} every day",
+      "BRIEFING_SENT: signal emitted on success; reliability tile shows green",
+      "If the LLM call fails, the template composer still ships a usable message (composer field in the run file flips to 'template' or 'partial')",
+      "If Email Integration is missing, the briefing delivers a calendar-only message with no error or empty section",
+      "A day-1 bot with zero integrations still receives a useful first briefing (mode='no_data' in the run file): what the bot is set up to do and what it's waiting on — never a skipped or empty morning"
+    ],
+    "failure_signals": [
+      "BRIEFING_FAILED: signal — delivery send failed or no run file written; operator has no morning message",
+      "Today's run file has mode='no_data' for more than a few days running — the briefing keeps reporting that nothing is connected; connect Calendar Sync / Email Integration, or disable the schedule if that's intentional (v2.0's BRIEFING_SKIPPED: no-data outcome is retired — no-data now delivers)",
+      "BRIEFING_SKIPPED: signal with reason 'already-sent' — daemon fired but today's run file already exists (acceptable; idempotency working)",
+      "No briefing-runs file for today by 9 AM local — daemon did not fire; check LaunchDaemon status",
+      "Operator receives multiple briefings in one day — idempotency check failed; investigate clock skew or duplicate plists",
+      "Message body identical day-over-day — composer is rendering stale data; check that Calendar Sync and Email Integration are running on their own cadences",
+      "Run file exists but message field is empty — the send succeeded but composer produced no body; treat as a failure and investigate the template fallback"
+    ],
+    "quality_bar": {
+      "minimum": "Operator gets a single message at the configured time that accurately states today's event count, names the next event, and (when Email Integration is present) reports the unread email count. Idempotent. Visible in BRIEFING_SENT: signals.",
+      "excellent": "Operator opens the message and has everything they need to plan their morning without opening Calendar or Gmail. Tight 3-line greeting + schedule + email-highlights block. Tomorrow preview present when configured. The composer reads like a person wrote it for them, not a templated list."
+    }
+  },
+  "build_spec": "# Morning Briefing — Build Specification\n\n## Overview\n\nMorning Briefing is a thin composer-and-delivery layer. It does NOT call Google APIs, does NOT authenticate with Gmail or Calendar, and does NOT manage tokens. All external data is read from JSON cache files produced by two prerequisite gallery apps:\n\n- **Calendar Sync (`p-fe9acef3`, required)** — produces `memory/calendar-today.json` and `memory/calendar-upcoming.json` every 15 minutes.\n- **Email Integration (`p-341576fa`, optional)** — produces `memory/email-digest.json` every 30 minutes.\n\nMorning Briefing is responsible for: (1) reading those cache files, (2) composing one tight message via an LLM call (with a deterministic template fallback), (3) delivering via `openclaw message send`, (4) recording per-day run metadata, (5) emitting verify-daemon signals.\n\nIf Email Integration is not installed, Morning Briefing degrades to schedule-only and still ships. If NO data source is readable at all (a freshly created bot with nothing connected yet, bot offline overnight, OAuth expired), Morning Briefing composes a short **getting-started briefing** instead — what the bot is set up to do and what it's waiting on (\"connect a calendar and I'll put your day here\") — and still delivers. A day-1 bot gets a useful first message, not silence; v2.0's `BRIEFING_SKIPPED: no-data` outcome is retired (see No-data mode below).\n\nThis app does not include weather or news. Those were dropped in the v2 rewrite because each implied another undeclared integration and stretched the contract beyond what Forge can reliably reproduce. They are listed as future companions at the end of this spec.\n\n---\n\n## File Layout\n\n```\nscripts/\n  morning_briefing.py        ← main CLI: send | preview | status\n  morning-briefing-cron.sh   ← cron trigger (calls morning_briefing.py send)\nmorning_briefing/\n  config.json                ← per-bot configuration (created on first run)\nmemory/\n  briefing-runs/\n    YYYY-MM-DD.json          ← one file per day with the rendered message + counts\n```\n\nAll paths are relative to the bot's workspace root (`/Users/{bot_id}/.openclaw/workspace/`). The script never reads or writes outside the workspace except (a) the bot's `openclaw.json` (read-only, to discover the Anthropic API key), (b) the pod's `network.json` (read-only, to resolve the delivery route), and (c) the launchd plist at `/Library/LaunchDaemons/` (installed once at deploy time).\n\n---\n\n## morning_briefing/config.json — per-bot configuration\n\nCreate on first run if absent, with these defaults:\n\n```json\n{\n  \"delivery_time\": \"{delivery_time}\",\n  \"time_zone\": \"{time_zone}\",\n  \"user_name\": \"{user_name}\",\n  \"mission\": \"{mission}\",\n  \"detail\": \"{detail}\",\n  \"include_email\": true,\n  \"include_tomorrow_preview\": true,\n  \"email_max_age_hours\": 12,\n  \"model\": \"claude-haiku-4-5\"\n}\n```\n\nThe operator edits this file freely. CLI flags on a `send` invocation override config values for that one run only.\n\nOrder of precedence: CLI flag > config.json > built-in default.\n\nAn empty string for `model` forces the template composer (useful for cost-sensitive bots or for testing the fallback).\n\n---\n\n## Reading the data files\n\nBoth files are produced by sibling apps. They may not exist on a fresh install. Treat any read failure as \"this data source is unavailable\" — never crash.\n\n```python\nimport json\nfrom pathlib import Path\n\nWORKSPACE = Path(f\"/Users/{bot_id}/.openclaw/workspace\")\n\n\ndef read_today_events():\n    \"\"\"Return list of event dicts from Calendar Sync, or None if unavailable.\"\"\"\n    path = WORKSPACE / \"memory\" / \"calendar-today.json\"\n    if not path.exists():\n        return None\n    try:\n        events = json.loads(path.read_text())\n        if isinstance(events, list):\n            return events\n        return None\n    except (json.JSONDecodeError, OSError):\n        return None\n\n\ndef read_upcoming_events():\n    \"\"\"Return list of event dicts from Calendar Sync (next 7 days), or None.\"\"\"\n    path = WORKSPACE / \"memory\" / \"calendar-upcoming.json\"\n    if not path.exists():\n        return None\n    try:\n        events = json.loads(path.read_text())\n        if isinstance(events, list):\n            return events\n        return None\n    except (json.JSONDecodeError, OSError):\n        return None\n\n\ndef read_email_digest():\n    \"\"\"Return list of email dicts from Email Integration, or None if unavailable.\"\"\"\n    path = WORKSPACE / \"memory\" / \"email-digest.json\"\n    if not path.exists():\n        return None\n    try:\n        emails = json.loads(path.read_text())\n        if isinstance(emails, list):\n            return emails\n        return None\n    except (json.JSONDecodeError, OSError):\n        return None\n```\n\nThe event/email field shapes are documented in those apps' specs:\n- Calendar Sync: `{id, title, start_iso, end_iso, attendees, description, is_external, location}` per event.\n- Email Integration: `{id, thread_id, from_addr, subject, date_iso, labels, body_preview, is_read, is_replied}` per email.\n\n---\n\n## Filtering and shaping\n\n### Today's events\n\nNo filtering needed — Calendar Sync's `calendar-today.json` is already today-only. Sort by `start_iso` ascending. Cap per detail:\n- concise: first 3 events\n- standard: first 5 events\n- detailed: all events\n\n### Tomorrow preview\n\nFrom `calendar-upcoming.json`, filter to events whose `start_iso` date == tomorrow's local date in `time_zone`. One-line preview only, even on `detailed`: `\"Tomorrow: N meetings — first at HH:MM\"` or `\"Tomorrow: nothing scheduled\"`.\n\n### Email highlights\n\nFilter the digest to:\n1. `is_read == false`\n2. `date_iso` within the last `email_max_age_hours` hours (parse `email.utils.parsedate_to_datetime`; if parse fails, include the email rather than dropping it)\n\nScore each surviving email with a small heuristic — there is no LLM call for scoring (the composer LLM call sees the final shortlist):\n\n```python\ndef score_email(email):\n    score = 0\n    subject = (email.get(\"subject\") or \"\").lower()\n    from_addr = (email.get(\"from_addr\") or \"\").lower()\n    labels = set(email.get(\"labels\") or [])\n\n    # Penalize known low-signal patterns\n    if any(t in from_addr for t in (\"noreply@\", \"no-reply@\", \"donotreply@\")):\n        score -= 5\n    if any(t in subject for t in (\"unsubscribe\", \"newsletter\", \"digest\", \"% off\", \"sale\")):\n        score -= 3\n    if \"CATEGORY_PROMOTIONS\" in labels or \"CATEGORY_SOCIAL\" in labels:\n        score -= 3\n\n    # Reward likely-actionable patterns\n    if any(t in subject for t in (\"urgent\", \"asap\", \"deadline\", \"due\", \"action required\")):\n        score += 4\n    if any(t in subject for t in (\"re:\", \"fwd:\")):\n        score += 2\n    if email.get(\"is_replied\"):\n        score += 1\n    return score\n```\n\nKeep emails with score > -3. Sort descending. Cap per detail:\n- concise: 2 emails\n- standard: 4 emails\n- detailed: 6 emails\n\nIf zero emails survive after filtering: include the line \"Email: no unread highlights\" (do not omit the section silently — the operator should see that the briefing checked).\n\n---\n\n## LLM composer (default path)\n\nUse the bot's existing Anthropic credentials. The script discovers the API key in this order:\n\n1. `ANTHROPIC_API_KEY` environment variable (set by the launchd plist via EnvironmentVariables, populated at install time from the bot's stored key).\n2. `openclaw.json` → `auth.profiles` for a profile of type `anthropic_api_key` with a `key` value.\n3. Empty — composer falls back to the template path.\n\nModel: `claude-haiku-4-5` by default. Haiku is the right tier: the task is tight-prose synthesis from a small input (events + email shortlist + a greeting), not reasoning. The composer is cost-bounded — at most one Haiku call per bot per day, ~$0.001/run.\n\nSystem prompt (literal, no substitution):\n\n```\nYou are composing a single morning briefing message for one person. You will be given:\n- the operator's first name (may be empty)\n- today's local date\n- a sorted list of today's calendar events with start time, title, and (optional) location\n- a tomorrow preview line (or empty)\n- a sorted shortlist of unread emails with sender display name + subject\n- a detail level: concise, standard, or detailed\n\nReturn ONE message body — no headers, no markdown fences, no preamble. The message is delivered as plain text to a chat channel. Keep it brief enough to read in 30 seconds. Use the operator's name once in the greeting if non-empty. Be human, not robotic. Do not invent meetings, emails, weather, news, or anything else not in the input. Do not include a closing signature.\n\nShape:\n  Line 1: a short greeting line.\n  Block: today's schedule (one event per line, time + title + optional location).\n  Block: email highlights (one per line, sender + subject), only if the email list is non-empty.\n  Final line: the tomorrow preview, if provided.\n\nIf the schedule is empty, say so plainly (\"Nothing on the calendar today\"). If both schedule and email blocks are empty, say so plainly and keep it short.\n```\n\nUser message: a JSON payload with the inputs above. Example shape:\n\n```json\n{\n  \"user_name\": \"Alex\",\n  \"date_local\": \"Friday, June 5\",\n  \"detail\": \"standard\",\n  \"events\": [\n    {\"start_local\": \"9:00am\", \"end_local\": \"10:00am\", \"title\": \"Kitchen client walkthrough\", \"location\": \"Patel residence\"},\n    {\"start_local\": \"11:00am\", \"end_local\": \"11:30am\", \"title\": \"Internal design sync\", \"location\": null}\n  ],\n  \"tomorrow_preview\": \"Tomorrow: 1 meeting — 10am vendor call\",\n  \"emails\": [\n    {\"from_display\": \"Robinson Construction\", \"subject\": \"Contract counter — please review by EOD\"},\n    {\"from_display\": \"Karen P.\", \"subject\": \"Site walk Friday — can we move to 8?\"}\n  ]\n}\n```\n\nCall pattern (urllib, no SDK):\n\n```python\nimport json, os, urllib.request\n\n\ndef call_anthropic(api_key, model, system_prompt, user_payload, timeout=20):\n    body = json.dumps({\n        \"model\": model,\n        \"max_tokens\": 600,\n        \"system\": system_prompt,\n        \"messages\": [{\"role\": \"user\", \"content\": json.dumps(user_payload)}],\n    }).encode()\n    req = urllib.request.Request(\n        \"https://api.anthropic.com/v1/messages\",\n        data=body,\n        headers={\n            \"x-api-key\": api_key,\n            \"anthropic-version\": \"2023-06-01\",\n            \"content-type\": \"application/json\",\n        },\n        method=\"POST\",\n    )\n    with urllib.request.urlopen(req, timeout=timeout) as resp:\n        data = json.loads(resp.read())\n    # Extract text content from response\n    for block in data.get(\"content\") or []:\n        if block.get(\"type\") == \"text\":\n            return block.get(\"text\", \"\").strip()\n    return \"\"\n```\n\nIf the call raises, the response is empty, or the response contains a markdown fence (the model leaked formatting), fall through to the template composer and set `composer: \"partial\"` in the run file.\n\n---\n\n## Template composer (fallback)\n\nDeterministic Python. Used when the LLM call is unavailable (no API key, network failure, parse error). Same input shape as the LLM payload — same output shape.\n\n```python\ndef compose_template(payload):\n    name = payload.get(\"user_name\") or \"\"\n    date_local = payload.get(\"date_local\") or \"today\"\n    events = payload.get(\"events\") or []\n    emails = payload.get(\"emails\") or []\n    tomorrow = payload.get(\"tomorrow_preview\") or \"\"\n\n    greeting = f\"Good morning{', ' + name if name else ''}.\"\n    lines = [greeting, f\"Today — {date_local}\"]\n\n    if events:\n        lines.append(f\"Schedule: {len(events)} event{'s' if len(events) != 1 else ''}\")\n        for e in events:\n            loc = f\" @ {e['location']}\" if e.get(\"location\") else \"\"\n            lines.append(f\"• {e['start_local']} — {e['title']}{loc}\")\n    else:\n        lines.append(\"Nothing on the calendar today.\")\n\n    if emails:\n        lines.append(\"\")\n        lines.append(f\"Email: {len(emails)} highlight{'s' if len(emails) != 1 else ''}\")\n        for em in emails:\n            lines.append(f\"• {em['from_display']} — {em['subject']}\")\n\n    if tomorrow:\n        lines.append(\"\")\n        lines.append(tomorrow)\n\n    return \"\\n\".join(lines)\n```\n\n---\n\n## No-data (day one) mode\n\nUsed when NEITHER calendar nor email data is readable — typically a freshly created bot with nothing connected yet. Deterministic Python, no LLM call. The first briefing must say something useful with zero integrations: who it greets, what the bot is set up to do, and what it's waiting on.\n\n```python\ndef compose_no_data(config):\n    name = config.get(\"user_name\") or \"\"\n    mission = (config.get(\"mission\") or \"\").strip()\n    lines = [f\"Good morning{', ' + name if name else ''}.\"]\n    if mission:\n        lines.append(f\"My job here: {mission}\")\n    lines.append(\"Nothing is connected yet, so today's briefing is short:\")\n    lines.append(\"\\u2022 Connect a calendar and I'll put your day here.\")\n    lines.append(\"\\u2022 Connect email and I'll surface what needs you.\")\n    lines.append(\"Once something is linked, this becomes your real morning briefing.\")\n    return \"\\n\".join(lines)\n```\n\nDelivery and bookkeeping are identical to the standard path: deliver via `openclaw message send`, write the run file ONLY after the channel accepted the send, one briefing per day. The run file records `mode: \"no_data\"`, `composer: \"template\"`, zero counts, and `sources_available: {calendar: false, email: false}`; `write_run()` gains a `mode` argument that is `\"standard\"` on the normal path. The no-data briefing repeats daily until a data source connects — that is by design (it honestly reports what it's waiting on); an operator who wants quiet instead can disable the schedule.\n\n**Load-bearing contract, do not change:** the run file at `memory/briefing-runs/{date}.json` is written only after an accepted `openclaw message send` — the delivery monitor's `delivery_contract` evidence reads that file to decide whether the briefing was delivered. No-data mode satisfies the contract by *delivering*, never by writing a run file without a send.\n\n---\n\n## Delivery\n\nIdentical pattern to the other gallery apps (canonical copy: docs/reference/capabilities/template/scripts/example_script.py; decision record: docs/spec-gallery-delivery-convention-2026-06-11.md). Resolve the delivery route from the pod's `network.json` — `bots.{bot_id}.primary_user.external_ids`, first match in the channel priority list — then shell out to `openclaw message send`. Morning Briefing does not pick the channel beyond that priority rule, and never reads gateway port/token.\n\n```python\nOPENCLAW_BIN_CANDIDATES = (\n    \"/opt/homebrew/bin/openclaw\",   # macOS arm64\n    \"/usr/local/bin/openclaw\",      # macOS x86_64\n    \"/usr/bin/openclaw\",            # Linux\n)\n\n# Channel preference when a user is reachable on several. Product default\n# (most personal first), not a technical constraint.\nCHANNEL_PRIORITY = (\n    \"telegram\", \"whatsapp\", \"signal\", \"imessage\", \"slack\",\n    \"discord\", \"sms\", \"matrix\",\n)\n\n\ndef find_openclaw():\n    found = shutil.which(\"openclaw\")\n    if found:\n        return found\n    for candidate in OPENCLAW_BIN_CANDIDATES:\n        if Path(candidate).exists():\n            return candidate\n    raise RuntimeError(\"openclaw CLI not found\")\n\n\ndef enabled_channels():\n    \"\"\"Channels this bot can actually send on (its own openclaw.json,\n    channels.<name>.enabled). None when unreadable — trust external_ids\n    alone rather than refusing to send.\"\"\"\n    cfg = Path(pwd.getpwuid(os.getuid()).pw_dir) / \".openclaw\" / \"openclaw.json\"\n    try:\n        channels = json.loads(cfg.read_text()).get(\"channels\", {})\n    except (OSError, json.JSONDecodeError):\n        return None\n    enabled = {\n        name for name, c in channels.items()\n        if isinstance(c, dict) and c.get(\"enabled\")\n    }\n    return enabled or None\n\n\ndef resolve_route(bot_id):\n    try:\n        network = json.loads(Path(\"/Users/Shared/evolve/network.json\").read_text())\n    except (OSError, json.JSONDecodeError):\n        return None, None\n    bot_cfg = network.get(\"bots\", {}).get(bot_id) or {}\n    ids = (bot_cfg.get(\"primary_user\") or {}).get(\"external_ids\") or {}\n    enabled = enabled_channels()\n    for channel in CHANNEL_PRIORITY:\n        target = ids.get(channel)\n        if target and (enabled is None or channel in enabled):\n            return channel, str(target)\n    # The user is only recorded on channels this bot doesn't have —\n    # return the best recorded id anyway so the send fails LOUDLY (a\n    # miss the monitor reports) instead of silently skipping.\n    for channel in CHANNEL_PRIORITY:\n        target = ids.get(channel)\n        if target:\n            return channel, str(target)\n    return None, None\n\n\ndef send_message(bot_id, text):\n    channel, target = resolve_route(bot_id)\n    if channel is None:\n        print(f\"DELIVERY_SKIPPED: no delivery route for {bot_id}\", file=sys.stderr)\n        return False\n    openclaw = find_openclaw()\n    cmd = [\n        openclaw, \"message\", \"send\",\n        f\"--channel={channel}\", f\"--target={target}\",\n        f\"--message={text}\", \"--json\",\n    ]\n    # launchd/systemd jobs get a minimal PATH; the openclaw entrypoint is\n    # `#!/usr/bin/env node`, so node must be resolvable — prepend the CLI's\n    # own bin dir (where node also lives) to the child PATH.\n    env = dict(os.environ)\n    env[\"PATH\"] = os.path.dirname(openclaw) + os.pathsep + env.get(\"PATH\", \"\")\n    # cwd must be bot-readable and env-independent: node resolves its CWD\n    # at startup, and under sudo-to-the-bot-account without -H, $HOME (and so\n    # Path.home()) still points at the invoking user's untraversable home.\n    # The 60s timeout outlives delivery so the CLI is never killed mid-send.\n    r = subprocess.run(\n        cmd, capture_output=True, text=True, timeout=60,\n        cwd=pwd.getpwuid(os.getuid()).pw_dir, env=env,\n    )\n    if r.returncode != 0:\n        err = (r.stderr.strip() or r.stdout.strip())[:400]\n        raise RuntimeError(f\"openclaw message send failed (rc={r.returncode}): {err}\")\n    return True\n```\n\nOn delivery failure (RuntimeError): emit `BRIEFING_FAILED: {date} delivery-error: {error}` and exit 2. Do NOT write the run file — the message was not delivered. When `send_message` returns False (the bot has no recorded delivery route): emit `BRIEFING_SKIPPED: {date} no-delivery-route` and exit 0 — and do NOT write the run file; the absent run file is the honest delivery signal.\n\n---\n\n## Per-day run record\n\nWrite to `memory/briefing-runs/YYYY-MM-DD.json` atomically (temp file + rename) only after the channel accepted the send.\n\n```python\nfrom datetime import datetime\nimport tempfile, os\n\n\ndef atomic_write_json(path, data):\n    path.parent.mkdir(parents=True, exist_ok=True)\n    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=\".tmp\")\n    with os.fdopen(fd, \"w\") as f:\n        json.dump(data, f, indent=2)\n    os.replace(tmp, path)\n\n\ndef write_run(date_str, message, counts, composer, sources, detail):\n    path = WORKSPACE / \"memory\" / \"briefing-runs\" / f\"{date_str}.json\"\n    atomic_write_json(path, {\n        \"date\": date_str,\n        \"sent_at\": datetime.now().astimezone().isoformat(timespec=\"seconds\"),\n        \"channel_delivery\": channel,  # the channel send_message resolved\n        \"events_count\": counts[\"events\"],\n        \"events_first\": counts[\"events_first\"],\n        \"emails_unread\": counts[\"emails_unread\"],\n        \"emails_surfaced\": counts[\"emails_surfaced\"],\n        \"sources_available\": sources,\n        \"composer\": composer,\n        \"detail\": detail,\n        \"message\": message,\n    })\n```\n\n---\n\n## scripts/morning_briefing.py — CLI\n\n### `send` (used by the LaunchDaemon)\n\nSteps:\n1. Resolve config: load `morning_briefing/config.json`, layer CLI flags on top.\n2. Today's date string: `YYYY-MM-DD` in `config.time_zone`.\n3. Idempotency: if `memory/briefing-runs/{today}.json` exists and `--force` not set, emit `BRIEFING_SKIPPED: {today} already-sent` and exit 0.\n4. Read sources: `events = read_today_events()`, `upcoming = read_upcoming_events()`, `emails = read_email_digest()`.\n5. If `events is None and emails is None`: switch to **no-data mode** — compose the getting-started message (see \"No-data (day one) mode\" below) and continue from step 8 with it. The message still ships, the run file is still written only after successful delivery (with `mode: \"no_data\"`, `composer: \"template\"`, zero counts), and `BRIEFING_SENT:` is still emitted — a day-1 bot gets a useful first briefing, not silence.\n6. Build payload: filter, sort, shape per detail rules above. Derive `date_local`, `tomorrow_preview`, etc.\n7. Compose: try LLM, fall back to template. Track which composer produced the body.\n8. Deliver: `send_message(bot_id, message)`. Fail loud (exit 2) on send error; when it returns False (no delivery route) emit `BRIEFING_SKIPPED: {today} no-delivery-route` and exit 0 without a run file.\n9. Write run file.\n10. Emit `BRIEFING_SENT: {today} {events_count}ev {emails_surfaced}em composer={composer}` to stdout. Exit 0.\n\n### `preview` (dry-run)\n\nSame as send, but: do not check idempotency, do not deliver, do not write the run file. Print the composed message to stdout. The composer choice still applies — useful for verifying the LLM path before the first scheduled run.\n\n### `status`\n\nRead `memory/briefing-runs/{today}.json` if present and print a one-line summary: `\"Sent at HH:MM — N events, M emails, composer=...\"`. If absent, print `\"No briefing sent today yet.\"` and exit 0.\n\n---\n\n## scripts/morning-briefing-cron.sh\n\n```bash\n#!/bin/bash\n# morning-briefing-cron.sh — LaunchDaemon trigger for Morning Briefing.\n# Runs daily at {delivery_time}. Quiet on success; errors to /tmp.\n\nWORKSPACE=\"/Users/{bot_id}/.openclaw/workspace\"\nLOGFILE=\"/tmp/{bot_id}-morning-briefing.log\"\n\n/usr/bin/python3 \"$WORKSPACE/scripts/morning_briefing.py\" send \\\n  >> \"$LOGFILE\" 2>&1\n\nexit 0\n```\n\nMake it executable: `chmod +x scripts/morning-briefing-cron.sh`.\n\n---\n\n## LaunchDaemon plist\n\nWrite to `/Library/LaunchDaemons/ai.evolve.{bot_id}.morning-briefing.plist`. System-context daemons load at boot regardless of GUI session, which is required for headless bots on the mini.\n\n```xml\n<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\"\n  \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key>\n  <string>ai.evolve.{bot_id}.morning-briefing</string>\n  <key>UserName</key>\n  <string>{bot_id}</string>\n  <key>GroupName</key>\n  <string>staff</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>/bin/bash</string>\n    <string>/Users/{bot_id}/.openclaw/workspace/scripts/morning-briefing-cron.sh</string>\n  </array>\n  <key>EnvironmentVariables</key>\n  <dict>\n    <key>TZ</key>\n    <string>{time_zone}</string>\n    <key>ANTHROPIC_API_KEY</key>\n    <string>{anthropic_api_key}</string>\n  </dict>\n  <key>StartCalendarInterval</key>\n  <dict>\n    <key>Hour</key>\n    <integer>{delivery_hour}</integer>\n    <key>Minute</key>\n    <integer>{delivery_minute}</integer>\n  </dict>\n  <key>StandardOutPath</key>\n  <string>/tmp/{bot_id}-morning-briefing-out.log</string>\n  <key>StandardErrorPath</key>\n  <string>/tmp/{bot_id}-morning-briefing-err.log</string>\n  <key>RunAtLoad</key>\n  <false/>\n</dict>\n</plist>\n```\n\n`{delivery_hour}` and `{delivery_minute}` are derived from `{delivery_time}` (`07:00` → 7, 0) by the provisioner.\n\n### Installing the plist\n\nThe bot user cannot write to `/Library/LaunchDaemons/`. Stage in `/tmp`, then sudo:\n\n```bash\nTMP=$(mktemp -t morning-briefing-XXXXXX).plist\ncp scripts/morning-briefing.plist \"$TMP\"\nsudo /bin/cp \"$TMP\" /Library/LaunchDaemons/ai.evolve.{bot_id}.morning-briefing.plist\nsudo /usr/sbin/chown root:wheel /Library/LaunchDaemons/ai.evolve.{bot_id}.morning-briefing.plist\nsudo /bin/chmod 644 /Library/LaunchDaemons/ai.evolve.{bot_id}.morning-briefing.plist\nsudo /bin/launchctl bootstrap system /Library/LaunchDaemons/ai.evolve.{bot_id}.morning-briefing.plist\nsudo /bin/launchctl enable system/ai.evolve.{bot_id}.morning-briefing\nrm \"$TMP\"\n```\n\n---\n\n## Template variables\n\n| Variable | Required | Default | Description |\n|---|---|---|---|\n| `{bot_id}` | yes | — | macOS user ID of the bot (set automatically from install target) |\n| `{user_name}` | no | \"\" | How the briefing addresses the operator (e.g. \"Alex\"). Empty = no name. |\n| `{mission}` | no | \"\" | One line describing the bot's job, surfaced by the day-one briefing (\"My job here: …\"). Empty = line omitted. |\n| `{time_zone}` | yes | America/Los_Angeles | IANA timezone string |\n| `{delivery_time}` | no | 07:00 | HH:MM (24-hour, local) |\n| `{delivery_hour}` | no | 7 | Derived from delivery_time |\n| `{delivery_minute}` | no | 0 | Derived from delivery_time |\n| `{detail}` | no | standard | concise \\| standard \\| detailed |\n| `{anthropic_api_key}` | no | \"\" | Bot's Anthropic API key, copied into the plist EnvironmentVariables block at install time. Empty = template composer only. |\n\nThe operator can change any of these by editing `morning_briefing/config.json` (no re-install needed). Schedule time changes require reloading the LaunchDaemon: `sudo /bin/launchctl kickstart -k system/ai.evolve.{bot_id}.morning-briefing` after editing the plist.\n\n---\n\n## Test sequence\n\nFrom the bot's workspace root after build:\n\n```bash\n# 1. Syntax check\n/usr/bin/python3 -m py_compile scripts/morning_briefing.py\n\n# 2. Preview (no delivery, no run file, no idempotency check)\n/usr/bin/python3 scripts/morning_briefing.py preview --detail concise\n# Expected: a formatted morning message printed to stdout, even when data files are absent\n#           (day-one mode: \"Good morning. … Connect a calendar and I'll put your day here.\")\n\n# 3. Status before first send\n/usr/bin/python3 scripts/morning_briefing.py status\n# Expected: \"No briefing sent today yet.\"\n\n# 4. Cron script executable\ntest -x scripts/morning-briefing-cron.sh && echo 'OK: cron script executable'\n\n# 5. Config file written by first invocation\ntest -f morning_briefing/config.json && echo 'OK: config present'\n\n# 6. Plist syntax\nplutil -lint scripts/morning-briefing.plist\n\n# 7. Send produces a run file (only if a delivery route is configured — skip otherwise)\n/usr/bin/python3 scripts/morning_briefing.py send --force --detail concise\nls memory/briefing-runs/$(date +%Y-%m-%d).json && echo 'OK: run file written'\n```\n\nSteps 1, 4, 5, 6 must exit 0. Steps 2 and 3 must produce non-empty output. Step 7 only runs once the bot has a delivery route configured.\n\n---\n\n## Customization guidance\n\n- **Change the delivery time:** edit `morning_briefing/config.json` → `delivery_time` AND edit the plist (`StartCalendarInterval`). Then: `sudo /bin/launchctl kickstart -k system/ai.evolve.{bot_id}.morning-briefing`. (Two edits because launchd reads the cron from the plist, not the config.)\n- **Switch composer to template-only:** set `config.json` → `model` to `\"\"`. Briefing still ships; composer field in run files flips to `template`.\n- **Disable temporarily:** `sudo /bin/launchctl disable system/ai.evolve.{bot_id}.morning-briefing`. Re-enable with `enable`. The script will not run; no message will be sent until re-enabled.\n- **Run on demand without waiting for the cron:** `sudo /bin/launchctl kickstart system/ai.evolve.{bot_id}.morning-briefing` triggers an immediate run that respects today's idempotency.\n- **Force re-send for testing:** `/usr/bin/python3 scripts/morning_briefing.py send --force` from the bot user. This ignores the idempotency record and overwrites today's run file.\n- **Verify the data sources are flowing:** check `memory/calendar-today.json` exists and parses; check `memory/email-digest.json` exists and parses. If either is missing or stale, the prerequisite app (Calendar Sync / Email Integration) is the place to fix it.\n\n---\n\n## Future companions (not in v1)\n\nMorning Briefing v2 intentionally drops weather and news. Each would need its own data-foundation app declaring its own integration and its own cache file shape:\n\n- **Weather Sync (future)** — `memory/weather-today.json` produced by a small daemon hitting wttr.in or NWS. Morning Briefing would gain `include_weather` config + a weather block in the composer payload.\n- **News Sync (future)** — `memory/news-headlines.json` produced by an RSS-puller daemon. Morning Briefing would gain `include_news` config + a news block in the composer payload.\n\nThe contract here is intentional: every section in the briefing is sourced from a sibling app's cache file, never from a Morning-Briefing-owned API call. Adding a new section is a same-shape extension, not a redesign.\n\n---\n\n## FILE: scripts/morning-briefing-cron.sh\n```bash\n#!/bin/bash\n# morning-briefing-cron.sh — LaunchDaemon trigger for Morning Briefing.\n# Runs daily at {delivery_time}. Quiet on success; errors to /tmp.\n\nWORKSPACE=\"/Users/{bot_id}/.openclaw/workspace\"\nLOGFILE=\"/tmp/{bot_id}-morning-briefing.log\"\n\n/usr/bin/python3 \"$WORKSPACE/scripts/morning_briefing.py\" send \\\n  >> \"$LOGFILE\" 2>&1\n\nexit 0\n```\n\n## FILE: /Library/LaunchDaemons/ai.evolve.{bot_id}.morning-briefing.plist\n```xml\n<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\"\n  \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key>\n  <string>ai.evolve.{bot_id}.morning-briefing</string>\n  <key>UserName</key>\n  <string>{bot_id}</string>\n  <key>GroupName</key>\n  <string>staff</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>/bin/bash</string>\n    <string>/Users/{bot_id}/.openclaw/workspace/scripts/morning-briefing-cron.sh</string>\n  </array>\n  <key>EnvironmentVariables</key>\n  <dict>\n    <key>TZ</key>\n    <string>{time_zone}</string>\n    <key>ANTHROPIC_API_KEY</key>\n    <string>{anthropic_api_key}</string>\n  </dict>\n  <key>StartCalendarInterval</key>\n  <dict>\n    <key>Hour</key>\n    <integer>{delivery_hour}</integer>\n    <key>Minute</key>\n    <integer>{delivery_minute}</integer>\n  </dict>\n  <key>StandardOutPath</key>\n  <string>/tmp/{bot_id}-morning-briefing-out.log</string>\n  <key>StandardErrorPath</key>\n  <string>/tmp/{bot_id}-morning-briefing-err.log</string>\n  <key>RunAtLoad</key>\n  <false/>\n</dict>\n</plist>\n```\n\n## FILE: morning_briefing/config.json\n```json\n{\n  \"delivery_time\": \"{delivery_time}\",\n  \"time_zone\": \"{time_zone}\",\n  \"user_name\": \"{user_name}\",\n  \"mission\": \"{mission}\",\n  \"detail\": \"{detail}\",\n  \"include_email\": true,\n  \"include_tomorrow_preview\": true,\n  \"email_max_age_hours\": 12,\n  \"model\": \"claude-haiku-4-5\"\n}\n```\n",
+  "example_triggers": [
+    "Preview today's morning briefing",
+    "Did the briefing run this morning?",
+    "What's on my schedule today?",
+    "Show me the last morning briefing",
+    "Force-send today's briefing again"
+  ],
+  "test_cases": [
+    {
+      "trigger": "Preview today's briefing",
+      "expected": "Call scripts/morning_briefing.py preview, return the composed message; even with no data files present the preview prints the day-one getting-started briefing (greeting, the bot's job when configured, and what it's waiting on)."
+    },
+    {
+      "trigger": "Did the briefing run this morning?",
+      "expected": "Call scripts/morning_briefing.py status, return the one-line summary from memory/briefing-runs/{today}.json (sent time + counts + composer), or 'No briefing sent today yet.' if no run file exists."
+    },
+    {
+      "trigger": "Show me the last briefing",
+      "expected": "Read memory/briefing-runs/{today}.json (or fall back to the most recent file), return the message field verbatim."
+    },
+    {
+      "trigger": "Force-send today's briefing again",
+      "expected": "Call scripts/morning_briefing.py send --force, which overwrites today's run file and re-delivers via `openclaw message send`; confirm BRIEFING_SENT: signal."
+    }
+  ],
+  "constraints": {
+    "safety": [
+      "No direct Google API calls — all calendar and email data is read from sibling apps' cache files",
+      "No authentication or token handling — credentials live in the prerequisite apps",
+      "Read-only access to memory/calendar-today.json, memory/calendar-upcoming.json, memory/email-digest.json",
+      "Email and event content never written to logs or external services; only counts and the rendered message body persist in memory/briefing-runs/",
+      "LLM composer is haiku-tier (cheap, capped at one call per day) with a deterministic template fallback so the briefing always ships",
+      "Single delivery surface — the bot's own messaging channel via `openclaw message send`. No cross-bot delivery, no external webhook, no email-back-to-self.",
+      "Idempotent: one run file per day; --force is required to re-send"
+    ],
+    "dependencies": [
+      "Calendar Sync (p-fe9acef3, required) — produces memory/calendar-today.json and memory/calendar-upcoming.json",
+      "Email Integration (p-341576fa, optional) — produces memory/email-digest.json; absence degrades to schedule-only briefing",
+      "openclaw CLI + a configured messaging channel — the message delivery surface",
+      "Anthropic API key from the bot's existing credentials (optional) — used by the LLM composer; falls back to the template composer when absent"
+    ],
+    "boundaries": [
+      "One briefing per day — idempotency enforced by memory/briefing-runs/{date}.json",
+      "Does not include weather or news in v1 (deferred to future companion apps)",
+      "Does not infer or take actions from event or email content — purely a read-and-compose layer",
+      "Delivers only to the bot's primary channel — no per-user routing, no external recipients",
+      "Does not modify, retry, or fix the prerequisite apps' data files; treats them as authoritative inputs"
+    ]
+  },
+  "application_tags": [
+    "personal-productivity",
+    "morning-routine",
+    "email-summary",
+    "calendar-summary",
+    "daily-digest",
+    "calendar",
+    "daily-brief-suite",
+    "email",
+    "productivity",
+    "integration"
+  ],
+  "scheduled_actions": [
+    {
+      "id": "morning-briefing",
+      "mechanism": "launchd",
+      "trigger": {
+        "kind": "launchd",
+        "schedule": "07:00 daily"
+      },
+      "install": {
+        "plist_label": "ai.evolve.${bot_id}.morning-briefing",
+        "command": "/bin/bash ${workspace}/scripts/morning-briefing-cron.sh",
+        "cwd": "${workspace}",
+        "schedule": {
+          "cron": {
+            "Hour": 7,
+            "Minute": 0
+          }
+        },
+        "exec_policy": "inherit"
+      },
+      "outputs": [
+        {
+          "kind": "session_message",
+          "channel": "primary"
+        }
+      ],
+      "delivery_contract": {
+        "user_facing": true,
+        "window_minutes": 30,
+        "evidence": {
+          "ran": {
+            "kind": "scheduler_state"
+          },
+          "delivered": {
+            "kind": "run_file",
+            "path": "memory/briefing-runs/{date}.json"
+          }
+        },
+        "heal": "rerun"
+      },
+      "summary": "Daily morning briefing — edit install.schedule.cron to change the time. App reads cache files from Calendar Sync and Email Integration; no direct API calls. heal:rerun is safe: the run file enforces one delivery per day, so a forced re-run after a successful send is a no-op."
+    }
+  ],
+  "usage": {
+    "model": "scheduled",
+    "trigger_recognition": {
+      "pattern": "Morning Briefing fires once daily at 7am. If the user asks for a preview off-cycle, use `preview`; if they want to know whether the morning briefing ran, use `status`.",
+      "hint_words": [
+        "morning briefing",
+        "today's briefing",
+        "morning brief",
+        "what's on my plate today",
+        "did the briefing run"
+      ],
+      "requires_keyword": false
+    },
+    "auto_capture": {
+      "enabled": false,
+      "sources": []
+    },
+    "how_to_use": "Background launchd fires `send` at 7am. For an off-cycle preview without delivering, use `preview`. Use `status` to confirm the scheduled run delivered. Briefing draws from Calendar Sync and Email Integration — if either is unhealthy, the briefing will say so.",
+    "bot_voice_examples": [
+      "Today: 3 meetings (first at 9), 5 unread emails (one urgent), nothing slipping from yesterday.",
+      "Morning briefing already delivered at 7:02am.",
+      "Briefing won't include email data this morning — Email Integration last synced 2 hours ago."
+    ]
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "app_id": "app_calendar_summary",
+  "app_version": "2026.05.13-1.0",
+  "display_name": "Calendar Daily Summary",
+  "description": "Delivers a daily calendar-only schedule message at 7 AM — today's meetings, a tomorrow preview, and any conflicts or tight transitions.",
+  "pkg_id": "p-738f057c",
+  "skills_required": ["calendar"],
+  "daemon": {
+    "label": "com.{bot_id}.calendar-summary",
+    "plist_path": "/Library/LaunchDaemons/com.{bot_id}.calendar-summary.plist",
+    "cron_script": "scripts/calendar-summary-cron.sh",
+    "schedule": "StartCalendarInterval",
+    "default_hour": 7,
+    "default_minute": 0
+  },
+  "config": {
+    "path": "calendar_summary/config.json",
+    "defaults": {
+      "delivery_time": "07:00",
+      "time_zone": "America/Los_Angeles",
+      "include_tomorrow": true,
+      "include_calendar_ids": [],
+      "summarize_long_descriptions": false
+    }
+  },
+  "state_files": [
+    "calendar_summary/last_run.json"
+  ],
+  "signals": {
+    "success": "CAL_SUMMARY_SENT:",
+    "failure": "CAL_SUMMARY_FAILED:",
+    "partial": "CAL_SUMMARY_PARTIAL:"
+  },
+  "cli": {
+    "main": "scripts/calendar_summary.py",
+    "commands": ["send", "preview", "status"]
+  }
+}

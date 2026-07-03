@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Installing Evolve · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">installation</span><span class="chip">install</span><span class="chip">clone-repo</span><span class="chip">prerequisites</span><span class="chip">api-keys</span><span class="chip">hardware</span></div><div class="reviewed">Last reviewed 2026-06-23</div></div><h1 id="installing-evolve">Installing Evolve</h1>
+<p>This is the one place to start. Installing Evolve takes about 30 minutes of
+hands-on time once you have your accounts and keys ready — most of the elapsed
+time before that is gathering API keys and waiting for account approvals.</p>
+<p>A working pod needs three things: a <strong>dedicated, always-on machine</strong>, an
+<strong>Anthropic account</strong> (MAX subscription or API key), and a <strong>messaging channel</strong>
+(Telegram is the easiest). Everything else is optional and can be added after
+your first bot is running.</p>
+<hr>
+<h2 id="step-1-clone-the-repository-do-this-first">Step 1 — Clone the repository (do this first)</h2>
+<p><strong>Evolve installs and updates itself from a git checkout.</strong> Before you run
+anything else, clone the repository onto the machine that will host your pod.</p>
+<p>This is the single step new operators most often get wrong, so it's worth saying
+plainly:</p>
+<blockquote>
+<p>⚠️ <strong>It must be a real <code>git clone</code> — not a downloaded ZIP or tarball.</strong>
+Evolve keeps itself current by pulling new releases into this checkout on a
+schedule. A ZIP can't pull updates, so a pod installed from one freezes on the
+code you installed on day one and never gets fixes. Clone it, don't download
+it.</p>
+</blockquote>
+<p>Where the checkout lives depends on your platform — the per-platform guides
+below give the exact command, owner, and path:</p>
+<ul>
+<li><strong>macOS:</strong> <code>/Users/Shared/evolve-repo</code></li>
+<li><strong>Linux / VPS:</strong> <code>/var/lib/evolve/repo</code>, owned by the <code>evolve</code> service account
+  and authenticated with a <strong>read-only deploy key</strong> so the auto-updater can pull
+  on its own.</li>
+</ul>
+<p>Don't worry about the venv or the wizard yet — just know that <strong>the clone comes
+first</strong>, and that on a durable (production) pod it has to be a clone the pod can
+pull from unattended.</p>
+<hr>
+<h2 id="step-2-get-your-prerequisites-ready">Step 2 — Get your prerequisites ready</h2>
+<h3 id="hardware-a-dedicated-always-on-machine">Hardware — a dedicated, always-on machine</h3>
+<p>Evolve assumes a machine that does nothing else and never sleeps. The chassis
+doesn't matter:</p>
+<ul>
+<li><strong>Mac</strong> — a Mac mini is the classic choice; a retired Apple-Silicon MacBook on
+  a shelf works just as well (its battery doubles as a built-in UPS). Apple
+  Silicon is recommended; Intel is supported best-effort.</li>
+<li><strong>Linux</strong> — a dedicated, always-on Ubuntu/Debian VPS or box.</li>
+</ul>
+<p>In both cases "dedicated" means dedicated: no other day-to-day users or
+workloads. The thing to guard against is a "retired" laptop quietly drifting back
+into personal use months later.</p>
+<p>A few more hardware notes: prefer <strong>wired ethernet</strong> over WiFi for 24/7
+reliability, and consider a small <strong>UPS</strong> (~$100) to prevent data corruption on
+power blips.</p>
+<h3 id="accounts-and-api-keys">Accounts and API keys</h3>
+<p>You only strictly need the first two. The rest unlock more capability and can be
+added later.</p>
+<table>
+<thead>
+<tr>
+<th>Need</th>
+<th>Required?</th>
+<th>Where to get it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Anthropic</strong> — MAX subscription <strong>or</strong> API key</td>
+<td><strong>Required</strong></td>
+<td><a href="https://anthropic.com">anthropic.com</a> (MAX) or <a href="https://console.anthropic.com">console.anthropic.com</a> (API key). Set a spending cap on the API key.</td>
+</tr>
+<tr>
+<td><strong>Messaging channel</strong> — Telegram bot token <strong>+</strong> your Telegram user ID</td>
+<td><strong>Required</strong></td>
+<td>Telegram → <code>@BotFather</code> (<code>/newbot</code> → token) and <code>@userinfobot</code> (your numeric ID).</td>
+</tr>
+<tr>
+<td><strong>Brave Search</strong> API key</td>
+<td>Strongly recommended</td>
+<td><a href="https://brave.com/search/api/">brave.com/search/api</a> — free tier covers most personal use.</td>
+</tr>
+<tr>
+<td><strong>Google Workspace</strong> OAuth credentials</td>
+<td>Recommended</td>
+<td><a href="https://console.cloud.google.com">console.cloud.google.com</a> — unlocks Gmail / Calendar / Drive. The longest setup (~45 min).</td>
+</tr>
+<tr>
+<td>Slack / Discord bot tokens</td>
+<td>Optional</td>
+<td>For team or community bots — add from the Skills page later.</td>
+</tr>
+<tr>
+<td>GitHub personal access token</td>
+<td>Optional</td>
+<td>For coding bots. (Separate from the deploy key in Step 1.)</td>
+</tr>
+<tr>
+<td>Tailscale</td>
+<td>Strongly recommended</td>
+<td><a href="https://tailscale.com">tailscale.com</a> — private access to the admin UI from your laptop and phone, no port-forwarding.</td>
+</tr>
+</tbody>
+</table>
+<p>You're ready to install the moment you have <strong>an Anthropic key/subscription, a
+Telegram bot token, and your Telegram user ID</strong>.</p>
+<h3 id="software-the-machine-needs">Software the machine needs</h3>
+<ul>
+<li><strong>Python</strong> 3.9+ (3.10+ on Linux)</li>
+<li><strong>Node.js</strong> 20+</li>
+<li><strong>git</strong> and <code>sudo</code> / root access</li>
+<li><strong>OpenClaw</strong> — or let the setup wizard install it for you</li>
+<li><strong>Linux only:</strong> the <code>acl</code> package (<code>sudo apt-get install -y acl</code>) — without it,
+  permission grants silently do nothing</li>
+</ul>
+<hr>
+<h2 id="step-3-choose-your-platform">Step 3 — Choose your platform</h2>
+<p>The hands-on install differs by operating system. Pick your platform and follow
+that guide end-to-end:</p>
+<ul>
+<li><strong><a href="install-macos.html">Install Evolve on macOS</a></strong> — Mac mini or a retired
+  MacBook. The simplest path.</li>
+<li><strong><a href="install-linux-vsp.html">Install Evolve on Linux (Ubuntu / VPS)</a></strong> — a
+  dedicated Linux box or cloud VPS. A few platform-specific landmines to verify;
+  the guide calls each one out.</li>
+</ul>
+<p>After either guide you'll have a running pod and an admin dashboard. From there,
+the <strong><a href="quick-start.html">Quick Start</a></strong> walks you through your first week, and
+<strong><a href="pwa-install.html">Install the app on your phone or desktop</a></strong> puts the dashboard
+one tap away.</p>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/installation.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>
