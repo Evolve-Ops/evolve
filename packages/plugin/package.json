@@ -13,7 +13,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.20.0",
-    "typescript": "^6.0.3"
+    "typescript": "^7.0.2"
   },
   "version": "0.1.0",
   "description": "Pod-wide Better Engine plugin for OpenClaw — measures and proposes behavioral improvements across a bot network",
