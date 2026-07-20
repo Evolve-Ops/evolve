@@ -432,7 +432,7 @@ jobs:
         if: ${{ needs.changes.outputs.web == 'false' }}
         run: echo "No admin-SPA web asset, eslint-config, or root npm-manifest changes in this PR — web eslint skipped."
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
@@ -534,7 +534,7 @@ jobs:
         if: ${{ needs.changes.outputs.plugin == 'false' }}
         run: echo "No plugin source or root npm-manifest changes in this PR — plugin tsc + node:test skipped."
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
@@ -747,7 +747,7 @@ jobs:
       # `npm install` is deterministic and resilient to a transient registry
       # hiccup. Without this the step would lean on the runner image's default
       # node + a cold cache.
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
