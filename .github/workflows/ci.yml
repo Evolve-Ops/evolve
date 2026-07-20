@@ -196,7 +196,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.10"
       - name: Install pytest
@@ -223,7 +223,7 @@ jobs:
         # is cheap and shared.
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.10"
       - name: Block new silently-swallowed exceptions
@@ -398,7 +398,7 @@ jobs:
         if: ${{ needs.changes.outputs.any_python == 'false' }}
         run: echo "No *.py/*.pyi or pyright-environment (pyproject/uv.lock/baseline) changes in this PR — pyright ratchet skipped (it type-checks the whole repo, so it runs whenever ANY Python source or its environment changes)."
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.10"
       - name: Run pyright against the frozen baseline
@@ -454,7 +454,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.10"
       - name: Install PyYAML
@@ -477,7 +477,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.10"
       - name: Install PyYAML
@@ -490,7 +490,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.10"
       - name: Install pytest
@@ -598,7 +598,7 @@ jobs:
         if: ${{ needs.changes.outputs.python == 'false' }}
         run: echo "No packages/admin, packages/analyzer, or test-infra changes in this PR — admin shard ${{ matrix.shard }} skipped."
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.10"
       - name: Install workspace from uv.lock
@@ -653,7 +653,7 @@ jobs:
         if: ${{ needs.changes.outputs.python == 'false' }}
         run: echo "No packages/admin, packages/analyzer, or test-infra changes in this PR — full analyzer suite skipped (the always-on guard jobs still ran)."
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.10"
       - name: Install workspace from uv.lock
@@ -695,7 +695,7 @@ jobs:
         if: ${{ needs.changes.outputs.edr == 'false' }}
         run: echo "No edr/ or packages/analyzer changes in this PR — EDR smoke skipped."
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.10"
       - name: Install workspace from uv.lock
@@ -738,7 +738,7 @@ jobs:
         if: ${{ needs.changes.outputs.linux_e2e == 'false' }}
         run: echo "No platform-surface changes in this PR — Linux e2e skipped (the harness guard + unit tests still cover the adapters)."
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.10"
       # step6e drives the REAL deploy.build_plugin() (npm install + npm run
