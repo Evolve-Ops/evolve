@@ -22,7 +22,7 @@ dependencies = [
     # RSI arbiter charter loader — charters are YAML on disk.
     "PyYAML>=6.0",
     # MCP bridge dependencies
-    "mcp>=1.0",
+    "mcp>=2.0.0",
     "starlette>=0.36",
     "uvicorn>=0.27",
     # Anthropic SDK — used by profile_inferrer (Haiku-backed) and the
