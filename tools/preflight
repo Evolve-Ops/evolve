@@ -1,0 +1,666 @@
+#!/usr/bin/env python3
+"""preflight — run the reproducible subset of CI against the current diff.
+
+CI (.github/workflows/ci.yml + browser-smoke.yml) is ~18 jobs. Many of them
+are deterministic lints/ratchets that already exist as standalone scripts in
+tools/ and run fine on macOS — but a chip has to know to run each one
+individually, so it pushes blind and the red only appears async minutes later.
+
+This is the single "run what CI runs" command. It:
+
+  1. Computes the changed-file set vs the merge-base with origin/main and
+     mirrors the path-gating in ci.yml's `changes` job (python / any_python /
+     web / plugin / linux_e2e / edr) so it runs EXACTLY the gates CI would run
+     for this diff. Fail-safe: any ambiguity → run it.
+
+  2. Runs each reproducible, macOS-capable gate the SAME way its CI job invokes
+     it (so a local PASS means the matching CI job will pass — a false GREEN
+     here is worse than a miss).
+
+  3. Excludes what can't run cheaply on macOS — linux-e2e (Linux-only) and the
+     full ~12k quarantined suites (default). `--full` opts the heavy suites in.
+
+  4. Prints a compact gate → CI-job → PASS/FAIL/SKIP table and exits non-zero
+     if any gate failed, dumping the failing gate's output so the caller can
+     fix immediately.
+
+Usage:
+  tools/preflight                # changed-only (default): cheap gates + targeted tests
+  tools/preflight --full         # also run the heavy admin/analyzer/edr suites + provision env
+  tools/preflight --all-paths    # ignore the diff; run every gate (fail-safe sweep)
+  tools/preflight --no-setup     # never provision (uv sync / npm ci); env-gated gates SKIP if env absent
+  tools/preflight -v             # stream each gate's output live
+
+The env-free lints/ratchets always run (they need only python3 + the repo).
+The uv-based gates (ruff, pyright, python tests) and node-based gates (eslint,
+plugin tsc/test) need their toolchain env; in the default mode they run if the
+env is already present, otherwise they SKIP with a note. `--full` provisions
+the env (uv sync --locked / npm ci) so nothing skips for a missing env.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Repo + git helpers
+# ---------------------------------------------------------------------------
+
+REPO = Path(__file__).resolve().parent.parent
+
+
+def _git(*args: str) -> tuple[int, str]:
+    p = subprocess.run(
+        ["git", *args], cwd=REPO, capture_output=True, text=True
+    )
+    return p.returncode, (p.stdout or "") + (p.stderr or "")
+
+
+def _git_lines(*args: str) -> list[str]:
+    rc, out = _git(*args)
+    if rc != 0:
+        return []
+    return [ln for ln in out.splitlines() if ln.strip()]
+
+
+# ---------------------------------------------------------------------------
+# Path-gating — TRANSCRIBED VERBATIM from ci.yml's `changes` job.
+#
+# Each pattern below is the exact grep -E regex CI uses to set that decision.
+# Applied per changed-file path with re.search (grep -E semantics: ^ anchors
+# the start of the path). Keep these byte-for-byte in sync with ci.yml — a
+# drift here means preflight runs a different gate set than CI.
+# ---------------------------------------------------------------------------
+
+# python: ci.yml line ~115 — the admin/analyzer-scoped heavy-suite decision.
+# gallery/ + packages/gallery/ + docs/atlas-app-manifests/ included so a
+# gallery-only change runs the admin suite (it owns
+# tests/test_gallery_conformance.py, which also sweeps the Atlas manifests).
+RE_PYTHON = re.compile(
+    r"^(gallery/|docs/atlas-app-manifests/|packages/admin/|packages/analyzer/|packages/gallery/|ci-quarantine\.txt|\.github/workflows/ci\.yml)"
+)
+
+# linux_e2e: ci.yml line ~122 — platform-surface decision.
+RE_LINUX_E2E = re.compile(
+    r"^(packages/analyzer/runtime/|packages/analyzer/platform_profile\.py"
+    r"|packages/analyzer/evolve_config\.py|packages/admin/evolve_admin/runtime/"
+    r"|packages/admin/evolve_admin/setup_wizard\.py|packages/admin/evolve_admin/deploy\.py"
+    r"|packages/admin/evolve_admin/keystore\.py|packages/admin/evolve_admin/web/run\.py"
+    r"|packages/admin/tests/e2e_linux/"
+    r"|packages/admin/tests/[^/]*(sudoers|perms|linux|systemd|isolation|platform)[^/]*\.py$"
+    r"|packages/analyzer/tests/test_platform_profile\.py|\.github/workflows/ci\.yml$)"
+)
+
+# edr: ci.yml line ~133 — edr/ or analyzer changes.
+RE_EDR = re.compile(r"^(edr/|packages/analyzer/|\.github/workflows/ci\.yml$)")
+
+# any_python: ci.yml line ~158 — whole-repo pyright/ruff decision.
+RE_ANY_PYTHON = re.compile(
+    r"\.pyi?$|(^|/)pyproject\.toml$|(^|/)uv\.lock$|(^|/)ruff\.toml$"
+    r"|(^|/)pyrightconfig\.json$|^tools/(pyright|ruff)-baseline|^\.github/workflows/ci\.yml$"
+)
+
+# web: ci.yml line ~168 — admin SPA / eslint config.
+RE_WEB = re.compile(
+    r"^packages/admin/evolve_admin/web/|^eslint\.config\.mjs$|^eslint-suppressions\.json$"
+    r"|^(package\.json|package-lock\.json)$|^\.github/workflows/ci\.yml$"
+)
+
+# plugin: ci.yml line ~179 — plugin source / npm manifest.
+RE_PLUGIN = re.compile(
+    r"^packages/plugin/|^(package\.json|package-lock\.json)$|^\.github/workflows/ci\.yml$"
+)
+
+DECISION_RES = {
+    "python": RE_PYTHON,
+    "any_python": RE_ANY_PYTHON,
+    "web": RE_WEB,
+    "plugin": RE_PLUGIN,
+    "linux_e2e": RE_LINUX_E2E,
+    "edr": RE_EDR,
+}
+
+
+def changed_files() -> tuple[list[str], str | None]:
+    """Return (paths, base_sha). On any git failure return ([], None) which the
+    caller treats as ambiguity → run every gate (CI's fail-safe shape)."""
+    # Make sure origin/main is known; a missing remote-tracking ref is the
+    # common fresh-clone case. Best-effort fetch, ignore failure (offline).
+    _git("fetch", "--quiet", "origin", "main")
+    rc, out = _git("merge-base", "HEAD", "origin/main")
+    if rc != 0:
+        return [], None
+    base = out.strip()
+    paths: set[str] = set()
+    # Committed on this branch since the merge-base (what the push will carry).
+    paths.update(_git_lines("diff", "--name-only", f"{base}..HEAD"))
+    # Uncommitted tracked changes (staged + unstaged) — a chip may run preflight
+    # before committing.
+    paths.update(_git_lines("diff", "--name-only", "HEAD"))
+    # Untracked-but-not-ignored new files (e.g. a brand-new tool/test).
+    paths.update(_git_lines("ls-files", "--others", "--exclude-standard"))
+    return sorted(p for p in paths if p), base
+
+
+def decide(paths: list[str], force_all: bool) -> dict[str, bool]:
+    if force_all:
+        return {k: True for k in DECISION_RES}
+    return {
+        name: any(rx.search(p) for p in paths) for name, rx in DECISION_RES.items()
+    }
+
+
+# ---------------------------------------------------------------------------
+# Gate model
+# ---------------------------------------------------------------------------
+
+PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
+
+
+class Gate:
+    def __init__(
+        self,
+        key: str,
+        ci_job: str,
+        trigger: str,  # decision name, or "always"
+        argv: list[str],
+        *,
+        cwd: Path | None = None,
+        env: dict[str, str] | None = None,
+        needs: str = "none",  # none | uv | node
+        heavy: bool = False,  # only run under --full
+    ):
+        self.key = key
+        self.ci_job = ci_job
+        self.trigger = trigger
+        self.argv = argv
+        self.cwd = cwd or REPO
+        self.env = env
+        self.needs = needs
+        self.heavy = heavy
+        self.status = SKIP
+        self.note = ""
+        self.output = ""
+        self.seconds = 0.0
+
+
+def _uv_env_ready() -> bool:
+    """True when an editable workspace venv exists that ruff/pyright/pytest can
+    run against via `uv run --no-sync`."""
+    return (REPO / ".venv" / "bin" / "python").exists()
+
+
+def _node_env_ready() -> bool:
+    """True when the root workspace node_modules is installed (eslint + the
+    hoisted plugin typescript both live there)."""
+    return (REPO / "node_modules").is_dir()
+
+
+def run_gate(gate: Gate, verbose: bool) -> None:
+    env = dict(os.environ)
+    if gate.env:
+        env.update(gate.env)
+    start = time.time()
+    if verbose:
+        print(f"\n\033[1m▶ {gate.key}\033[0m  ({' '.join(gate.argv)})", flush=True)
+        p = subprocess.run(gate.argv, cwd=gate.cwd, env=env)
+        gate.output = ""
+        rc = p.returncode
+    else:
+        p = subprocess.run(
+            gate.argv, cwd=gate.cwd, env=env, capture_output=True, text=True
+        )
+        gate.output = (p.stdout or "") + (p.stderr or "")
+        rc = p.returncode
+    gate.seconds = time.time() - start
+    gate.status = PASS if rc == 0 else FAIL
+
+
+# ---------------------------------------------------------------------------
+# Gate catalog — each entry mirrors one CI job's invocation EXACTLY.
+# ---------------------------------------------------------------------------
+
+
+def build_gates(base: str | None) -> list[Gate]:
+    PY = sys.executable or "python3"
+    base_sha = base or ""
+
+    gates: list[Gate] = []
+
+    # --- except-pass-ratchet job: the pure-python lints are UNCONDITIONAL in
+    #     CI (always start, no path gate), so they trigger="always" here. Each
+    #     is invoked with --all exactly as ci.yml does.
+    unconditional_lints = [
+        ("except-pass-lint", ["tools/except-pass-lint", "--all"]),
+        ("provider-literal-lint", ["tools/provider-literal-lint", "--all"]),
+        ("dup-primitive-lint", ["tools/dup-primitive-lint", "--all"]),
+        ("sudo-grant-lint", ["tools/sudo-grant-lint", "--all"]),
+        ("store-access-lint", ["tools/store-access-lint", "--all"]),
+        ("platform-path-lint", ["tools/platform-path-lint", "--all"]),
+        ("openclaw-eacces-lint", ["tools/openclaw-eacces-lint", "--all"]),
+        ("scheduler-factory-lint", ["tools/scheduler-factory-lint", "--all", "--strict"]),
+        ("signal-protection-lint", ["tools/signal-protection-lint", "--all", "--strict"]),
+        ("footprint-output-lint", ["tools/footprint-output-lint", "--all", "--strict"]),
+        ("footprint-graph-lint", ["tools/footprint-graph-lint"]),
+        ("quarantine-ratchet", ["tools/quarantine-ratchet", "--all"]),
+    ]
+    for key, argv in unconditional_lints:
+        gates.append(Gate(key, "Silent-exception ratchet", "always", [PY, *argv]))
+
+    # file-size-ratchet — CI passes --base <PR base sha>. We pass the merge-base
+    # so the diff-relative cap matches CI's "grew past base" semantics.
+    fsr = ["tools/file-size-ratchet", "--all"]
+    if base_sha:
+        fsr += ["--base", base_sha]
+    gates.append(Gate("file-size-ratchet", "Silent-exception ratchet", "always", [PY, *fsr]))
+
+    # --- ruff baseline: except-pass-ratchet's final step, gated on any_python.
+    #     CI: uv sync --only-group dev; uv run --no-sync python3 tools/ruff-baseline-lint --all
+    gates.append(
+        Gate(
+            "ruff-baseline-lint",
+            "Silent-exception ratchet (ruff)",
+            "any_python",
+            ["uv", "run", "--no-sync", PY, "tools/ruff-baseline-lint", "--all"],
+            needs="uv",
+        )
+    )
+
+    # --- pyright-ratchet job, gated on any_python.
+    #     CI: uv sync --locked; uv run --no-sync python3 tools/pyright-baseline-lint
+    gates.append(
+        Gate(
+            "pyright-baseline-lint",
+            "Pyright type-error ratchet",
+            "any_python",
+            ["uv", "run", "--no-sync", PY, "tools/pyright-baseline-lint"],
+            needs="uv",
+        )
+    )
+
+    # --- public-manifest job (unconditional). CI: python3 tools/check-public-manifest
+    gates.append(
+        Gate("check-public-manifest", "Public manifest cut-line guard", "always",
+             [PY, "tools/check-public-manifest"])
+    )
+
+    # --- help-coverage job (unconditional). CI: python3 tools/help-coverage-lint
+    gates.append(
+        Gate("help-coverage-lint", "Help-page registry coverage", "always",
+             [PY, "tools/help-coverage-lint"])
+    )
+
+    # --- scrub-guard job (unconditional). CI (working-directory packages/admin):
+    #     python -m pytest tests/test_public_launch_scrub.py -v
+    gates.append(
+        Gate("scrub-guard", "Public-launch scrub guard", "always",
+             [PY, "-m", "pytest", "tests/test_public_launch_scrub.py", "-q"],
+             cwd=REPO / "packages" / "admin")
+    )
+
+    # --- oc-channel-snapshot job (unconditional). CI (repo root):
+    #     python -m pytest tests/test_list_oc_channels.py -v
+    gates.append(
+        Gate("oc-channel-snapshot", "OC channel-snapshot parser invariant", "always",
+             [PY, "-m", "pytest", "tests/test_list_oc_channels.py", "-q"])
+    )
+
+    # --- web-eslint job, gated on web.
+    #     CI: npm ci; npx eslint "packages/admin/evolve_admin/web/**/*.js" --max-warnings 0
+    gates.append(
+        Gate(
+            "web-eslint",
+            "Admin SPA ESLint",
+            "web",
+            ["npx", "eslint", "packages/admin/evolve_admin/web/**/*.js", "--max-warnings", "0"],
+            needs="node",
+        )
+    )
+
+    # --- ui-style-lint: NOT a CI required check — it is the .githooks/pre-commit
+    #     gate (and CLAUDE.md's `tools/ui-style-lint <changed-files>`). Belt-and-
+    #     suspenders for chips whose clone has no hook installed. Env-free. We
+    #     pass the changed web files (full-file mode: only the high-confidence
+    #     BLOCK-tier rules fail; warn-tier width hints just print), so it never
+    #     reds on pre-existing legacy debt in a file the diff merely touched.
+    #     The file list is injected later (depends on the diff); placeholder argv.
+    gates.append(
+        Gate("ui-style-lint", "pre-commit (not a CI gate)", "web",
+             [PY, "tools/ui-style-lint"])
+    )
+
+    # --- plugin-tsc job, gated on plugin.
+    #     CI (working-directory packages/plugin): npm ci --dry-run --workspaces=false;
+    #         npx tsc --noEmit; node --test
+    pdir = REPO / "packages" / "plugin"
+    gates.append(
+        Gate("plugin-lockfile", "Plugin TypeScript build (lockfile sync)", "plugin",
+             ["npm", "ci", "--dry-run", "--workspaces=false"], cwd=pdir, needs="node")
+    )
+    gates.append(
+        Gate("plugin-tsc", "Plugin TypeScript build (tsc --noEmit)", "plugin",
+             ["npx", "tsc", "--noEmit"], cwd=pdir, needs="node")
+    )
+    # node:test is pure-.mjs and needs no node_modules, so it runs env-free.
+    gates.append(
+        Gate("plugin-node-test", "Plugin TypeScript build (node:test)", "plugin",
+             ["node", "--test"], cwd=pdir)
+    )
+
+    # --- edr-smoke job, gated on edr. CI:
+    #     uv run --no-sync python -m pytest edr/tests -q --tb=short -p no:cacheprovider
+    gates.append(
+        Gate(
+            "edr-smoke",
+            "EDR library-reuse + not-shipped smoke",
+            "edr",
+            ["uv", "run", "--no-sync", PY, "-m", "pytest", "edr/tests", "-q",
+             "--tb=short", "-p", "no:cacheprovider"],
+            needs="uv",
+        )
+    )
+
+    # --- Heavy suites (--full only). full-suite-admin / full-suite-analyzer.
+    #     CI shards admin 4-way; locally we run the whole suite in one process
+    #     (EVOLVE_NUM_SHARDS unset → conftest runs all). Same quarantine applies.
+    gates.append(
+        Gate(
+            "full-suite-admin",
+            "Full admin test suite",
+            "python",
+            ["uv", "run", "--no-sync", PY, "-m", "pytest", "-q", "--tb=short",
+             "-p", "no:cacheprovider"],
+            cwd=REPO / "packages" / "admin",
+            needs="uv",
+            heavy=True,
+        )
+    )
+    gates.append(
+        Gate(
+            "full-suite-analyzer",
+            "Full analyzer test suite",
+            "python",
+            ["uv", "run", "--no-sync", PY, "-m", "pytest", "-q", "--tb=short",
+             "-p", "no:cacheprovider", "-n", "auto", "--dist", "loadscope"],
+            cwd=REPO / "packages" / "analyzer",
+            needs="uv",
+            heavy=True,
+        )
+    )
+
+    return gates
+
+
+# ---------------------------------------------------------------------------
+# Targeted python tests (default-mode FAST subset of the heavy suites).
+# ---------------------------------------------------------------------------
+
+
+def targeted_python_gates(paths: list[str]) -> list[Gate]:
+    """Build per-package pytest gates over a FAST subset: the changed test files
+    themselves plus, for each changed source module, its sibling test_<stem>.py.
+    Avoids the full ~12k quarantined suite (that's --full). Needs the uv env."""
+    PY = sys.executable or "python3"
+    selected: dict[str, set[str]] = {"admin": set(), "analyzer": set()}
+
+    for p in paths:
+        m = re.match(r"^packages/(admin|analyzer)/(.*)\.py$", p)
+        if not m:
+            continue
+        pkg, rest = m.group(1), m.group(2)
+        if "/tests/" in p or p.endswith("/tests"):
+            # A changed test file → run it directly (if it still exists).
+            if (REPO / p).exists():
+                selected[pkg].add(str(Path(p).relative_to(f"packages/{pkg}")))
+            continue
+        # A changed source module → run its sibling test, if one exists.
+        stem = Path(rest).name
+        cand = REPO / "packages" / pkg / "tests" / f"test_{stem}.py"
+        if cand.exists():
+            selected[pkg].add(str(cand.relative_to(REPO / "packages" / pkg)))
+
+    gates: list[Gate] = []
+    for pkg, rels in selected.items():
+        if not rels:
+            continue
+        gates.append(
+            Gate(
+                f"pytest-{pkg}-targeted",
+                f"Full {pkg} test suite (targeted subset)",
+                "python",
+                ["uv", "run", "--no-sync", PY, "-m", "pytest", "-q", "--tb=short",
+                 "-p", "no:cacheprovider", *sorted(rels)],
+                cwd=REPO / "packages" / pkg,
+                needs="uv",
+            )
+        )
+    return gates
+
+
+# ---------------------------------------------------------------------------
+# Env provisioning (only under --full, lazily, when a selected gate needs it).
+# ---------------------------------------------------------------------------
+
+
+def provision(need_uv: bool, need_node: bool) -> None:
+    if need_uv and not _uv_env_ready():
+        print("→ provisioning uv env (uv sync --locked) — one-time, then cached…", flush=True)
+        subprocess.run(["uv", "sync", "--locked"], cwd=REPO)
+    if need_node and not _node_env_ready():
+        print("→ provisioning node env (npm ci) — one-time, then cached…", flush=True)
+        subprocess.run(["npm", "ci"], cwd=REPO)
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(
+        prog="preflight",
+        description="Run the reproducible subset of CI against the current diff.",
+    )
+    ap.add_argument("--full", action="store_true",
+                    help="also run the heavy admin/analyzer/edr suites and provision the env")
+    ap.add_argument("--all-paths", action="store_true",
+                    help="ignore the diff; treat every path decision as triggered")
+    ap.add_argument("--no-setup", action="store_true",
+                    help="never provision (uv sync / npm ci); env-gated gates SKIP if env absent")
+    ap.add_argument("-v", "--verbose", action="store_true",
+                    help="stream each gate's output live instead of capturing it")
+    args = ap.parse_args(argv)
+
+    if not (REPO / ".git").exists() and not (REPO / ".git").is_file():
+        # Worktrees have a .git FILE; a normal checkout a .git DIR. Either is fine.
+        pass
+
+    paths, base = changed_files()
+    ambiguous = base is None
+    force_all = args.all_paths or ambiguous
+    decisions = decide(paths, force_all)
+
+    # --- Header -----------------------------------------------------------
+    print("\033[1mpreflight\033[0m — local mirror of CI gates\n")
+    if ambiguous:
+        print("⚠  Could not resolve the diff vs origin/main — running ALL gates (fail-safe).")
+    elif args.all_paths:
+        print("Running ALL gates (--all-paths).")
+    else:
+        print(f"Changed files vs merge-base ({(base or '')[:12]}): {len(paths)}")
+        for p in paths[:40]:
+            print(f"    {p}")
+        if len(paths) > 40:
+            print(f"    … and {len(paths) - 40} more")
+    print()
+    print("CI path decisions: " + (", ".join(
+        f"{k}={'true' if decisions[k] else 'false'}" for k in DECISION_RES
+    )))
+    print()
+
+    # --- Assemble the gate list ------------------------------------------
+    gates = build_gates(base)
+    if not args.full:
+        # Default mode: drop the heavy suites; substitute targeted python tests.
+        gates = [g for g in gates if not g.heavy]
+        if decisions["python"]:
+            gates.extend(targeted_python_gates(paths))
+
+    # Inject the changed web-file list into the ui-style-lint gate.
+    web_files = [p for p in paths if p.startswith("packages/admin/evolve_admin/web/")
+                 and p.endswith((".js", ".css", ".html"))]
+    for g in gates:
+        if g.key == "ui-style-lint":
+            if web_files:
+                g.argv = g.argv + web_files
+            else:
+                # web decision triggered by config/manifest, not an actual web
+                # source file → nothing for ui-style-lint to check.
+                g.trigger = "__never__"
+
+    # --- Decide run vs skip per gate -------------------------------------
+    to_run: list[Gate] = []
+    for g in gates:
+        triggered = g.trigger == "always" or decisions.get(g.trigger, False)
+        if not triggered:
+            g.status = SKIP
+            g.note = "path not changed"
+            continue
+        if g.needs == "uv" and not _uv_env_ready():
+            if args.full:
+                pass  # will provision below
+            else:
+                g.status = SKIP
+                g.note = "uv env not synced — runs in CI; use --full to provision"
+                continue
+        if g.needs == "node" and not _node_env_ready():
+            if args.full:
+                pass
+            else:
+                g.status = SKIP
+                g.note = "node_modules absent — runs in CI; use --full to provision"
+                continue
+        to_run.append(g)
+
+    # --- Provision (only --full, only for env actually needed) -----------
+    if args.full and not args.no_setup:
+        need_uv = any(g.needs == "uv" for g in to_run)
+        need_node = any(g.needs == "node" for g in to_run)
+        if need_uv or need_node:
+            provision(need_uv, need_node)
+        # After provisioning, re-skip anything still missing its env.
+        for g in list(to_run):
+            if g.needs == "uv" and not _uv_env_ready():
+                g.status, g.note = SKIP, "uv env unavailable (provision failed)"
+                to_run.remove(g)
+            elif g.needs == "node" and not _node_env_ready():
+                g.status, g.note = SKIP, "node env unavailable (provision failed)"
+                to_run.remove(g)
+    elif args.no_setup:
+        # Honor --no-setup even under --full: skip env-needing gates if absent.
+        for g in list(to_run):
+            if g.needs == "uv" and not _uv_env_ready():
+                g.status, g.note = SKIP, "uv env not synced (--no-setup)"
+                to_run.remove(g)
+            elif g.needs == "node" and not _node_env_ready():
+                g.status, g.note = SKIP, "node_modules absent (--no-setup)"
+                to_run.remove(g)
+
+    # --- Run --------------------------------------------------------------
+    for g in to_run:
+        print(f"  running {g.key} …", flush=True)
+        run_gate(g, args.verbose)
+
+    # --- Notes for CI jobs preflight deliberately does NOT reproduce ------
+    linux_note = decisions.get("linux_e2e", False)
+    # browser-smoke (browser-smoke.yml) fires on web/** or tests/browser/**
+    # changes. It needs Playwright + downloaded Chromium/WebKit/Firefox binaries
+    # — too heavy for a per-push gate, so we flag it rather than run it.
+    browser_note = force_all or any(
+        p.startswith("packages/admin/evolve_admin/web/") or p.startswith("tests/browser/")
+        for p in paths
+    )
+
+    # --- Report table -----------------------------------------------------
+    print("\n" + "=" * 78)
+    print("\033[1mPREFLIGHT RESULTS\033[0m")
+    print("=" * 78)
+    width_key = max((len(g.key) for g in gates), default=12)
+    width_job = max((len(g.ci_job) for g in gates), default=12)
+    header = f"  {'GATE'.ljust(width_key)}  {'CI JOB'.ljust(width_job)}  RESULT"
+    print(header)
+    print("  " + "-" * (len(header) - 2))
+
+    color = {PASS: "\033[32m", FAIL: "\033[31m", SKIP: "\033[90m"}
+    n_pass = n_fail = n_skip = 0
+    # Stable order: by status (FAIL first), then key.
+    order = {FAIL: 0, PASS: 1, SKIP: 2}
+    for g in sorted(gates, key=lambda x: (order[x.status], x.key)):
+        if g.status == PASS:
+            n_pass += 1
+        elif g.status == FAIL:
+            n_fail += 1
+        else:
+            n_skip += 1
+        tag = f"{color[g.status]}{g.status}\033[0m"
+        extra = ""
+        if g.status == PASS and g.seconds:
+            extra = f"  ({g.seconds:.1f}s)"
+        elif g.status == SKIP and g.note:
+            extra = f"  ({g.note})"
+        print(f"  {g.key.ljust(width_key)}  {g.ci_job.ljust(width_job)}  {tag}{extra}")
+
+    print("  " + "-" * (len(header) - 2))
+    print(f"  {n_pass} passed, {n_fail} failed, {n_skip} skipped")
+
+    if linux_note:
+        print(
+            "\n\033[33mℹ  linux-e2e will run in CI and cannot be reproduced locally on "
+            "macOS — push and watch the check.\033[0m"
+        )
+    if browser_note:
+        print(
+            "\033[33mℹ  browser-smoke (Playwright, Chromium/WebKit/Firefox) will run in CI — "
+            "too heavy to reproduce per-push; push and watch the check.\033[0m"
+        )
+
+    # --- Dump failing output ---------------------------------------------
+    failures = [g for g in gates if g.status == FAIL]
+    if failures and not args.verbose:
+        for g in failures:
+            print("\n" + "=" * 78)
+            print(f"\033[31mFAILED: {g.key}\033[0m  (mirrors CI job: {g.ci_job})")
+            print(f"  $ {' '.join(g.argv)}")
+            if g.cwd != REPO:
+                print(f"  (cwd: {g.cwd.relative_to(REPO)})")
+            print("-" * 78)
+            out = g.output.strip()
+            # Cap each dump so a noisy gate doesn't bury the others.
+            lines = out.splitlines()
+            if len(lines) > 120:
+                print("\n".join(lines[:30]))
+                print(f"\n  … ({len(lines) - 60} lines elided) …\n")
+                print("\n".join(lines[-30:]))
+            else:
+                print(out)
+
+    if failures:
+        print(f"\n\033[31m✗ preflight FAILED — {n_fail} gate(s) red. Fix before pushing.\033[0m")
+        return 1
+    print("\n\033[32m✓ preflight passed — the mirrored CI gates are green.\033[0m")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except KeyboardInterrupt:
+        print("\ninterrupted", file=sys.stderr)
+        sys.exit(130)

@@ -1,0 +1,28 @@
+name: release-notes-nudge
+
+# Non-blocking nudge: warns when a `feat:` or `security:` PR lands without
+# updating RELEASES.yaml. See docs/spec-release-tiers-2026-05-16.md for policy.
+
+on:
+  pull_request:
+    types: [opened, synchronize, edited]
+
+jobs:
+  nudge:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      - name: Check release-notes coverage
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          GITHUB_BASE_REF: origin/${{ github.event.pull_request.base.ref }}
+        run: |
+          git fetch origin ${{ github.event.pull_request.base.ref }} --depth=1 || true
+          python3 scripts/check-release-notes.py --pr-title "$PR_TITLE" || true

@@ -1,0 +1,302 @@
+{
+  "pkg_id": "p-f14e9562",
+  "pkg_version": "2026.06.11-1.2",
+  "gallery_version": "2026.06.11-1.2",
+  "schema_version": 5,
+  "manifest_type": "evolve_application",
+  "display_name": "Meeting Note-taker",
+  "author": "evolve",
+  "description": "Captures meeting notes in your Obsidian vault automatically. Creates a note when a meeting starts, accepts 'take a note about X' commands during the meeting via the bot's primary channel, and seals the note with attendees and an optional summary when the meeting ends.",
+  "application_tags": [
+    "meeting-notes",
+    "obsidian-integration",
+    "calendar-summary",
+    "knowledge-management",
+    "calendar",
+    "integration",
+    "notes"
+  ],
+  "objective": "Compose two skills — Calendar and Obsidian — into a novel capability: meetings get a vault note automatically, the bot can append notes mid-meeting, and the note is sealed and summarized afterwards. No new bot tools required.",
+  "id": "app_note_taker",
+  "name": "Meeting Note-taker",
+  "status": "active",
+  "dependencies": [],
+  "app_dependencies": [],
+  "requirements": {
+    "integrations": [
+      {
+        "id": "calendar",
+        "display_name": "Google Calendar",
+        "required": true,
+        "check_path": "openclaw.json → plugins.entries.google + calendar scope",
+        "setup_doc": "docs/integrations/calendar.md",
+        "reason": "Reads upcoming and in-progress calendar events to know when to create meeting notes"
+      },
+      {
+        "id": "obsidian_vault",
+        "display_name": "Obsidian Vault",
+        "required": true,
+        "check_path": "openclaw.json → mcp.servers.obsidian",
+        "setup_doc": "docs/integrations/obsidian.md",
+        "reason": "Writes meeting notes as Markdown files in the configured vault"
+      }
+    ],
+    "secrets": [],
+    "system": [],
+    "python_packages": []
+  },
+  "interface_contract": {
+    "populated_by_forge": false,
+    "extracted_at": null,
+    "data_files": [
+      {
+        "path": "note_taker/active.json",
+        "description": "Active-meeting state — which meeting is in progress and where its note lives. The bot reads this when the user says 'take a note about X'.",
+        "schema": {
+          "storage_format": "JSON",
+          "fields": {
+            "event_id": "Calendar event ID (stable identifier)",
+            "title": "Meeting title",
+            "note_path": "Relative path inside the vault (e.g. meetings/2026-05-13-standup.md)",
+            "vault_path": "Absolute path to the Obsidian vault",
+            "start": "ISO datetime string of meeting start",
+            "end": "ISO datetime string of meeting end",
+            "attendees": "List of attendee email addresses",
+            "meeting_in_progress": "true while the meeting is running",
+            "updated_at": "ISO timestamp of last daemon run"
+          }
+        }
+      },
+      {
+        "path": "meetings/YYYY-MM-DD-<slug>.md",
+        "description": "One Markdown note per meeting, inside the Obsidian vault under the configured meetings subfolder. Created by the daemon; appended to by the bot; sealed after the meeting.",
+        "schema": {
+          "storage_format": "Markdown",
+          "sections": [
+            "# Meeting title",
+            "## Meeting Details (date, attendees, location)",
+            "## Agenda / Description",
+            "## Notes (bot appends here)",
+            "## Status",
+            "## Sealed (added after the meeting ends)"
+          ]
+        }
+      }
+    ],
+    "cli": [
+      {
+        "command": "python3 scripts/note_taker.py check",
+        "key_flags": [
+          "--vault-path PATH",
+          "--meetings-subfolder FOLDER",
+          "--time-zone TZ",
+          "--active-hours START,END",
+          "--auto-summarize-after-minutes N"
+        ],
+        "output_signals": [
+          "NOTE_TAKER_RAN:",
+          "NOTE_TAKER_NOTE_CREATED:",
+          "NOTE_TAKER_SEALED:",
+          "NOTE_TAKER_FAILED:",
+          "NOTE_TAKER_PARTIAL:",
+          "NOTE_TAKER_IDLE:"
+        ]
+      },
+      {
+        "command": "python3 scripts/note_taker.py status",
+        "key_flags": [],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/note_taker.py seal",
+        "key_flags": [],
+        "output_signals": [
+          "NOTE_TAKER_SEALED:",
+          "NOTE_TAKER_SEAL_FAILED"
+        ]
+      }
+    ],
+    "key_paths": {
+      "cli": "scripts/note_taker.py",
+      "cron_trigger": "scripts/note-taker-cron.sh",
+      "active_state": "note_taker/active.json",
+      "config": "note_taker/config.json",
+      "launchd_plist": "/Library/LaunchDaemons/com.{bot_id}.note-taker.plist"
+    },
+    "signal_prefixes": [
+      "NOTE_TAKER_RAN:",
+      "NOTE_TAKER_NOTE_CREATED:",
+      "NOTE_TAKER_SEALED:",
+      "NOTE_TAKER_FAILED:",
+      "NOTE_TAKER_PARTIAL:"
+    ],
+    "cron_schedule": "every 5 minutes during active hours (default 7am–7pm local)"
+  },
+  "files": [],
+  "install_job": null,
+  "improvement_history": [],
+  "identity": {
+    "purpose": "Compose Calendar and Obsidian into a novel 'meeting-aware note-taking' capability. The bot creates vault notes automatically when meetings start, lets the user dictate notes mid-meeting, and seals the note with a summary when the meeting ends. No new bot tools or endpoints required.",
+    "scope_includes": [
+      "Read upcoming and in-progress Calendar events every 5 minutes during configured hours",
+      "Create a Markdown note in the Obsidian vault when a meeting starts or is in progress without a note",
+      "Manage workspace/note_taker/active.json so the bot can resolve 'which meeting am I in right now' without an LLM call",
+      "Append user-dictated notes to the active meeting note (via active.json + existing bot file-edit tools)",
+      "After the meeting ends (plus grace period), optionally summarize the appended notes via the bot's LLM",
+      "Seal the note with attendees, time, and optional summary",
+      "Handle rescheduled / moved meetings gracefully (slug is stable; note is not duplicated)"
+    ],
+    "scope_excludes": [
+      "Creating, editing, or deleting Calendar events",
+      "Sending messages to meeting attendees",
+      "Syncing notes to any external service",
+      "Accessing email or any integration other than Calendar and Obsidian",
+      "Cross-bot data sharing"
+    ],
+    "bot_interaction_pattern": "The bot does not need new tools. The daemon sets context via active.json. When the user sends 'take a note about X' or 'add to current meeting', the bot reads active.json to find the note path, then appends using its existing file-write tool. This is described in the build_spec AGENTS.md guidance block.",
+    "user": "The bot operator — receives confirmation messages when notes are created and sealed."
+  },
+  "success_criteria": {
+    "observable_outcomes": [
+      "A vault note appears in meetings/ within 5 minutes of a Calendar event starting",
+      "The note contains the meeting title, attendees, and description from Calendar",
+      "Bot accepts 'take a note about X' during a meeting and appends to the note",
+      "After the meeting, the note gains a ## Sealed section with attendees and optional summary",
+      "NOTE_TAKER_RAN: signal emitted every 5 minutes during active hours"
+    ],
+    "failure_signals": [
+      "NOTE_TAKER_FAILED: no_vault_path — vault_path not configured in config.json",
+      "NOTE_TAKER_FAILED: vault_not_found — vault directory missing or unmounted",
+      "NOTE_TAKER_PARTIAL: calendar_unavailable — Calendar OAuth needs a refresh",
+      "No NOTE_TAKER_RAN: in 10 minutes during active hours — LaunchDaemon not loaded"
+    ],
+    "quality_bar": {
+      "minimum": "A meeting note appears automatically and the bot can append to it when asked",
+      "excellent": "The sealed note reads like a clean, usable meeting record — attendees listed, notes organized, summary accurate enough to share"
+    }
+  },
+  "build_spec": "# Meeting Note-taker — Build Specification (V2.1-5)\n\n## Overview\n\nBuild a meeting-aware note-taking system that composes two existing skills:\n- **Calendar** (V2.1-3) — knows when meetings are happening\n- **Obsidian** (existing) — writes Markdown notes to a vault directory\n\nThe composition: Calendar tells the daemon which meetings are active; the daemon writes notes to the Obsidian vault and manages a small state file (`active.json`). The bot's existing file-edit tools do the mid-meeting note appending — no new bot tools or server endpoints needed.\n\nThis is the first gallery app that composes two skills into a novel capability.\n\n---\n\n## File Layout\n\n```\nscripts/\n  note_taker.py          ← main CLI: check | status | seal\n  note-taker-cron.sh     ← cron trigger (calls note_taker.py check every 5 min)\nnote_taker/\n  active.json            ← active-meeting state (read by the bot during meetings)\n  config.json            ← per-bot configuration (vault_path, etc.)\n```\n\nAll paths are relative to the bot's workspace root (`/Users/{bot_id}/.openclaw/workspace/`).\nMeeting notes land in the Obsidian vault: `{vault_path}/{meetings_subfolder}/YYYY-MM-DD-<slug>.md`.\n\n---\n\n## scripts/note_taker.py — CLI\n\n### `check` (runs every 5 min via LaunchDaemon)\n\n**Steps:**\n1. Check if current time is within active hours — if not, emit NOTE_TAKER_IDLE: and exit\n2. Fetch upcoming / in-progress Calendar events via the Calendar skill\n3. For each event starting within 5 minutes OR in-progress:\n   a. Compute the note slug: `YYYY-MM-DD-<meeting-slug>` (stable; won't duplicate on re-run)\n   b. Create the Markdown note in `{vault_path}/{meetings_subfolder}/` if not yet created\n   c. Note seed: title, time, attendees, description, empty Notes section, Status header\n4. Write `note_taker/active.json` pointing at the current meeting's note\n5. For any active meeting that ended more than `auto_summarize_after_minutes` ago:\n   a. Optionally run one agent turn via the `openclaw agent --message=<prompt>` CLI to summarize the Notes section (stdout is the summary; no --deliver — nothing reaches the user's channel)\n   b. Append a `## Sealed` section with attendees + optional summary\n   c. Clear `active.json`\n6. Emit NOTE_TAKER_RAN: signal\n\n**Idempotent:** the note file only creates on first run (checks existence before writing).\n**Slug stability:** the same meeting title + date always produces the same filename, so rescheduled meetings don't get duplicate notes.\n\n### `status`\nPrint current active meeting from active.json, or \"No meeting in progress.\"\n\n### `seal`\nManually seal the active meeting note — useful for testing or when the user ends a meeting early.\n\n---\n\n## active.json — the active-meeting state file\n\nThe daemon writes this file to `note_taker/active.json` inside the bot workspace:\n\n```json\n{\n  \"event_id\": \"abc123\",\n  \"title\": \"Patel meeting\",\n  \"note_path\": \"meetings/2026-05-13-patel-meeting.md\",\n  \"vault_path\": \"/Users/team_bot_a/Documents/Obsidian\",\n  \"start\": \"2026-05-13T14:00:00\",\n  \"end\": \"2026-05-13T15:00:00\",\n  \"attendees\": [\"patel@example.com\", \"team_bot_a@example.com\"],\n  \"meeting_in_progress\": true,\n  \"updated_at\": \"2026-05-13T14:02:00\"\n}\n```\n\nWhen no meeting is active, the file does not exist (deleted by the daemon after sealing).\n\n**Why a state file, not a bot tool:** The bot does not need a new tool. It reads `active.json` to find the note path, then uses its existing `write_file` / file-append tool to add a line. The daemon manages the lifecycle; the bot just does what it already knows how to do.\n\n---\n\n## AGENTS.md guidance for the bot\n\nAdd this block to the bot's AGENTS.md so it knows how to handle note-taking commands:\n\n```\n## Meeting Note-taker\n\nWhen the user says something like \"take a note about X\", \"remember X for this meeting\",\n\"add to current meeting note\", or \"note that X\":\n\n1. Read `note_taker/active.json` (in the workspace root).\n   - If the file does not exist: respond \"No meeting is in progress right now.\"\n   - If `meeting_in_progress` is false: respond \"No active meeting note is open.\"\n2. Get `note_path` and `vault_path` from the file.\n3. Append the user's note to `{vault_path}/{note_path}` under the `## Notes` section,\n   prefixed with the current time: `- [HH:MM] <user's note>`.\n4. Confirm: \"Got it — added to the {title} note.\"\n\nThe daemon manages the file lifecycle; you just read the path and append.\n```\n\n---\n\n## Note Markdown format\n\nCreated by the daemon at meeting-start:\n\n```markdown\n# {Meeting Title}\n\n## Meeting Details\n- **Date/Time:** {start} — {end}\n- **Attendees:** {attendee1}, {attendee2}\n- **Location:** {location or 'No location'}\n\n## Agenda / Description\n\n{event description, or 'No description.'}\n\n## Notes\n\n<!-- Bot appends notes here during the meeting -->\n\n## Status\n\nIn progress — created {YYYY-MM-DD HH:MM}\n```\n\nAfter the meeting ends (sealed):\n\n```markdown\n## Sealed\n- Sealed at {YYYY-MM-DD HH:MM}\n- Attendees: {attendee1}, {attendee2}\n**Summary:** {LLM summary of the ## Notes section, if notes were taken}\n```\n\n---\n\n## note-taker-cron.sh — cron trigger\n\n```bash\n#!/bin/bash\n# note-taker-cron.sh -- note-taker cron trigger\n# Installed by the note-taker app. LaunchDaemon fires every 5 minutes.\n\nWORKSPACE=\"/Users/{bot_id}/.openclaw/workspace\"\nLOGFILE=\"/tmp/{bot_id}-note-taker.log\"\n\npython3 \"$WORKSPACE/scripts/note_taker.py\" check \\\n  --vault-path \"{vault_path}\" \\\n  --meetings-subfolder \"{meetings_subfolder}\" \\\n  --time-zone \"{time_zone}\" \\\n  --active-hours \"{active_hours}\" \\\n  --auto-summarize-after-minutes \"{auto_summarize_after_minutes}\" \\\n  >> \"$LOGFILE\" 2>&1\n\nexit 0\n```\n\nMake executable. Register as a LaunchDaemon at every 5 minutes.\n\n---\n\n## LaunchDaemon plist\n\nWrite to `/Library/LaunchDaemons/com.{bot_id}.note-taker.plist`.\n\nSystem-context LaunchDaemons load at boot regardless of GUI session — required for headless bots on the mini, where ~/Library/LaunchAgents never load (no user session). Daemon runs as the bot user via `UserName`.\n\n```xml\n<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\"\n  \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key>\n  <string>com.{bot_id}.note-taker</string>\n  <key>UserName</key>\n  <string>{bot_id}</string>\n  <key>GroupName</key>\n  <string>staff</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>/bin/bash</string>\n    <string>/Users/{bot_id}/.openclaw/workspace/scripts/note-taker-cron.sh</string>\n  </array>\n  <key>EnvironmentVariables</key>\n  <dict>\n    <key>TZ</key>\n    <string>{time_zone}</string>\n  </dict>\n  <key>StartInterval</key>\n  <integer>300</integer>\n  <key>StandardOutPath</key>\n  <string>/tmp/{bot_id}-note-taker-out.log</string>\n  <key>StandardErrorPath</key>\n  <string>/tmp/{bot_id}-note-taker-err.log</string>\n  <key>RunAtLoad</key>\n  <false/>\n</dict>\n</plist>\n```\n\nNote: `StartInterval` (300 = every 5 minutes) is used instead of `StartCalendarInterval` because the daemon needs to run at arbitrary 5-minute intervals, not at a fixed clock time.\n\n---\n\n## config.json — per-bot configuration\n\nWrite `note_taker/config.json` with defaults from install-time answers:\n\n```json\n{\n  \"vault_path\": \"{vault_path}\",\n  \"meetings_subfolder\": \"{meetings_subfolder}\",\n  \"active_hours\": \"{active_hours}\",\n  \"auto_summarize_after_minutes\": {auto_summarize_after_minutes},\n  \"time_zone\": \"{time_zone}\"\n}\n```\n\n---\n\n## Template variables\n\n| Variable | Required | Default | Description |\n|---|---|---|---|\n| `{bot_id}` | yes | — | Bot user ID (set automatically from install target) |\n| `{vault_path}` | yes | — | Absolute path to Obsidian vault (from Obsidian skill config) |\n| `{meetings_subfolder}` | no | meetings | Subfolder inside vault for meeting notes |\n| `{time_zone}` | no | America/Los_Angeles | IANA timezone for the bot |\n| `{active_hours}` | no | 7,19 | Hour range for daemon activity (e.g. 7,19 = 7am–7pm) |\n| `{auto_summarize_after_minutes}` | no | 15 | Minutes after meeting end before auto-sealing |\n\n---\n\n## Test sequence\n\nAfter building:\n\n```bash\n# 1. Syntax check\npython3 -m py_compile scripts/note_taker.py\n\n# 2. Status (no active meeting)\npython3 scripts/note_taker.py status\n# Expected: 'No meeting in progress.'\n\n# 3. Check with stub events (creates a note)\necho '[{\"id\":\"t1\",\"title\":\"Test Standup\",\"start\":\"2026-05-13T10:00:00\",\"end\":\"2026-05-13T10:30:00\",\"attendees\":[],\"description\":\"\",\"location\":\"\"}]' > /tmp/test-events.json\npython3 scripts/note_taker.py check \\\n  --vault-path \"{vault_path}\" \\\n  --meetings-subfolder meetings \\\n  --time-zone \"America/Los_Angeles\" \\\n  --active-hours 0,24 \\\n  --events-json /tmp/test-events.json\n# Expected: NOTE_TAKER_NOTE_CREATED: meetings/...\n\n# 4. Confirm note exists in vault\nls \"{vault_path}/meetings/\" | grep test-standup\n\n# 5. Status (shows active meeting)\npython3 scripts/note_taker.py status\n# Expected: Meeting: Test Standup ...\n\n# 6. Seal\npython3 scripts/note_taker.py seal\n# Expected: NOTE_TAKER_SEALED: meetings/...\n\n# 7. Status (no active meeting after seal)\npython3 scripts/note_taker.py status\n# Expected: 'No meeting in progress.'\n\n# 8. Executable check\ntest -x scripts/note-taker-cron.sh && echo 'OK: cron script executable'\n```\n\nAll steps must exit 0.\n\n---\n\n## Rendered files\n\nThe provisioner materialises these files from the ## FILE: blocks below.\nTemplate vars ({bot_id}, {vault_path}, {meetings_subfolder}, {time_zone},\n{active_hours}, {auto_summarize_after_minutes}) are substituted at install time.\n\n## FILE: scripts/note-taker-cron.sh\n```bash\n#!/bin/bash\n# note-taker-cron.sh -- note-taker cron trigger\n# Installed by the Meeting Note-taker app. LaunchDaemon fires every 5 minutes.\n\nWORKSPACE=\"/Users/{bot_id}/.openclaw/workspace\"\nLOGFILE=\"/tmp/{bot_id}-note-taker.log\"\n\npython3 \"$WORKSPACE/scripts/note_taker.py\" check \\\n  --vault-path \"{vault_path}\" \\\n  --meetings-subfolder \"{meetings_subfolder}\" \\\n  --time-zone \"{time_zone}\" \\\n  --active-hours \"{active_hours}\" \\\n  --auto-summarize-after-minutes {auto_summarize_after_minutes} \\\n  >> \"$LOGFILE\" 2>&1\n\nexit 0\n```\n\n## FILE: /Library/LaunchDaemons/com.{bot_id}.note-taker.plist\n```xml\n<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\"\n  \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key>\n  <string>com.{bot_id}.note-taker</string>\n  <key>UserName</key>\n  <string>{bot_id}</string>\n  <key>GroupName</key>\n  <string>staff</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>/bin/bash</string>\n    <string>/Users/{bot_id}/.openclaw/workspace/scripts/note-taker-cron.sh</string>\n  </array>\n  <key>EnvironmentVariables</key>\n  <dict>\n    <key>TZ</key>\n    <string>{time_zone}</string>\n  </dict>\n  <key>StartInterval</key>\n  <integer>300</integer>\n  <key>StandardOutPath</key>\n  <string>/tmp/{bot_id}-note-taker-out.log</string>\n  <key>StandardErrorPath</key>\n  <string>/tmp/{bot_id}-note-taker-err.log</string>\n  <key>RunAtLoad</key>\n  <false/>\n</dict>\n</plist>\n```\n\n## FILE: note_taker/config.json\n```json\n{\n  \"vault_path\": \"{vault_path}\",\n  \"meetings_subfolder\": \"{meetings_subfolder}\",\n  \"active_hours\": \"{active_hours}\",\n  \"auto_summarize_after_minutes\": {auto_summarize_after_minutes},\n  \"time_zone\": \"{time_zone}\"\n}\n```\n",
+  "example_triggers": [
+    "Take a note about the budget concern",
+    "Add to current meeting: action item for Sarah",
+    "Did a note get created for my 2pm meeting?",
+    "What meeting am I in right now?",
+    "Seal today's standup note",
+    "Show me the status of the note-taker"
+  ],
+  "test_cases": [
+    {
+      "trigger": "Take a note about the budget concern",
+      "expected": "Read note_taker/active.json, confirm meeting_in_progress is true, append '- [HH:MM] budget concern' to the meeting note, confirm success"
+    },
+    {
+      "trigger": "What meeting am I in right now?",
+      "expected": "Read note_taker/active.json, report meeting title and start time, or 'No meeting in progress' if file is absent"
+    },
+    {
+      "trigger": "Seal today's standup note",
+      "expected": "Run python3 scripts/note_taker.py seal, confirm NOTE_TAKER_SEALED: emitted"
+    }
+  ],
+  "constraints": {
+    "safety": [
+      "Read-only Calendar access — no event creation, editing, or deletion",
+      "Writes only to the configured Obsidian vault path — bounded by the vault directory",
+      "No cross-bot data sharing",
+      "LLM summarization is opt-in and runs as one local `openclaw agent` turn under the bot's own account — no external service, nothing delivered to a channel"
+    ],
+    "dependencies": [
+      "calendar (required) — reads meeting schedule via Calendar skill (V2.1-3)",
+      "obsidian_vault (required) — writes meeting notes to vault via the @modelcontextprotocol/server-filesystem MCP server scoped to the vault path"
+    ],
+    "boundaries": [
+      "One note per calendar event — slug is stable; no duplicates on re-run",
+      "Daemon only active during configured hours (default 7am–7pm)",
+      "Bot uses existing file-edit tools + active.json — no new bot tools added"
+    ]
+  },
+  "scheduled_actions": [
+    {
+      "id": "note-taker-poll",
+      "mechanism": "launchd",
+      "trigger": {
+        "kind": "launchd"
+      },
+      "install": {
+        "plist_label": "ai.evolve.${bot_id}.note-taker",
+        "command": "/bin/bash ${workspace}/scripts/note-taker-cron.sh",
+        "cwd": "${workspace}",
+        "schedule": {
+          "every_minutes": 5
+        },
+        "exec_policy": "inherit"
+      },
+      "summary": "Poll for in-progress meetings every 5 minutes."
+    }
+  ],
+  "usage": {
+    "model": "scheduled",
+    "trigger_recognition": {
+      "pattern": "Note-taker polls the calendar every few minutes and creates a vault note when a meeting starts. When the user says 'take a note', append to the current meeting note. When they ask whether a note exists for a meeting, use `status`.",
+      "hint_words": [
+        "take a note",
+        "add to current meeting",
+        "action item",
+        "meeting note",
+        "did a note get created"
+      ],
+      "requires_keyword": false
+    },
+    "auto_capture": {
+      "enabled": true,
+      "sources": [
+        "calendar event start"
+      ]
+    },
+    "how_to_use": "The background poll creates a note when a meeting begins; don't trigger it manually. When the user wants to add a line to the active meeting's note, the user's message goes into the note (the script handles formatting). Use `seal` after the meeting ends to finalise. `status` checks whether a note is currently being captured.",
+    "bot_voice_examples": [
+      "Added to your 2pm note — action item for Sarah on the budget.",
+      "Note for 'Design review' created at 1:58pm — capturing now.",
+      "No active meeting note — the 2pm hasn't started yet."
+    ]
+  },
+  "verification": [
+    {
+      "kind": "artifact",
+      "name": "main_script_compiles",
+      "path": "scripts/note_taker.py",
+      "checks": [
+        "exists",
+        "py_compiles"
+      ]
+    },
+    {
+      "kind": "artifact",
+      "name": "cron_wrapper",
+      "path": "scripts/note-taker-cron.sh",
+      "checks": [
+        "exists",
+        "owner_exec"
+      ]
+    },
+    {
+      "kind": "command",
+      "name": "cli_status",
+      "argv": [
+        "python3",
+        "scripts/note_taker.py",
+        "status"
+      ],
+      "expected_exit": 0,
+      "timeout_s": 30
+    },
+    {
+      "kind": "artifact",
+      "name": "active_state_valid_if_present",
+      "path": "note_taker/active.json",
+      "checks": [
+        "json_valid"
+      ]
+    }
+  ]
+}

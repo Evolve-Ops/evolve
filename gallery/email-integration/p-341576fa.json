@@ -1,0 +1,276 @@
+{
+  "pkg_id": "p-341576fa",
+  "pkg_version": "2026.04.16-1.1",
+  "gallery_version": "2026.04.16-1.1",
+  "schema_version": 5,
+  "manifest_type": "evolve_application",
+  "display_name": "Email Integration",
+  "author": "evolve",
+  "description": "Syncs Gmail into structured local files. Provides email data to EA Pack, CRM, meeting prep, and commitment detection apps. Updates every 30 minutes.",
+  "application_tags": [
+    "email-summary",
+    "data-foundation",
+    "personal-productivity",
+    "calendar",
+    "contacts",
+    "email",
+    "executive-assistant",
+    "integration",
+    "productivity",
+    "workspace-suite"
+  ],
+  "id": "app_email_integration",
+  "name": "Email Integration",
+  "status": "active",
+  "dependencies": [],
+  "app_dependencies": [],
+  "requirements": {
+    "integrations": [
+      {
+        "id": "gmail",
+        "display_name": "Gmail",
+        "required": true,
+        "check_path": "openclaw.json → integrations.gmail",
+        "setup_doc": "docs/integrations/gmail.md",
+        "reason": "Reads email via Gmail API",
+        "alternatives": [
+          {
+            "id": "google_path_c",
+            "display_name": "Google (path-C: service-account + DwD)",
+            "required": true,
+            "check_path": "network.json → bots[bot].google_integration",
+            "required_scopes": [
+              "https://www.googleapis.com/auth/gmail.readonly"
+            ],
+            "setup_doc": "docs/spec-google-integration-paths-2026-05-30.md",
+            "reason": "Path-C service-account auth from PR #1862. Bot uses MCP tools server-side instead of legacy bearer-token HTTP."
+          }
+        ]
+      }
+    ],
+    "secrets": [],
+    "system": [],
+    "python_packages": []
+  },
+  "interface_contract": {
+    "populated_by_forge": false,
+    "extracted_at": null,
+    "data_files": [
+      {
+        "path": "memory/email-digest.json",
+        "description": "Array of recent email objects — last 50 unread + recent read emails from INBOX. Updated every 30 minutes.",
+        "schema": {
+          "storage_format": "JSON array of email objects",
+          "fields": {
+            "id": "string — Gmail message ID",
+            "thread_id": "string — Gmail thread ID",
+            "from_addr": "string — full 'Name <email@domain.com>' format",
+            "subject": "string — email subject",
+            "date_iso": "string — ISO 8601 datetime with timezone offset",
+            "labels": "array of strings — Gmail label names as-is (e.g. 'INBOX', 'SENT', 'Label_xyz')",
+            "body_preview": "string — first 500 chars of plain text body",
+            "is_read": "boolean — true if UNREAD label is absent",
+            "is_replied": "boolean — true if REPLIED or SENT label is present"
+          }
+        }
+      },
+      {
+        "path": "memory/email/threads/{thread_id}.json",
+        "description": "Full thread with all messages. Written on demand via the thread command.",
+        "schema": {
+          "storage_format": "JSON object with thread metadata and messages array",
+          "fields": {
+            "thread_id": "string",
+            "messages": "array of email objects (same schema as digest entries, with full body instead of preview)"
+          }
+        }
+      }
+    ],
+    "cli": [
+      {
+        "command": "python3 scripts/email_sync.py sync",
+        "key_flags": [],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/email_sync.py unread",
+        "key_flags": [
+          "--limit N (default 20)"
+        ],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/email_sync.py search",
+        "key_flags": [
+          "--query QUERY"
+        ],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/email_sync.py thread THREAD_ID",
+        "key_flags": [],
+        "output_signals": []
+      }
+    ],
+    "key_paths": {
+      "digest": "memory/email-digest.json",
+      "threads_dir": "memory/email/threads/",
+      "cli": "scripts/email_sync.py"
+    }
+  },
+  "files": [],
+  "install_job": null,
+  "improvement_history": [],
+  "identity": {
+    "purpose": "Pull Gmail into structured local JSON files so that other bot apps can read email data without making API calls themselves. Acts as the email data layer for EA Pack, CRM, and commitment detection apps.",
+    "scope_includes": [
+      "Authenticate with Gmail API using token from openclaw.json",
+      "Fetch last 50 unread + 20 recent read emails from INBOX and write to email-digest.json",
+      "Fetch full thread on demand and write to memory/email/threads/{thread_id}.json",
+      "Preserve Gmail label names exactly as returned by the API",
+      "Write files atomically to prevent partial reads by other apps",
+      "Degrade gracefully on auth failure — preserve existing files unchanged",
+      "Run automatically every 30 minutes via launchd StartInterval"
+    ],
+    "scope_excludes": [
+      "Sending email — read-only sync only",
+      "Deleting, archiving, or modifying emails or labels",
+      "Full-text search across all email history",
+      "Syncing non-Gmail providers"
+    ],
+    "user": "Other bot apps that need email context (EA Pack, CRM, commitment detection). The operator can also query unread, search, and thread directly from the CLI."
+  },
+  "success_criteria": {
+    "observable_outcomes": [
+      "email-digest.json is updated within 30 minutes of new mail arriving",
+      "from_addr preserves the full 'Name <email>' format when available",
+      "body_preview contains the first 500 chars of plain text, not raw HTML",
+      "Auth failures leave existing digest file unchanged rather than writing empty or corrupt data"
+    ],
+    "failure_signals": [
+      "email-digest.json is missing or contains malformed JSON after a sync run",
+      "body_preview contains raw HTML instead of plain text",
+      "is_read is always false regardless of actual read state",
+      "Sync crashes with unhandled exception on token expiry"
+    ],
+    "quality_bar": {
+      "minimum": "EA Pack can read email-digest.json and get an accurate list of unread emails with sender, subject, date, and body preview.",
+      "excellent": "body_preview is clean plain text. Labels are preserved accurately. thread command writes full thread to disk for commitment detection apps. Graceful degradation on auth failure means dependent apps are never broken by a sync failure."
+    }
+  },
+  "build_spec": "# Email Integration — Build Specification\n\n## Overview\n\nBuild a Gmail sync script. Reads OAuth token from openclaw.json, fetches emails via the Gmail API, writes structured JSON to cache files, runs every 30 minutes via launchd.\n\n---\n\n## File Layout\n\n```\nscripts/\n  email_sync.py              ← main CLI\nmemory/\n  email-digest.json          ← recent emails (auto-updated)\n  email/\n    threads/\n      {thread_id}.json       ← full threads (written on demand)\n```\n\n---\n\n## Auth: Reading the Token\n\nRead from openclaw.json → integrations.gmail:\n\n```python\nimport json\nfrom pathlib import Path\n\noc = json.loads(Path(\"/Users/{bot_id}/.openclaw/openclaw.json\").read_text())\ngmail_cfg = oc.get(\"integrations\", {}).get(\"gmail\", {})\ntoken = gmail_cfg.get(\"token\")  # dict with access_token, refresh_token, etc.\n```\n\nIf token is missing or auth raises an exception: preserve existing files unchanged, exit 0. Do NOT overwrite with empty arrays.\n\n---\n\n## Email Object Construction\n\n```python\nimport base64, email as email_lib\n\ndef extract_plain_text(payload: dict) -> str:\n    \"\"\"Recursively extract plain text from Gmail message payload.\"\"\"\n    mime_type = payload.get(\"mimeType\", \"\")\n    if mime_type == \"text/plain\":\n        data = payload.get(\"body\", {}).get(\"data\", \"\")\n        return base64.urlsafe_b64decode(data + \"==\").decode(\"utf-8\", errors=\"replace\")\n    for part in payload.get(\"parts\", []):\n        text = extract_plain_text(part)\n        if text:\n            return text\n    return \"\"\n\ndef build_email_object(msg: dict, full_body: bool = False) -> dict:\n    headers = {h[\"name\"].lower(): h[\"value\"] for h in msg[\"payload\"].get(\"headers\", [])}\n    plain = extract_plain_text(msg[\"payload\"])\n    labels = msg.get(\"labelIds\", [])\n    return {\n        \"id\": msg[\"id\"],\n        \"thread_id\": msg[\"threadId\"],\n        \"from_addr\": headers.get(\"from\", \"\"),\n        \"subject\": headers.get(\"subject\", \"\"),\n        \"date_iso\": headers.get(\"date\", \"\"),\n        \"labels\": labels,\n        \"body_preview\": plain[:500] if not full_body else plain,\n        \"is_read\": \"UNREAD\" not in labels,\n        \"is_replied\": any(l in labels for l in [\"REPLIED\", \"SENT\"]),\n    }\n```\n\nLabel names are preserved exactly as returned by the Gmail API (e.g. `\"INBOX\"`, `\"SENT\"`, `\"Label_12345678\"`). Never normalize or rename them.\n\n---\n\n## Atomic Write\n\n```python\nimport os, json, tempfile\nfrom pathlib import Path\n\ndef atomic_write(path: Path, data) -> None:\n    path.parent.mkdir(parents=True, exist_ok=True)\n    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=\".tmp\")\n    with os.fdopen(fd, \"w\") as f:\n        json.dump(data, f, indent=2)\n    os.replace(tmp, path)\n```\n\n---\n\n## CLI: scripts/email_sync.py\n\n### `sync`\n- Fetch last 50 UNREAD messages from INBOX\n- Fetch last 20 READ messages from INBOX (use `q='is:read in:inbox'`)\n- Build email objects (body_preview = first 500 chars plain text)\n- Merge, deduplicate by id, sort by date descending\n- Write to memory/email-digest.json atomically\n- On any auth error: preserve existing file, exit 0\n\n### `unread`\n- `--limit N` (default 20)\n- Read email-digest.json, filter is_read == false, return first N\n- Print as formatted JSON\n\n### `search`\n- `--query QUERY` (required)\n- Search email-digest.json: match query against from_addr, subject, body_preview (case-insensitive)\n- Print matching emails as formatted JSON\n- Note: search is local across the digest only, not the full inbox\n\n### `thread THREAD_ID`\n- Fetch all messages in the thread from the Gmail API\n- Build full email objects (full_body=True — no truncation)\n- Write to memory/email/threads/{thread_id}.json atomically\n- Print the thread JSON\n\n---\n\n## LaunchDaemon Plist\n\nWrite to `/Library/LaunchDaemons/com.{bot_id}.email-sync.plist` (system context —\nLaunchDaemons load at boot regardless of user session, required for headless bots\non the mini where ~/Library/LaunchAgents never load). Ownership: root:wheel mode 644.\n\n```xml\n<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\"\n  \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key>\n  <string>com.{bot_id}.email-sync</string>\n  <key>UserName</key>\n  <string>{bot_id}</string>\n  <key>GroupName</key>\n  <string>staff</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>/usr/bin/python3</string>\n    <string>/Users/{bot_id}/.openclaw/workspace/scripts/email_sync.py</string>\n    <string>sync</string>\n  </array>\n  <key>StartInterval</key>\n  <integer>1800</integer>\n  <key>StandardOutPath</key>\n  <string>/tmp/{bot_id}-email-sync.log</string>\n  <key>StandardErrorPath</key>\n  <string>/tmp/{bot_id}-email-sync-err.log</string>\n  <key>RunAtLoad</key>\n  <true/>\n</dict>\n</plist>\n```\n\n---\n\n## Test Suite\n\n```bash\n# 1. Syntax check\npython3 -m py_compile scripts/email_sync.py\n\n# 2. unread command (reads cache or returns [])\npython3 scripts/email_sync.py unread\n# Expected: valid JSON array\n\n# 3. Validate digest schema if any emails present\npython3 -c \"\nimport json\nfrom pathlib import Path\nif Path('memory/email-digest.json').exists():\n    emails = json.load(open('memory/email-digest.json'))\n    for e in emails:\n        assert all(k in e for k in ['id','thread_id','from_addr','subject','date_iso','labels','body_preview','is_read','is_replied']), 'Missing field'\n    print('OK: email schema valid')\nelse:\n    print('OK: no digest file yet')\n\"\n```",
+  "example_triggers": [
+    "What unread emails do I have?",
+    "Show me emails from Alice",
+    "Read the thread about the Q2 budget",
+    "What did Bob send me this week?",
+    "Sync my email now",
+    "Search my email for invoice"
+  ],
+  "test_cases": [
+    {
+      "trigger": "What unread emails do I have?",
+      "expected": "Read memory/email-digest.json, filter is_read == false, return formatted list with sender, subject, and date"
+    },
+    {
+      "trigger": "Show me the full thread for thread ID abc123",
+      "expected": "Call email_sync.py thread abc123; write full thread to memory/email/threads/abc123.json; return thread summary"
+    },
+    {
+      "trigger": "Search my email for 'invoice'",
+      "expected": "Call email_sync.py search --query invoice; return matching emails from digest"
+    }
+  ],
+  "constraints": {
+    "safety": [
+      "Email sync is read-only — never send, delete, archive, or modify emails",
+      "Auth failures must preserve existing digest file — never overwrite with empty or corrupt data",
+      "Atomic writes prevent partial file reads by other apps during sync"
+    ],
+    "boundaries": [
+      "Only syncs Gmail — no other email providers",
+      "Local search is over the digest only (last ~70 emails) — not the full inbox history",
+      "Does not store full email bodies in the digest — body_preview is capped at 500 chars"
+    ]
+  },
+  "scheduled_actions": [
+    {
+      "id": "email-sync",
+      "mechanism": "launchd",
+      "trigger": {
+        "kind": "launchd"
+      },
+      "install": {
+        "plist_label": "ai.evolve.${bot_id}.email-sync",
+        "command": "/usr/bin/python3 ${workspace}/scripts/email_sync.py sync",
+        "cwd": "${workspace}",
+        "schedule": {
+          "every_minutes": 30
+        },
+        "exec_policy": "inherit"
+      },
+      "summary": "Incremental email sync every 30 minutes."
+    }
+  ],
+  "usage": {
+    "model": "scheduled",
+    "trigger_recognition": {
+      "pattern": "Email Integration syncs Gmail every few minutes in the background. When the user asks about email, query the cached files; don't run `sync` reactively.",
+      "hint_words": [
+        "unread email",
+        "emails from",
+        "thread",
+        "inbox",
+        "check email",
+        "what emails"
+      ],
+      "requires_keyword": false
+    },
+    "auto_capture": {
+      "enabled": false,
+      "sources": []
+    },
+    "how_to_use": "Background sync keeps local files current — use `unread` / `search <query>` / `thread <id>` to answer email questions. Run `sync` only if the user explicitly asks for a fresh pull or data looks stale.",
+    "bot_voice_examples": [
+      "Five unread emails — two from Alice about Q2, one from your CEO, two newsletters.",
+      "Found the thread — 12 messages over four days, most recent yesterday at 4pm.",
+      "Nothing from Bob in the last week."
+    ]
+  },
+  "verification": [
+    {
+      "kind": "artifact",
+      "name": "main_script_compiles",
+      "path": "scripts/email_sync.py",
+      "checks": [
+        "exists",
+        "py_compiles"
+      ]
+    },
+    {
+      "kind": "command",
+      "name": "cli_unread",
+      "argv": [
+        "python3",
+        "scripts/email_sync.py",
+        "unread"
+      ],
+      "expected_exit": 0,
+      "stdout_regex": "\\[",
+      "timeout_s": 30
+    },
+    {
+      "kind": "artifact",
+      "name": "digest_cache_fresh",
+      "path": "memory/email-digest.json",
+      "checks": [
+        "exists",
+        "json_valid"
+      ],
+      "max_age_days": 2,
+      "modes": [
+        "dry-run"
+      ]
+    }
+  ]
+}

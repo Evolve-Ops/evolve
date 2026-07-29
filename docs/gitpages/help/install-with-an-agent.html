@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Installing with an AI agent · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">install-agent</span><span class="chip">installation</span></div><div class="reviewed">Last reviewed 2026-07-28</div></div><h1 id="installing-with-an-ai-agent">Installing with an AI agent</h1>
+<p>If you use Claude Code (or a similar AI coding agent), it can do most of the
+mechanical work of an Evolve install for you — and get you unstuck when
+something doesn't match the guide. This page tells you <em>and your agent</em> how to
+split the work so the install goes smoothly.</p>
+<p><strong>Point your agent at three documents:</strong> this page, the
+<strong><a href="installation.html">Installing Evolve</a></strong> hub (the authority on prerequisites
+and install order), and your platform guide —
+<strong><a href="install-macos.html">macOS</a></strong> or <strong><a href="install-linux-vsp.html">Linux / VPS</a></strong>.</p>
+<blockquote>
+<p><strong>Note for the agent:</strong> if you are running inside a clone of the Evolve
+repository, the repo's <code>CLAUDE.md</code> may auto-load into your context. That file
+is written for people <em>developing</em> Evolve — its warnings about the deploy
+checkout, dev worktrees, and pod daemons describe an already-running pod, not
+the machine you are installing onto. For an install, follow
+<code>docs/help/installation.md</code> and the platform guide, not <code>CLAUDE.md</code>.</p>
+</blockquote>
+<hr>
+<h2 id="what-the-agent-can-do-unattended">What the agent can do unattended</h2>
+<p>Everything in the platform guide's <strong>Step 1</strong> and the verification afterward is
+ordinary shell work an agent handles well:</p>
+<ul>
+<li>Check prerequisites — platform, Python ≥ 3.10, Node ≥ 20, git, Homebrew
+  (macOS) — and install what's missing</li>
+<li>Clone the repo to the deploy path (a real <code>git clone</code>, never a ZIP — the hub
+  explains why)</li>
+<li>Build the bootstrap environment the platform guide describes — on macOS the
+  venv plus the two <code>pip install -e</code> commands in order (analyzer first, then
+  admin); on Linux <code>uv sync --locked</code> in the checkout</li>
+<li>Put <code>evolve-admin</code> on the PATH the way the platform guide says (macOS:
+  symlink into <code>/usr/local/bin</code>) and confirm the documented wizard command runs
+  with <code>--help</code></li>
+<li><strong>After the wizard</strong>: verify the pod with <code>evolve-admin status</code> and
+  <code>curl -s http://localhost:5050/api/health</code>, and read logs to diagnose
+  anything that looks off</li>
+</ul>
+<hr>
+<h2 id="what-needs-a-human-at-the-terminal">What needs a human at the terminal</h2>
+<p>Some steps can't be delegated, by design:</p>
+<ul>
+<li><strong><code>sudo</code> password prompts.</strong> Most install commands run under <code>sudo</code>; the
+  password prompt is yours to answer.</li>
+<li><strong>The wizard's secret prompts.</strong> The setup wizard asks for your Anthropic API
+  key and Telegram bot token with echo turned off (like a password prompt) —
+  you paste and <em>nothing appears on screen</em>; a blank-looking line is normal.
+  Just paste and press Enter.</li>
+<li><strong>GUI and phone steps.</strong> macOS System Settings → General → Sharing → Remote
+  Login; creating your bot with <strong>@BotFather</strong> and getting your user ID from
+  <strong>@userinfobot</strong> in Telegram on your phone; grabbing your API key from the
+  Anthropic console.</li>
+</ul>
+<hr>
+<h2 id="the-recommended-division-of-labor">The recommended division of labor</h2>
+<ol>
+<li><strong>Agent:</strong> run the platform guide's Step 1 (prereqs, clone, venv, installs,
+   symlink) and confirm <code>evolve-admin --help</code> works.</li>
+<li><strong>Human:</strong> open your own terminal and run <code>sudo evolve-admin setup --fresh</code>
+   yourself, answering its prompts interactively.</li>
+<li><strong>Agent:</strong> verify with <code>evolve-admin status</code> and
+   <code>curl -s http://localhost:5050/api/health</code>, and troubleshoot from logs if
+   the checks fail.</li>
+</ol>
+<h3 id="why-the-agent-must-not-drive-the-wizard-through-a-pipe">Why the agent must not drive the wizard through a pipe</h3>
+<p>The wizard is built for an interactive terminal, and two behaviors make piping
+input into it actively dangerous:</p>
+<ul>
+<li><strong>Secrets are read from the terminal, not stdin.</strong> The key/token prompts use
+  a no-echo terminal read (Python's <code>getpass</code>), so text piped on stdin never
+  reaches them.</li>
+<li><strong>EOF exits 0, silently.</strong> Every wizard prompt treats end-of-input the same
+  as Ctrl-C: it prints a blank line and exits with status <strong>0</strong>. A wizard fed
+  from a pipe or a closed stdin can stop partway through the install <em>while
+  reporting success to the calling process</em>.</li>
+</ul>
+<p>So: never judge the wizard by its exit code. An agent (or a human) confirms a
+successful install only by checking <code>evolve-admin status</code> and the
+<code>/api/health</code> endpoint. (The wizard does have a <code>--non-interactive</code> mode with
+<code>--bots-manifest</code>, but the manifest carries no secrets — bot IDs, ports, and
+roles only — so it cannot complete a fresh install that needs your API key and
+bot token. The interactive wizard is the supported path.)</p>
+<hr>
+<h2 id="a-prompt-to-give-your-agent">A prompt to give your agent</h2>
+<p>Paste this into Claude Code (or your agent of choice) on the machine you're
+setting up:</p>
+<pre><code class="language-text">Help me install Evolve on this machine. Read docs/help/installation.md,
+docs/help/install-with-an-agent.md, and the platform guide for this OS
+(docs/help/install-macos.md or docs/help/install-linux-vsp.md) in the Evolve
+repo, then do Step 1 for me: check prerequisites, clone the repo to the
+documented deploy path, create the venv, install the analyzer and admin
+packages, and symlink evolve-admin onto the PATH. Stop before the setup
+wizard — I will run `sudo evolve-admin setup --fresh` myself in my own
+terminal, because it prompts for secrets and needs a real TTY. Do not pipe
+input into the wizard or run it non-interactively. When I tell you the wizard
+finished, verify the install with `evolve-admin status` and
+`curl -s http://localhost:5050/api/health`, and help me debug from logs if
+anything fails.
+</code></pre>
+<hr>
+<h2 id="warnings">Warnings</h2>
+<ul>
+<li><strong>After the install, don't point your agent's dev work at the deploy
+  checkout</strong> (<code>/Users/Shared/evolve-repo</code> on macOS, <code>/var/lib/evolve/repo</code> on
+  Linux). The pod pulls updates into that checkout on a schedule, and stray
+  files an agent creates there can wedge the update. The repo's <code>CLAUDE.md</code>
+  covers this rule for developers — if you want to hack on Evolve, use a
+  separate clone.</li>
+<li><strong>Never paste API keys or bot tokens into the agent chat.</strong> They would land
+  in the conversation transcript. Type them into the wizard's own no-echo
+  prompts, in your own terminal.</li>
+</ul>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/install-with-an-agent.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>

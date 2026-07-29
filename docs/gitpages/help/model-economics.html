@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Model Economics Page · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">model-economics</span><span class="chip">model-cost</span><span class="chip">cost-per-turn</span><span class="chip">effective-cost</span><span class="chip">provider-comparison</span><span class="chip">pricing-band</span></div><div class="reviewed">Last reviewed 2026-06-19</div></div><h1 id="help-model-economics-page">Model Economics Page</h1>
+<p>The Model Economics page is a pod-wide, <strong>model-centric</strong> cost leaderboard — one
+row (or bar) per model identity, summed across every bot in the pod. It is the
+<em>transpose</em> of the bot-centric Usage / Cost page: where Usage answers "what is
+each bot spending?", Model Economics answers "what does each model cost me, pod-wide?"
+— so you can tune model <strong>choice</strong> by comparing within a pricing band or across providers.</p>
+<p>It reads the same underlying data the Usage page consumes (the per-day <code>by_model</code>
+metrics), assembled model-first.</p>
+<p><strong>Ask evo for the model comparison.</strong> Same numbers, conversational answer:</p>
+<ul>
+<li><em>"which model is cheapest per turn right now?"</em></li>
+<li><em>"compare Sonnet and Opus on effective cost"</em></li>
+<li><em>"what are we spending on each provider this month?"</em></li>
+</ul>
+<p>Evo answers from the same <code>pod_state.usage</code> model metrics this page renders, so
+the numbers match what you see here.</p>
+<hr>
+<h2 id="what-the-page-shows">What the page shows</h2>
+<p><strong>Bars by default, table on toggle.</strong> The default view is a horizontal bar chart,
+one bar per model, sorted descending by the selected metric. A toggle flips to a
+dense multi-stat table for side-by-side reading.</p>
+<p><strong>Metric switcher.</strong> Re-sort and re-scale the whole view by:</p>
+<ul>
+<li><strong>$/turn</strong> — average spend per turn on that model</li>
+<li><strong>Eff. cost/1k</strong> — effective cost per 1,000 tokens, <em>cache-aware</em> (this is a cost
+  number, not an effectiveness score)</li>
+<li><strong>spend</strong> — total spend over the selected window</li>
+<li><strong>share</strong> — that model's share of pod spend</li>
+<li><strong>turns</strong> — how many turns ran on it</li>
+</ul>
+<p><strong>Filter chips.</strong> Narrow the view by <strong>provider</strong>, <strong>pricing band</strong>, <strong>bot</strong>, or
+<strong>audience</strong>. Selections are multi-select within a facet and combine (AND) across
+facets — e.g. "Anthropic" + "the standard band" + "two specific bots".</p>
+<p><strong>Aggregate rollup strip.</strong> A summary strip rolls models up by <strong>band</strong> or <strong>role</strong>
+(toggle between the two) and shows the blended $/turn for each group — useful for
+"is my standard tier as cheap as it should be?" at a glance.</p>
+<p><strong>Confidence.</strong> Low-confidence rows render dimmed rather than hidden, and keep their
+confidence badge, so a thin-data model never silently disappears from the comparison.</p>
+<p><strong>Tier column.</strong> The tier shown is the <strong>pricing cost-band</strong> the model falls in.
+<code>configured</code>, <code>off-catalog</code>, and <code>unexpected-billing</code> are badges on a row, not
+separate rows.</p>
+<hr>
+<h2 id="how-it-relates-to-the-other-cost-surfaces">How it relates to the other cost surfaces</h2>
+<ul>
+<li><strong>Usage</strong> — bot-first spend (what each <em>bot</em> costs). Model Economics is the
+  model-first transpose of the same data.</li>
+<li><strong>AI Optimization</strong> — where you <em>change</em> model choice and tier routing. Model
+  Economics is the evidence you bring to that page: it shows which models are
+  worth keeping in the catalog and which band each really lands in.</li>
+<li><strong>Cost Optimization</strong> — caps and remediation (the brakes). Model Economics is
+  about steering, not braking.</li>
+</ul>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/model-economics.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>

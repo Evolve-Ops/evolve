@@ -1,0 +1,37 @@
+name: help-site-check
+
+# Rebuilds docs/gitpages/help/ from docs/help/ and fails if the committed
+# output is stale. Keeps the rendered site honest against its source.
+
+on:
+  pull_request:
+    paths:
+      - "docs/help/**"
+      - "tools/build_help_site.py"
+      - "docs/gitpages/help/**"
+      - ".github/workflows/help-site-check.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install build deps
+        run: pip install markdown pyyaml
+
+      - name: Rebuild help site
+        run: python3 tools/build_help_site.py
+
+      - name: Verify committed output matches fresh build
+        run: |
+          if ! git diff --quiet -- docs/gitpages/help; then
+            echo "::error::docs/gitpages/help/ is stale — run 'python3 tools/build_help_site.py' and commit the result."
+            git diff --stat -- docs/gitpages/help
+            exit 1
+          fi
+          echo "help site output is in sync with source."

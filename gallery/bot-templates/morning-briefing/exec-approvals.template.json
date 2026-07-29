@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "defaults": {},
+  "agents": {
+    "main": {
+      "allowlist": [
+        {
+          "pattern": "/opt/homebrew/bin/python3*",
+          "comment": "Homebrew Python 3 — used by briefing.py and calendar_watch.py"
+        },
+        {
+          "pattern": "/usr/bin/python3*",
+          "comment": "System Python 3 — fallback if Homebrew Python not installed"
+        },
+        {
+          "pattern": "/bin/bash",
+          "comment": "System bash — used by briefing-cron.sh trigger script"
+        },
+        {
+          "pattern": "/opt/homebrew/bin/bash",
+          "comment": "Homebrew bash — alternate bash path on some macOS setups"
+        }
+      ]
+    }
+  }
+}

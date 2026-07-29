@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Evolve daily health report — runs on the PRIMARY bot only.
+  Fires at 6:15 AM and 6:15 PM after scoreboard has been updated.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.openclaw.evolve.report.PRIMARY_USER</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>WORKSPACE_PATH/evolve/report.py</string>
+        <string>--network</string>
+        <string>WORKSPACE_PATH/evolve/network.json</string>
+    </array>
+
+    <key>UserName</key>
+    <string>PRIMARY_USER</string>
+
+    <!-- 6:15 AM and 6:15 PM daily -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict>
+            <key>Hour</key>
+            <integer>6</integer>
+            <key>Minute</key>
+            <integer>15</integer>
+        </dict>
+        <dict>
+            <key>Hour</key>
+            <integer>18</integer>
+            <key>Minute</key>
+            <integer>15</integer>
+        </dict>
+    </array>
+
+    <key>StandardOutPath</key>
+    <string>/Users/PRIMARY_USER/.openclaw/logs/evolve-report.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/PRIMARY_USER/.openclaw/logs/evolve-report.err.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>

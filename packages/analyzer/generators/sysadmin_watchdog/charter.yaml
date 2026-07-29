@@ -1,0 +1,42 @@
+id: sysadmin_watchdog
+schema_version: 1
+type: guardian
+dimension: substrate_health
+bucket: operate
+# Surface routing: firing. Platform-level failures (gateway down, plugin missing, daemon not
+#   loaded, malformed config). These typically waste user cycles or
+#   break bots — Firing-class.
+# Spec: docs/spec-recommendations-rework-2026-06-02.md §"Generator routing".
+surface: firing
+purpose: >
+  Detect platform-level failures and configuration drift that waste user
+  cycles or prevent bots from operating correctly. Most outputs are
+  Signals (gateway down, plugin missing, daemon not loaded, malformed
+  config, missing macOS user, version drift) that route to the Alerts
+  page. The one Proposal-shaped output is ACL drift — an autonomous-
+  eligible ConfigPatch that restores `evolve` user read access on a
+  bot's `.openclaw/`.
+cadence: hourly
+# Sensor-style: this generator re-fires every cycle whenever its issue is
+# present. The runner uses this to mark stale pending proposals
+# resolved_externally when the underlying issue clears (the detector goes
+# silent for that fingerprint). Signals get the same auto-resolve
+# treatment via the runner's signal-sweep at end of each cycle.
+resolves_when_silent: true
+invariants:
+  - id: action_kind_allowed
+    description: >
+      Only ConfigPatch is permitted now that platform-failure runbooks
+      route through Signals. A regression that re-emits WorkflowInstruction
+      or Investigation Proposals from this generator should trip here.
+    check_kind: action_kind_allowed
+    params:
+      allowlist: [ConfigPatch]
+  - id: touches_forbidden_surfaces
+    description: Sysadmin does not modify auth or tool scope; those are Security Warden's turf.
+    check_kind: touches_forbidden
+    params:
+      forbidden: [auth, tools, channel_config]
+  - id: claim_metric_known
+    description: Any claim must reference a metric registered in the metric registry.
+    check_kind: claim_metric_known

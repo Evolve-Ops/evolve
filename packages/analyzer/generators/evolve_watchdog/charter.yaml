@@ -1,0 +1,28 @@
+id: evolve_watchdog
+schema_version: 1
+type: meta_guardian
+dimension: meta_health
+bucket: improve
+# Surface routing: drift. Monitors RSI system degradation (noise drift, generator dominance,
+#   cost ballooning). Slow-drift class; if it ships an alert-severity
+#   signal the producer-override in Health routes it to Firing.
+# Spec: docs/spec-recommendations-rework-2026-06-02.md §"Generator routing".
+surface: drift
+purpose: >
+  Monitor the RSI system itself for signs of degradation — noise drift,
+  verification reliability drops, generator dominance, cost ballooning.
+  Emit throttle or pause proposals when thresholds trigger. Never acts
+  unilaterally; all intervention is proposal-mediated and routes to the
+  pod operator.
+cadence: daily
+invariants:
+  - id: action_kind_allowed
+    description: Evolve Watchdog only emits meta-layer interventions (throttle, pause) and investigations.
+    check_kind: action_kind_allowed
+    params:
+      allowlist: [ThrottleGenerator, PauseGenerator, Investigation]
+  - id: pod_operator_audience_only
+    description: Meta-layer decisions are always pod-level; never bot_primary_user audience.
+    check_kind: custom
+    params:
+      predicate: approval_audience == "pod_operator"
