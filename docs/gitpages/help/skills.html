@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Skills Page · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">skills</span><span class="chip">skill-install</span><span class="chip">plugin-install</span><span class="chip">mcp-install</span><span class="chip">capability-maintenance</span></div><div class="reviewed">Last reviewed 2026-06-23</div></div><h1 id="help-skills-page">Skills Page</h1>
+<p>The Skills page (in the <strong>Improve</strong> bucket) is where you give your bots new
+abilities. A <strong>skill</strong> is a single thing a bot <em>can do</em> — send a Slack message,
+read your Gmail, search the web, create a calendar event. This is the page to
+browse what's available and turn capabilities on (or off) per bot.</p>
+<p><strong>Skills vs. apps.</strong> A skill is one capability; an <a href="apps.html">application</a>
+orchestrates skills toward a goal. A "Morning Brief" app might use a web-search
+skill, a calendar-read skill, and a messaging skill together. You add the raw
+capabilities here; apps put them to work.</p>
+<p><strong>Two kinds of skill, one page.</strong> Under the hood a skill is delivered either as
+an <strong>OpenClaw plugin</strong> or as an <strong>MCP server</strong> (a portable, open-standard
+connector). You don't have to care which when you're installing — both show up
+in the same catalog and install the same way. The difference only matters when
+you're reading the fine print on a given entry.</p>
+<p><strong>This is the install surface, not the keys surface.</strong> Browsing, installing,
+removing, and scoping capabilities happens here. Managing the API keys, channel
+connections, and per-bot configuration <em>behind</em> those capabilities lives on the
+<a href="plugins.html">Plugins</a> page. Rule of thumb: come here to add or remove an ability;
+go to Plugins to manage the credentials and connections an ability uses.</p>
+<hr>
+<h2 id="browse-add-a-skill">Browse — add a skill</h2>
+<p>The <strong>Browse</strong> view is the catalog: every skill available to install, with a
+short description of what it does. This is the default view and the action-
+oriented one — it's where you see capabilities a bot doesn't have yet.</p>
+<p>To add a skill:</p>
+<ol>
+<li>Find it in the catalog (use <strong>↻ Refresh</strong> if you just expect something new).</li>
+<li>Choose which bot to install it on.</li>
+<li>If the skill needs more than a flip — a set of permissions to grant, an
+   account to connect — a short install flow walks you through it before
+   anything is enabled.</li>
+</ol>
+<h3 id="scoping-what-a-skill-can-touch">Scoping what a skill can touch</h3>
+<p>Some skills cover a family of capabilities, and you don't have to grant all of
+them. The clearest example is <strong>Google Workspace</strong> — Gmail, Calendar, Drive,
+Docs, and Sheets behind one entry. The install flow lets you pick exactly which
+surfaces a bot gets: "read Calendar and read Gmail" without handing over Drive
+or write access. You connect the account once, approve the scopes you chose, and
+the bot gets only those.</p>
+<p>If you grant a second bot a subset of capabilities you already approved on an
+earlier bot, the install is smart enough to skip the parts you've already done.</p>
+<h3 id="when-an-install-needs-a-key-or-an-account">When an install needs a key or an account</h3>
+<p>Installing a capability and supplying its credentials are two steps. Many skills
+need an API key or an OAuth connection to actually run; the install flow prompts
+for what's required, and the key itself is stored and managed over on the
+<a href="plugins.html">Plugins</a> page (under Credentials). If a skill shows as installed but
+isn't working, a missing or unhealthy key is the usual reason — check Plugins.</p>
+<hr>
+<h2 id="installed-the-pod-wide-matrix">Installed — the pod-wide matrix</h2>
+<p>The <strong>Installed</strong> view is a grid: every skill down one side, every bot across the
+top, with each cell showing whether that bot has that skill. It's the fastest way
+to answer "which bots can do X?" and to spot a bot that's missing a capability
+its peers have.</p>
+<p>Click a cell to install or uninstall that skill on that bot. Click into a cell's
+history to see its <strong>audit trail</strong> — when the skill was installed or removed on
+that bot, so a capability never silently appears or disappears without a record.</p>
+<hr>
+<h2 id="maintaining-capabilities-over-time">Maintaining capabilities over time</h2>
+<p>Skills aren't fire-and-forget. A few things to keep an eye on:</p>
+<ul>
+<li><strong>Uninstalling</strong> — removing a skill from a bot is the same one-click action as
+  installing, from either view. When a connected skill is removed and no other
+  bot is using its connection, the linked credential is cleaned up too rather
+  than left dangling.</li>
+<li><strong>Security advisories</strong> — for skills delivered as MCP servers, Evolve tracks
+  published advisories for the underlying package. If an entry has an open
+  advisory, the install step surfaces it for review rather than letting you add
+  it blind. The pod-wide security view of the same information lives on the
+  <a href="security.html">Security</a> page (MCP Posture).</li>
+<li><strong>The audit trail</strong> — every install and uninstall is recorded per bot, so you
+  can always reconstruct how a bot's capabilities got to where they are.</li>
+</ul>
+<hr>
+<h2 id="common-questions">Common Questions</h2>
+<p><strong>What's the difference between the Skills page and the Plugins page?</strong>
+Skills is where you <em>add and remove</em> abilities; Plugins is where you <em>manage the
+keys and connections</em> those abilities rely on. They describe the same underlying
+plumbing from two angles — capability on one side, credentials and connection
+health on the other. Add a skill here; rotate its key there.</p>
+<p><strong>Is a "skill" the same as an OpenClaw plugin or an MCP server?</strong>
+Both are skills. OpenClaw plugins and MCP servers are two delivery formats for
+the same idea — a capability you give a bot. The catalog mixes them and installs
+them the same way; the format only matters when you're reading an entry's
+details.</p>
+<p><strong>I installed a skill but the bot can't use it.</strong>
+Almost always a credential gap. Installing the skill turns the capability on;
+the bot still needs the key or connected account behind it. Open
+<a href="plugins.html">Plugins → Credentials</a> and confirm the key is present and healthy
+(and, for channel-style connections, that the gateway picked it up).</p>
+<p><strong>How do I give one bot a capability another bot already has?</strong>
+Open the <strong>Installed</strong> matrix, find the skill's row, and click the empty cell
+under the bot that's missing it. If it's a connected skill you already authorized
+elsewhere, the install reuses what you've approved and skips the redundant steps.</p>
+<p><strong>Why does an MCP-style skill show a security warning before install?</strong>
+Evolve checks the skill's underlying package against published advisories. A
+warning means there's an open advisory to read first — review it, then decide
+whether to install or wait for an upstream fix. The same posture, pod-wide, is on
+the <a href="security.html">Security</a> page.</p>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/skills.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Usage Page · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">usage</span><span class="chip">billing</span><span class="chip">model-spend</span><span class="chip">cost-rollup</span><span class="chip">export</span></div><div class="reviewed">Last reviewed 2026-06-05</div></div><h1 id="help-usage-page">Usage Page</h1>
+<p>The Usage page shows AI API spend broken down by model, channel, and source — with billing summaries and exportable data. Select a bot and time range to drill into any account.</p>
+<p><strong>Ask evo for the cost rollup.</strong> Same numbers, conversational answer:</p>
+<ul>
+<li><em>"how much are we spending this week?"</em> / <em>"...this month?"</em></li>
+<li><em>"which bot costs most?"</em></li>
+<li><em>"show the projected month-end"</em></li>
+</ul>
+<p>Behind the scenes evo calls <code>pod_state.usage</code> (the same daily metric
+files this page reads), so the numbers match what you see here.</p>
+<hr>
+<h2 id="controls">Controls</h2>
+<ul>
+<li><strong>Bot tabs</strong> — switch between individual bots or view the full pod</li>
+<li><strong>Time range</strong> — Today, 7d, 30d, or custom date range</li>
+<li><strong>↻ Refresh</strong> — reload usage data from session annotation files</li>
+<li><strong>⬇ Export CSV</strong> — download the full usage table as a spreadsheet</li>
+<li><strong>⬆ Import</strong> — import usage data from an exported file</li>
+</ul>
+<hr>
+<h2 id="what-each-section-shows">What Each Section Shows</h2>
+<h3 id="usage-summary">Usage Summary</h3>
+<p>Billing overview for the selected bot and time range: total estimated cost, token counts, and per-model breakdown.</p>
+<p><strong>Important:</strong> Anthropic ended MAX subscription coverage for third-party tools on April 4, 2026. Every OpenClaw call now bills at API rates regardless of whether you have a MAX subscription. Set per-bot daily caps on Cost Optimization (they auto-trip an L1 cost breaker) and set provider-side caps at console.anthropic.com as a backstop.</p>
+<h3 id="activity-timeline-turns-by-model">Activity Timeline — Turns by Model</h3>
+<p>Stacked bar chart showing turn volume per model over time. Taller bars = more activity. Color-coded by model to make tier utilization visible at a glance.</p>
+<h3 id="by-model">By Model</h3>
+<p>Breakdown of spend and turn count per model. This shows whether your tier routing is working — in a healthy pod you should see:
+- Most turns on tier2 (Sonnet) for productive sessions
+- Maintenance/background turns on tier 3 (your lowest-cost model)
+- Minimal tier1 (Opus) use — reserved for explicit power requests</p>
+<h3 id="by-channel">By Channel</h3>
+<p>How much activity came via each messaging channel (Telegram, Slack, Discord, etc.). Useful for understanding which channels are driving cost.</p>
+<h3 id="by-source">By Source</h3>
+<p>What triggered each API call: <code>user</code> (human message), <code>cron</code> (scheduled job), <code>agent</code> (CE task dispatch), <code>background</code> (internal analysis). High <code>cron</code> or <code>background</code> cost suggests analysis jobs may be over-running.</p>
+<h3 id="by-user-top-10">By User (top 10)</h3>
+<p>For bots with multiple users (e.g., a Slack bot used by a team), shows which users are driving the most activity and cost.</p>
+<h3 id="context-health">Context Health</h3>
+<p>Context efficiency metrics: average context window utilization, compaction events, and whether sessions are running into context limits. High context usage with many compaction events suggests sessions are growing bloated — consider adjusting compaction settings in AI Optimization.</p>
+<hr>
+<h2 id="common-questions">Common Questions</h2>
+<p><strong>Why is my cost higher than expected?</strong>
+Most common causes:
+1. <strong>Maintenance sessions not routing to tier3</strong> — go to AI Optimization and verify tier routing is configured and the gateway has been restarted after any config changes
+2. <strong>Cron / heartbeat jobs using tier2</strong> — background jobs should use tier3; check the "By Source" breakdown or the Cost Optimization → Model × Audience table
+3. <strong>Context bloat</strong> — large context windows cost more per turn; check Context Health
+4. <strong>A user override pinning the bot to <code>power</code></strong> — check Users → per-bot panel for per-user tier overrides</p>
+<p><strong>What's the difference between "by model" and "by tier"?</strong>
+Models are the specific strings (e.g., <code>claude-sonnet-4-6</code>). Tiers are Evolve's routing categories (tier1/2/3). One model can be assigned to a tier. The "By Model" view shows what actually ran; tiers show Evolve's routing intent.</p>
+<p><strong>How accurate is the cost estimate?</strong>
+The cost is estimated from token counts and published pricing at the time Evolve was last updated. Actual billing may differ slightly due to pricing changes or batch discounts. Always verify against your provider's billing dashboard.</p>
+<p><strong>Can I see cost across all bots together?</strong>
+Yes — select "All bots" from the bot tab selector. The summary shows aggregate spend, but per-model and per-channel breakdowns are pod-wide.</p>
+<p><strong>What does a spike in the activity timeline mean?</strong>
+A sudden spike usually means a cron job ran, a batch analysis completed, or a session with an unusually large context was active. Cross-reference with the "By Source" breakdown to identify the cause.</p>
+<hr>
+<h2 id="sessions-tab">Sessions tab</h2>
+<p>The Sessions tab shows how well each bot is performing over time — productive vs. maintenance ratios, correction trends, a session browser for drill-down, and the overall RSI loop health.</p>
+<h3 id="what-the-metrics-mean">What the metrics mean</h3>
+<h4 id="productive-vs-maintenance-sessions">Productive vs. Maintenance Sessions</h4>
+<p>Every session is classified by the Evolve plugin:</p>
+<ul>
+<li><strong>Productive</strong> — real user work (research, writing, coding, planning, answering questions). These are the sessions that deliver value.</li>
+<li><strong>Maintenance</strong> — bot upkeep sessions (debugging gateway issues, fixing config errors, troubleshooting). These cost the same money but deliver no user value.</li>
+<li><strong>Ambiguous</strong> — sessions where the classifier couldn't clearly determine the type.</li>
+</ul>
+<p><strong>Maintenance ratio</strong> = maintenance sessions / total sessions.</p>
+<p>A healthy pod has a maintenance ratio below 20%. Above 30% consistently is a signal that something is consistently broken — a recurring API error, a context bloat issue, or a misconfigured tool. Coaches in the analysis layer emit proposals when this ratio stays high.</p>
+<h4 id="correction-rate">Correction rate</h4>
+<p>What fraction of productive sessions had at least one user correction (the user telling the bot to redo, retry, or fix what it just did). Lower is better.</p>
+<p>A rising correction rate over several weeks is one of the main signals the analysis engine uses to generate improvement proposals about the bot's effectiveness.</p>
+<h4 id="rsi-loop-health">RSI loop health</h4>
+<p>Status block at the bottom of the tab covering whether the substrate is producing the data the engine needs:
+- <strong>Metrics current</strong> — <code>measure.py</code> ran successfully recently.
+- <strong>Analysis current</strong> — <code>analyze.py</code> ran successfully in the past 7 days.
+- <strong>Proposals flowing</strong> — proposals are being generated and reaching the queue.
+- <strong>Outcomes tracked</strong> — verify-daemon and v1 outcome check-ins are being processed.</p>
+<p>If any RSI loop component is broken, the quality metrics will still show but improvement proposals will stop flowing. Check the Modules tab in Settings or <code>evolve-admin status</code> to investigate.</p>
+<h3 id="controls-and-ranges">Controls and ranges</h3>
+<ul>
+<li><strong>Bot tabs</strong> — view one bot or all bots aggregated.</li>
+<li><strong>Range tabs</strong> — 7d, 30d, 90d.</li>
+<li><strong>⚡ Run metrics now</strong> — compute today's metrics immediately instead of waiting for the 01:00 cron.</li>
+<li><strong>↻ Refresh</strong> — reloads from session annotation files.</li>
+</ul>
+<h3 id="sections-top-to-bottom">Sections (top to bottom)</h3>
+<p><strong>Stat blocks</strong>
+Six blocks summarizing the window: total sessions, productive ratio, maintenance ratio, ambiguous ratio, correction rate, and a session-quality summary. Click any block for filter-down behavior on the session browser.</p>
+<p><strong>Insights</strong>
+Auto-generated summary of notable patterns — for example, "correction rate up 18% week-over-week on team-bot-a" or "no productive sessions in the last 3 days for admin-bot." When the analyzer has nothing flag-worthy, this section is brief or empty.</p>
+<p><strong>Charts</strong>
+- <strong>Productive vs Maintenance Sessions</strong> — bar chart, stacked by class.
+- <strong>Correction Rate Trend</strong> — line chart over the selected window.</p>
+<p><strong>Capabilities</strong>
+A breakdown of which apps each bot is actively exercising in the window — useful for spotting an app that's installed but unused (a deprecation candidate) or a noun cluster the pod isn't covering yet.</p>
+<p><strong>Session Browser</strong>
+Lookup table for individual sessions in the past 7 days, filtered by class, bot, corrections-only, or efficiency-flagged. Click a row to open the full session detail.</p>
+<h3 id="common-questions-sessions-tab">Common questions — Sessions tab</h3>
+<p><strong>My maintenance ratio is suddenly very high — what happened?</strong>
+High maintenance ratio usually means:
+1. A recurring API error or auth failure that keeps creating troubleshooting sessions
+2. A context configuration issue causing sessions to start with error messages
+3. A recently broken tool or integration that's generating repeated fix attempts</p>
+<p>Check Plugins for any failing channels or API keys. Check Gateway Logs in Maintenance for errors. If the gateway is crashing frequently, that will generate many maintenance sessions.</p>
+<p><strong>Why is my correction rate rising even though the bot seems to be working?</strong>
+A user correction is detected from session text patterns (the user telling the bot "no, do it this way" or "you got that wrong"). A rising rate can mean:
+- The bot is taking more turns to accomplish tasks (efficiency issue)
+- Tasks are being left partially complete more often
+- The detection criteria have drifted</p>
+<p>Cross-reference with the Recommendations page to see if a coach (often <code>efficiency_hawk</code>) has surfaced a related proposal.</p>
+<p><strong>What's the difference between Sessions and Cost Optimization?</strong>
+Sessions is about <em>effectiveness</em> — are sessions doing useful work? Cost Optimization is about <em>efficiency</em> — what does that work cost? A bot can be effective but expensive (high productive ratio, high cost) or cheap but ineffective (low cost, low productive ratio). Both matter.</p>
+<p><strong>How does the classifier decide if a session is productive or maintenance?</strong>
+First, keyword matching: productive signals include topic words like "research", "plan", "write", "calendar", etc. Maintenance signals include "openclaw.json", "gateway", "restart", "api key error", etc. If keyword confidence is above a threshold, classification is immediate. If ambiguous, a single tier3 LLM call classifies the first user message.</p>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/usage.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>

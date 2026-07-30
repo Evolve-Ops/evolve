@@ -1,0 +1,198 @@
+{
+  "$comment": "Machine-readable mirror of the D-8 test-case checklist in docs/spec-deploy-meta-2026-06-14.md, relabelled per docs/spec-delta-updates-vocabulary-and-direct-default-2026-06-22.md (plain-language vocabulary). The consolidated Overview 'Updates' element (5th summary cell + click-to-expand panel) is owned by the ui chip; deploy owns this state->representation truth. Each case feeds the reference updatesCellState() derivation; `now` and timestamps are ISO/ms so the transient-vs-stuck (D-3 fold) split is exercised deterministically. members count excludes role=='primary' and the canary_bot. `expect.label` is the operator-facing UPDATES cell token (the bold word in the cell) per (state, mode); `sublabel` is the smaller line below it when the contract pins it deterministically. test_release_manager.py::test_d8_fixture_labels_match_overview_cell_render asserts each `label` is exactly what _classifyUpdates() renders for that state (the 2nd arg to the quiet()/loud() helpers in overview.js), so a relabel in one without the other fails CI.",
+  "constants": {
+    "REDEPLOY_GRACE_MS": 1800000,
+    "REDEPLOY_GRACE_NOTE": "2 puller ticks (~30 min): one to notice+redeploy lagging bots, one for slack. now is fixed per-case below.",
+    "severity_to_banner": "banner shows iff severity=='loud' AND not snoozed/acked; the cell always renders regardless of banner"
+  },
+  "cases": [
+    {
+      "id": 1,
+      "name": "corrupt release.json freezes promotion",
+      "now": "2026-06-16T12:00:00Z",
+      "inputs": { "release": { "mode": "canary", "corrupt": true, "stable_version": "2026.0614.2884" }, "bots": [] },
+      "expect": { "state": "pipeline-halted", "mode": "canary", "label": "Updates halted", "sublabel": "needs attention", "severity": "loud", "banner": true }
+    },
+    {
+      "id": 2,
+      "name": "genuine stuck lag — bots behind past the grace window",
+      "now": "2026-06-16T12:00:00Z",
+      "inputs": {
+        "release": { "mode": "canary", "stable_version": "2026.0614.2884", "stable": { "promoted_at": "2026-06-16T10:00:00Z" }, "canary_bot": "canary-bot" },
+        "bots": [
+          { "id": "canary-bot", "role": "member", "evolve_synced": false },
+          { "id": "bot-a", "role": "member", "evolve_synced": false },
+          { "id": "bot-b", "role": "member", "evolve_synced": false },
+          { "id": "bot-c", "role": "member", "evolve_synced": true }
+        ]
+      },
+      "expect": { "state": "lag-stuck", "mode": "canary", "label": "Update failed", "severity": "loud", "banner": true }
+    },
+    {
+      "id": 3,
+      "name": "transient redeploy lag — within grace, self-healing (D-3 fold)",
+      "now": "2026-06-16T12:00:00Z",
+      "inputs": {
+        "release": { "mode": "canary", "stable_version": "2026.0614.2884", "stable": { "promoted_at": "2026-06-16T11:55:00Z" }, "canary_bot": "canary-bot" },
+        "bots": [
+          { "id": "bot-a", "role": "member", "evolve_synced": false },
+          { "id": "bot-b", "role": "member", "evolve_synced": false },
+          { "id": "bot-c", "role": "member", "evolve_synced": true }
+        ]
+      },
+      "expect": { "state": "lag-redeploying", "mode": "canary", "label": "Updating…", "severity": "neutral", "banner": false }
+    },
+    {
+      "id": 4,
+      "name": "lag with no promoted_at — fail loud, treat as stuck",
+      "now": "2026-06-16T12:00:00Z",
+      "inputs": {
+        "release": { "mode": "canary", "stable_version": "2026.0614.2884", "canary_bot": "canary-bot" },
+        "bots": [
+          { "id": "bot-a", "role": "member", "evolve_synced": false },
+          { "id": "bot-c", "role": "member", "evolve_synced": true }
+        ]
+      },
+      "expect": { "state": "lag-stuck", "mode": "canary", "label": "Update failed", "severity": "loud", "banner": true }
+    },
+    {
+      "id": 5,
+      "name": "direct mode security update available with bots behind",
+      "now": "2026-06-16T12:00:00Z",
+      "inputs": {
+        "latest_release": { "tier": "security", "version": "2026.0616.2960" },
+        "bots": [ { "id": "bot-a", "role": "member", "evolve_synced": false } ]
+      },
+      "expect": { "state": "update-security", "mode": "direct", "label": "Security update", "severity": "loud", "banner": true }
+    },
+    {
+      "id": 6,
+      "name": "security update — never snoozable, banner stays",
+      "now": "2026-06-16T12:00:00Z",
+      "inputs": {
+        "latest_release": { "tier": "security", "version": "2026.0616.2960" },
+        "bots": [ { "id": "bot-a", "role": "member", "evolve_synced": false } ],
+        "snoozed_tiers": ["security"]
+      },
+      "expect": { "state": "update-security", "mode": "direct", "label": "Security update", "severity": "loud", "banner": true }
+    },
+    {
+      "id": 7,
+      "name": "OpenClaw update available and safe to upgrade",
+      "now": "2026-06-16T12:00:00Z",
+      "inputs": { "oc": { "update_available": true, "installed": "2026.6.1", "latest": "2026.6.2", "safety_check": { "ok": true } }, "bots": [] },
+      "expect": { "state": "oc-update", "mode": "direct", "label": "OpenClaw update", "sublabel": "✅ safe", "severity": "amber", "banner": false }
+    },
+    {
+      "id": 8,
+      "name": "OpenClaw update available, no safety check yet",
+      "now": "2026-06-16T12:00:00Z",
+      "inputs": { "oc": { "update_available": true, "installed": "2026.6.1", "latest": "2026.6.2", "safety_check": null }, "bots": [] },
+      "expect": { "state": "oc-update", "mode": "direct", "label": "OpenClaw update", "sublabel": "check", "severity": "amber", "banner": false }
+    },
+    {
+      "id": 9,
+      "name": "pinned with a candidate soaking — pin wins, never claims auto-promote",
+      "now": "2026-06-16T12:00:00Z",
+      "inputs": {
+        "release": { "mode": "canary", "stable_version": "2026.0614.2884", "pin": { "sha": "e970a96e", "reason": "rollback from f00dbabe" }, "candidate": { "state": "soaking", "sha": "abc123", "soak_started_at": "2026-06-16T11:40:00Z" } },
+        "bots": [ { "id": "bot-a", "role": "member", "evolve_synced": true } ]
+      },
+      "expect": { "state": "pin-held", "mode": "canary", "label": "Auto-updates paused", "severity": "neutral", "banner": false, "invariant": "must never claim an update in testing goes live while paused (§D-8 defense-in-depth)" }
+    },
+    {
+      "id": 10,
+      "name": "candidate soaking, not pinned",
+      "now": "2026-06-16T12:00:00Z",
+      "inputs": {
+        "release": { "mode": "canary", "stable_version": "2026.0614.2884", "soak_minutes": 20, "candidate": { "state": "soaking", "sha": "abc123", "soak_started_at": "2026-06-16T11:50:00Z" } },
+        "bots": [ { "id": "bot-a", "role": "member", "evolve_synced": true } ]
+      },
+      "expect": { "state": "candidate-soaking", "mode": "canary", "label": "Testing update…", "sublabel": "~Nm left", "severity": "neutral", "banner": false }
+    },
+    {
+      "id": 11,
+      "name": "candidate gating (Gate 1)",
+      "now": "2026-06-16T12:00:00Z",
+      "inputs": {
+        "release": { "mode": "canary", "stable_version": "2026.0614.2884", "candidate": { "state": "checking", "sha": "abc123" } },
+        "bots": [ { "id": "bot-a", "role": "member", "evolve_synced": true } ]
+      },
+      "expect": { "state": "candidate-checking", "mode": "canary", "label": "Checking update…", "severity": "neutral", "banner": false }
+    },
+    {
+      "id": 12,
+      "name": "candidate failed Gate 1 (skip-listed) — transient amber, quiet",
+      "now": "2026-06-16T12:00:00Z",
+      "inputs": {
+        "release": { "mode": "canary", "stable_version": "2026.0614.2884", "candidate": { "state": "failed", "sha": "deadbeef" } },
+        "bots": [ { "id": "bot-a", "role": "member", "evolve_synced": true } ]
+      },
+      "expect": { "state": "candidate-blocked", "mode": "canary", "label": "Update blocked", "severity": "amber", "banner": false, "escalation_note": "becomes shipping-stalled (loud) if the failing tip persists past REDEPLOY_GRACE with no newer candidate" }
+    },
+    {
+      "id": 13,
+      "name": "direct mode maintenance update available with bots behind",
+      "now": "2026-06-16T12:00:00Z",
+      "inputs": {
+        "latest_release": { "tier": "maintenance", "version": "2026.0616.2960" },
+        "bots": [
+          { "id": "bot-a", "role": "member", "evolve_synced": false },
+          { "id": "bot-b", "role": "member", "evolve_synced": false }
+        ]
+      },
+      "expect": { "state": "update-available", "mode": "direct", "label": "Update available", "severity": "amber", "banner": false }
+    },
+    {
+      "id": 14,
+      "name": "fleet on stable, nothing in flight, no OpenClaw update — steady state",
+      "now": "2026-06-16T12:00:00Z",
+      "inputs": {
+        "release": { "mode": "canary", "stable_version": "2026.0614.2884", "candidate": null },
+        "oc": { "update_available": false },
+        "bots": [
+          { "id": "bot-a", "role": "member", "evolve_synced": true },
+          { "id": "bot-b", "role": "member", "evolve_synced": true }
+        ]
+      },
+      "expect": { "state": "up-to-date", "mode": "canary", "label": "Up to date", "severity": "success", "banner": false }
+    },
+    {
+      "id": 15,
+      "name": "stuck lag acknowledged for this stable version — cell stays loud, banner suppressed",
+      "now": "2026-06-16T12:00:00Z",
+      "inputs": {
+        "release": { "mode": "canary", "stable_version": "2026.0614.2884", "stable": { "promoted_at": "2026-06-16T10:00:00Z" }, "canary_bot": "canary-bot" },
+        "bots": [
+          { "id": "bot-a", "role": "member", "evolve_synced": false },
+          { "id": "bot-b", "role": "member", "evolve_synced": false },
+          { "id": "bot-c", "role": "member", "evolve_synced": false }
+        ],
+        "acked_stable_versions": ["2026.0614.2884"]
+      },
+      "expect": { "state": "lag-stuck", "mode": "canary", "label": "Update failed", "severity": "loud", "banner": false, "note": "ack suppresses the banner only; the cell still renders loud" }
+    },
+    {
+      "id": 16,
+      "name": "OpenClaw update ready AND a candidate soaking — OC outranks soaking (rank 4 > 6)",
+      "now": "2026-06-16T12:00:00Z",
+      "inputs": {
+        "release": { "mode": "canary", "stable_version": "2026.0614.2884", "candidate": { "state": "soaking", "sha": "abc123", "soak_started_at": "2026-06-16T11:50:00Z" } },
+        "oc": { "update_available": true, "installed": "2026.6.1", "latest": "2026.6.2", "safety_check": { "ok": true } },
+        "bots": [ { "id": "bot-a", "role": "member", "evolve_synced": true } ]
+      },
+      "expect": { "state": "oc-update", "mode": "canary", "label": "OpenClaw update", "severity": "amber", "banner": false }
+    },
+    {
+      "id": 17,
+      "name": "pinned AND OpenClaw update ready — OC outranks pin (rank 4 > 5)",
+      "now": "2026-06-16T12:00:00Z",
+      "inputs": {
+        "release": { "mode": "canary", "stable_version": "2026.0614.2884", "pin": { "sha": "e970a96e", "reason": "manual freeze" } },
+        "oc": { "update_available": true, "installed": "2026.6.1", "latest": "2026.6.2", "safety_check": { "ok": true } },
+        "bots": [ { "id": "bot-a", "role": "member", "evolve_synced": true } ]
+      },
+      "expect": { "state": "oc-update", "mode": "canary", "label": "OpenClaw update", "severity": "amber", "banner": false }
+    }
+  ]
+}

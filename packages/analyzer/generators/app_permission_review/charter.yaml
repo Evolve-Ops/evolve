@@ -1,0 +1,57 @@
+id: app_permission_review
+schema_version: 1
+type: guardian
+dimension: safety
+bucket: improve
+# Surface routing: cleanup. Both finding kinds the generator emits today
+# (network_egress entries to add for audit completeness, stale exec
+# entries to remove) are housekeeping with no runtime enforcement —
+# the operator should accept-or-ignore in batch. Spec:
+# docs/spec-recommendations-rework-2026-06-02.md §"Generator routing".
+surface: cleanup
+purpose: >
+  For each installed app with a permissions: block, run static checks
+  (necessary / sufficient / overkill) against the app's scripts and the
+  workspace, then run a pod-aware second pass that cross-references
+  findings against sibling apps on the same bot.
+
+  Three second-pass outcomes per finding:
+   - sibling declares the same resource → emit as-is with a "still in
+     effect via app B" annotation
+   - sibling uses the resource but doesn't declare it → emit a MOVE
+     proposal (remove from app A, add to app B)
+   - no sibling reference → emit as-is
+
+  All proposals are Investigations in v1 — the operator hand-edits the
+  manifest after reading the suggested change. Typed UpdateManifest
+  applier is out of scope; Phase C will likely revisit.
+
+  Reads `permissions._affirmed` to skip entries the operator has
+  explicitly affirmed (mechanism for *writing* to _affirmed is deferred;
+  the existing rejection-cooldown covers most of the practical need).
+
+  See docs/spec-app-permission-review-2026-05-26.md.
+
+  Cadence is weekly for the standalone job. The scan-pipeline trigger
+  in scanner.py invokes the generator immediately after manifest
+  generation so operator-initiated scans surface findings without
+  waiting for the weekly tick.
+cadence: weekly
+resolves_when_silent: true
+invariants:
+  - id: action_kind_allowed
+    description: >
+      Investigation only — operator hand-edits the manifest. No typed
+      manifest mutation in v1.
+    check_kind: action_kind_allowed
+    params:
+      allowlist: [Investigation]
+  - id: touches_forbidden
+    description: >
+      The review generator proposes changes to manifests conceptually
+      (via Investigation context). It never proposes changes to
+      exec-approvals, plugins, channel config, cron config, or gateway
+      state.
+    check_kind: touches_forbidden
+    params:
+      forbidden: [auth_config, plugins, channel_config, gateway_core, cron_config]

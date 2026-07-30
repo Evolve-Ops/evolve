@@ -1,0 +1,908 @@
+name: ci
+
+# CI gate. Runs on every PR and on pushes to main. Jobs listed here are
+# required checks (configure under Settings → Branches → main →
+# "Require status checks to pass before merging").
+#
+# The full admin+analyzer suite (~12k tests) is a required, blocking job via
+# `full-suite-admin` and `full-suite-analyzer`. Known-baseline failures are
+# quarantined in ci-quarantine.txt at the repo root so any NEW failure breaks
+# the build, but accumulated debt does not.
+#
+# Path-aware Python suites: the heavy admin + analyzer suites can't change
+# behaviour for most PRs (docs, plugin, dashboard/gallery, web assets). The
+# `changes` job decides whether they need to run; the suites ALWAYS start (so
+# the required check always reports) but skip their install + test steps when no
+# Python paths changed — reporting green in seconds. This is the standard
+# "always-run job, conditional steps" pattern; a job skipped via a top-level
+# `paths:` filter would instead stall the required check forever. The decision
+# fails safe: any ambiguity → run the suite.
+#
+# Admin suite sharding: GitHub's hosted runners are 2-core (private repo), where
+# pytest-xdist gave ~no speedup for this subprocess/IO-heavy suite. So the admin
+# suite is parallelised ACROSS runners — `full-suite-admin-shard` is a 4-way
+# matrix, each leg running 1/4 of the tests (conftest.py partitions by
+# crc32(nodeid) % 4). The `full-suite-admin` aggregator keeps the original
+# required-check name and is green iff all four shards passed.
+#
+# Path-aware always-start guards: three more required checks now skip their
+# heavy step when the PR can't affect them, using the SAME always-start /
+# conditional-steps shape as the suites (never a top-level `paths:` filter,
+# which would stall a required check forever):
+#   - pyright-ratchet skips `uv sync` + pyright when no *.py/*.pyi (or the
+#     pyright/ruff environment: any pyproject.toml / uv.lock / the frozen
+#     baselines) changed anywhere — gated on the WHOLE-REPO `any_python`
+#     decision, deliberately NOT the admin/analyzer-scoped `python` flag,
+#     because pyright type-checks the entire project (tools/, edr/, scripts/
+#     included) and is a required check; gating it narrower would let a type
+#     regression outside packages/{admin,analyzer} merge unseen.
+#   - web-eslint skips `npm ci` + eslint when no admin-SPA web asset / eslint
+#     config / suppressions baseline / root npm manifest changed (`web`).
+#   - plugin-tsc skips `npm ci` + tsc + node:test when no plugin source / root
+#     npm manifest changed (`plugin`).
+#   - except-pass-ratchet's final ruff step (its own `uv sync --only-group dev`)
+#     skips on `any_python == false`; the job's pure-python lints stay
+#     unconditional so the check always reports and still scans repo-wide.
+#   - publish-suites skips its install + the two publish/scrub test files when no
+#     publish-surface path changed (`publish`) — they are ~4m of real git work.
+#
+# Truly-unconditional guards (scrub-guard, the pure-python lints inside
+# except-pass-ratchet, oc-channel-snapshot, gitleaks) stay that way — they are
+# cheap and several (notably the repo-wide name-scrub) must run on docs-only
+# PRs too. Every gated job above still ALWAYS starts and reports green on the
+# skip path; only its expensive steps are conditional. All decisions fail safe:
+# any diff ambiguity → run everything (the step gates use `!= 'false'`, so an
+# unset/empty decision RUNS).
+#
+# Adding a new job: keep it blocking (no continue-on-error). If a job is
+# informational only, document why before setting continue-on-error: true.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      python: ${{ steps.decide.outputs.python }}
+      any_python: ${{ steps.decide.outputs.any_python }}
+      web: ${{ steps.decide.outputs.web }}
+      plugin: ${{ steps.decide.outputs.plugin }}
+      linux_e2e: ${{ steps.decide.outputs.linux_e2e }}
+      edr: ${{ steps.decide.outputs.edr }}
+      publish: ${{ steps.decide.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: decide
+        name: Decide whether the Python suites must run
+        # Fail safe: on push, on any git error, or on an unrecognised event,
+        # default to running the suites. Only an unambiguous "no Python paths
+        # touched" PR diff sets python=false.
+        #
+        # linux_e2e gates the Ubuntu end-to-end job (design-linux-port §9):
+        # it spends a whole runner, so it runs only when the PLATFORM
+        # surfaces it exercises changed — the seam adapters + profile, the
+        # wizard/deploy/sudoers writers, the perms/sudoers/systemd test
+        # families, the e2e harness itself, or this workflow. Always-run on
+        # main pushes (and on any diff ambiguity), same fail-safe shape as
+        # the Python decision above.
+        run: |
+          set -uo pipefail
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "Non-PR event (${{ github.event_name }}) — running Python suites + linux e2e + edr smoke + publish suites + pyright/web/plugin gates."
+            echo "python=true" >> "$GITHUB_OUTPUT"
+            echo "any_python=true" >> "$GITHUB_OUTPUT"
+            echo "web=true" >> "$GITHUB_OUTPUT"
+            echo "plugin=true" >> "$GITHUB_OUTPUT"
+            echo "linux_e2e=true" >> "$GITHUB_OUTPUT"
+            echo "edr=true" >> "$GITHUB_OUTPUT"
+            echo "publish=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          base='${{ github.event.pull_request.base.sha }}'
+          head='${{ github.event.pull_request.head.sha }}'
+          changed=$(git diff --name-only "$base...$head" 2>/dev/null)
+          if [ $? -ne 0 ] || [ -z "$changed" ]; then
+            echo "Could not resolve diff (or empty) — running Python suites + linux e2e + edr smoke + publish suites + pyright/web/plugin gates to be safe."
+            echo "python=true" >> "$GITHUB_OUTPUT"
+            echo "any_python=true" >> "$GITHUB_OUTPUT"
+            echo "web=true" >> "$GITHUB_OUTPUT"
+            echo "plugin=true" >> "$GITHUB_OUTPUT"
+            echo "linux_e2e=true" >> "$GITHUB_OUTPUT"
+            echo "edr=true" >> "$GITHUB_OUTPUT"
+            echo "publish=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "Changed files:"; echo "$changed"
+          # gallery/, packages/gallery/, and docs/atlas-app-manifests/ are here
+          # because the admin suite owns the gallery conformance gate
+          # (tests/test_gallery_conformance.py — the Atlas manifests are
+          # importable gallery packages swept by the same gate): a
+          # gallery-only PR must run the admin suite, else a bad package
+          # merges green and reds main on the push (non-PR events run all).
+          if echo "$changed" | grep -qE '^(gallery/|docs/atlas-app-manifests/|packages/admin/|packages/analyzer/|packages/gallery/|ci-quarantine\.txt|\.github/workflows/ci\.yml)'; then
+            echo "python=true" >> "$GITHUB_OUTPUT"
+            echo "→ Python-relevant changes detected; suites will run."
+          else
+            echo "python=false" >> "$GITHUB_OUTPUT"
+            echo "→ No gallery, packages/admin, packages/analyzer, or test-infra changes; suites will skip."
+          fi
+          if echo "$changed" | grep -qE '^(packages/analyzer/runtime/|packages/analyzer/platform_profile\.py|packages/analyzer/evolve_config\.py|packages/admin/evolve_admin/runtime/|packages/admin/evolve_admin/setup_wizard\.py|packages/admin/evolve_admin/deploy\.py|packages/admin/evolve_admin/keystore\.py|packages/admin/evolve_admin/web/run\.py|packages/admin/tests/e2e_linux/|packages/admin/tests/[^/]*(sudoers|perms|linux|systemd|isolation|platform)[^/]*\.py$|packages/analyzer/tests/test_platform_profile\.py|\.github/workflows/ci\.yml$)'; then
+            echo "linux_e2e=true" >> "$GITHUB_OUTPUT"
+            echo "→ Platform-surface changes detected; linux e2e will run."
+          else
+            echo "linux_e2e=false" >> "$GITHUB_OUTPUT"
+            echo "→ No platform-surface changes; linux e2e will skip its steps."
+          fi
+          # edr gates the EDR library-reuse + not-shipped smoke job. EDR
+          # imports the analyzer (never forks it), so an analyzer change can
+          # break the reuse seam — run the smoke job when either edr/ or the
+          # analyzer changes, or when this workflow itself changes.
+          if echo "$changed" | grep -qE '^(edr/|packages/analyzer/|\.github/workflows/ci\.yml$)'; then
+            echo "edr=true" >> "$GITHUB_OUTPUT"
+            echo "→ edr/ or analyzer changes detected; edr smoke will run."
+          else
+            echo "edr=false" >> "$GITHUB_OUTPUT"
+            echo "→ No edr/ or analyzer changes; edr smoke will skip its steps."
+          fi
+          # publish gates the publish/scrub test suites (tools/test_publish_*.py).
+          # Since #3482 the private→public republish is AUTOMATED on every push to
+          # main, so those two files are the only executable guard rails on an
+          # unattended FORCE-push to a PUBLIC repo: the denylist partition, the
+          # sanitizer, the reserved-token scrub, --verify's assertions, and the
+          # SHAPE of publish-public.yml itself (fail-closed ordering, main-only
+          # guard, secret gate, --verify-as-separate-invocation). They are ~4m of
+          # real git work (temp clones + force-pushes to local bare remotes), so
+          # they are path-gated rather than run on every PR. The predicate is the
+          # whole publish surface: the two tools, their tests, the manifest guard +
+          # the manifest itself, the published workflow, and
+          # packages/admin/tests/test_public_launch_scrub.py (the RESERVED_TOKENS /
+          # scanner source both the sanitizer and the scrub step reuse), plus this
+          # workflow. Always-true on main pushes and on any diff ambiguity above.
+          if echo "$changed" | grep -qE '^(tools/publish-public$|tools/publish_sanitize\.py$|tools/test_publish_public\.py$|tools/test_publish_sanitize\.py$|tools/check-public-manifest$|docs/public-manifest\.yaml$|\.github/workflows/publish-public\.yml$|packages/admin/tests/test_public_launch_scrub\.py$|\.github/workflows/ci\.yml$)'; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "→ Publish-surface changes detected; publish/scrub suites will run."
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "→ No publish-surface changes; publish/scrub suites will skip their steps."
+          fi
+          # any_python gates the WHOLE-PROJECT pyright ratchet AND the ruff
+          # baseline step (both REQUIRED checks that scan the entire repo). It is
+          # deliberately BROADER than the admin/analyzer-scoped `python` flag
+          # above: ANY *.py/*.pyi anywhere (packages/**, tools/**, edr/**,
+          # scripts/**, conftest, …), PLUS the inputs that change pyright's/ruff's
+          # verdict with no source edit:
+          #   - their CONFIG — pyrightconfig.json (include/exclude/extraPaths/
+          #     mode) and ruff.toml (select/extend-exclude). In THIS repo the
+          #     lint config lives in these dedicated files, NOT in any
+          #     pyproject.toml's [tool.*] table, so a loosen-the-gate edit there
+          #     must trip a re-run.
+          #   - their ENVIRONMENT — any pyproject.toml / uv.lock (deps, stubs,
+          #     the pinned pyright + ruff versions), plus .python-version (the
+          #     interpreter uv builds the venv from — bumping the pin moves the
+          #     stdlib/typeshed both tools resolve against).
+          #   - the frozen pyright/ruff baselines (data file + lint script).
+          # …PLUS this workflow. Gating it any narrower would let a type/lint
+          # regression in tools/ or edr/ — or a silently-loosened config or
+          # baseline — merge unseen. Ambiguity already exited true above; an
+          # unset/empty value still RUNS (the step gates use `!= 'false'`).
+          if echo "$changed" | grep -qE '\.pyi?$|(^|/)pyproject\.toml$|(^|/)uv\.lock$|(^|/)ruff\.toml$|(^|/)pyrightconfig\.json$|^tools/(pyright|ruff)-baseline|^\.python-version$|^\.github/workflows/ci\.yml$'; then
+            echo "any_python=true" >> "$GITHUB_OUTPUT"
+            echo "→ Python source / environment changes detected; pyright + ruff ratchets will run."
+          else
+            echo "any_python=false" >> "$GITHUB_OUTPUT"
+            echo "→ No *.py/*.pyi or pyright/ruff-environment changes; those ratchets will skip their steps."
+          fi
+          # web gates the admin-SPA ESLint check: the linted JS, the eslint
+          # config + suppressions baseline, or the root npm manifest (npm ci
+          # installs eslint from it), plus this workflow.
+          if echo "$changed" | grep -qE '^packages/admin/evolve_admin/web/|^eslint\.config\.mjs$|^eslint-suppressions\.json$|^(package\.json|package-lock\.json)$|^\.github/workflows/ci\.yml$'; then
+            echo "web=true" >> "$GITHUB_OUTPUT"
+            echo "→ Admin SPA / eslint-config changes detected; web eslint will run."
+          else
+            echo "web=false" >> "$GITHUB_OUTPUT"
+            echo "→ No admin-SPA web or eslint-config changes; web eslint will skip its steps."
+          fi
+          # plugin gates the Plugin TypeScript build + node:test job: any plugin
+          # source/config (tsconfig + the node:test suites all live under
+          # packages/plugin/), or the root npm manifest (npm ci), plus this
+          # workflow.
+          if echo "$changed" | grep -qE '^packages/plugin/|^(package\.json|package-lock\.json)$|^\.github/workflows/ci\.yml$'; then
+            echo "plugin=true" >> "$GITHUB_OUTPUT"
+            echo "→ Plugin source / npm-manifest changes detected; plugin tsc + node:test will run."
+          else
+            echo "plugin=false" >> "$GITHUB_OUTPUT"
+            echo "→ No plugin source or npm-manifest changes; plugin tsc + node:test will skip its steps."
+          fi
+
+  scrub-guard:
+    name: Public-launch scrub guard
+    # Unconditional on purpose: test_public_launch_scrub.py scans the WHOLE repo
+    # (incl. docs/) for reserved-token leakage, so it must run on docs-only PRs
+    # that the path-aware Python suites skip.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+      - name: Install pytest
+        run: pip install pytest
+      - name: Run scrub guard
+        working-directory: packages/admin
+        run: python -m pytest tests/test_public_launch_scrub.py -v
+
+  except-pass-ratchet:
+    name: "Silent-exception ratchet (no new except: pass)"
+    # `needs: changes` + `if: always()` so the job ALWAYS starts and reports
+    # (never stalls this required check) even if `changes` errors. Only the
+    # final ruff step — which does its own `uv sync --only-group dev` — is gated
+    # on any_python; every pure-python lint below stays unconditional and scans
+    # repo-wide, so the check always does real work.
+    needs: changes
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        # fetch-depth: 0 so the diff-relative file-size ratchet (below) can
+        # read the base tree (`git show <base-sha>:<path>`). The other lints in
+        # this job are absolute-baseline and don't need history; the full fetch
+        # is cheap and shared.
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+      - name: Block new silently-swallowed exceptions
+        # Fails only if a file exceeds its tools/except-pass-baseline.txt count
+        # (i.e. a NEW except: pass / ... was added). Fixing swallows never fails.
+        run: python3 tools/except-pass-lint --all
+      - name: Block new provider/model literals in routing logic
+        # Three-homes rule (spec-model-rungs-and-roles §Addendum 3.B): provider/
+        # model names live only in catalog DATA, provider ADAPTERS, or tests —
+        # never in routing/availability/resolution logic. Fails only if a covered
+        # module exceeds its tools/provider-literal-baseline.txt count.
+        run: python3 tools/provider-literal-lint --all
+      - name: Block local copies of shared primitives
+        # Phase 6.2: atomic_write/now_iso/bot_home each have one blessed home
+        # (evolve_util / evolve_config). No baseline — migration completed in
+        # the same PR, so any hit is a regression. See tools/dup-primitive-lint.
+        run: python3 tools/dup-primitive-lint --all
+      - name: Block sudo calls with no matching NOPASSWD grant
+        # Every `sudo` in packages/{admin,analyzer} targeting a binary in
+        # evolve's sudo contract (the platform_profile command table) must map
+        # to a grant in setup_wizard._render_evolve_sudoers, or carry a
+        # `# sudo-grant:` annotation. Catches the silent "sudo: a terminal is
+        # required to read the password" drift at commit time. No baseline —
+        # the consumer side was reconciled in the same PR that added the gate,
+        # so any block is a regression. Reads the test-pinned sudoers goldens,
+        # so it's the consumer-side mirror of test_sudoers_platform_profile.py.
+        run: python3 tools/sudo-grant-lint --all
+      - name: Block new direct reads of the Proposal/Signal store dirs
+        # 7.1 Phase B (spec docs/spec-state-store-and-deploy-resilience-
+        # 2026-06-10.md §1.1): the store dirs have ONE sanctioned read path
+        # each — arbiter.store / signals.store iter_* helpers. New code may
+        # not glob shared_dir/proposals/<subdir> or shared_dir/signals/<subdir>
+        # directly (the canonical lifecycle subdirs), which the Phase D SQLite
+        # swap would silently break. Per-file counts frozen in
+        # tools/store-access-baseline.txt; the count only shrinks. Residual
+        # entries are the legacy L1 pipeline (Phase C) + store-internal
+        # mtime/scandir paths.
+        run: python3 tools/store-access-lint --all
+      - name: Block new /Users/ path literals + platform-blind producers (frozen baselines)
+        # 8.3 Linux port (design doc §6): platform-divergent paths live in
+        # platform_profile.py; homes resolve via evolve_config.bot_home/
+        # user_home. Legacy literals are frozen per-file in
+        # tools/platform-path-baseline.txt — counts may only shrink.
+        #
+        # --all runs BOTH rule classes (default --rule all): the /Users/
+        # paths rule above AND the platform-blind producer rule. The blind
+        # rule blocks a NEW unguarded macOS-only binary (socketfilterfw/
+        # pfctl/dscl/fdesetup/softwareupdate/...) or macOS/darwin/FileVault
+        # message string in a packages/analyzer/ producer — the
+        # "macOS check false-CRITICALs on a Linux pod" bug class. Frozen
+        # per-file in tools/platform-blind-baseline.txt; counts only shrink.
+        run: python3 tools/platform-path-lint --all
+      - name: Block new bare .exists()/.stat()/open() on a bot .openclaw path (frozen baseline)
+        # Recurrence guard for the Linux .openclaw ACL-mask EACCES bug class:
+        # when the OC gateway hardens a bot's .openclaw to 0700 it clamps the
+        # POSIX-ACL mask to ---, so on Py3.12 a bare Path.exists()/.stat()/
+        # .is_file()/.is_dir()/open() under that dir RAISES PermissionError
+        # (≤3.11 returned False). Broad-swallowed it silently aborts a deploy
+        # (the #3184 live "0 of N bots upgraded" blocker); uncaught it crashes a
+        # daemon. The codified fix is secret_config_perms.exists_or_unreachable()
+        # / read_text()+sudo /bin/cat / an explicit except (PermissionError,
+        # OSError). TWO manual sweeps (#3141, #3145) missed the most-used write
+        # site, so this is the mechanical guard. AST-based; per-file counts frozen
+        # in tools/openclaw-eacces-baseline.txt — counts may only shrink.
+        run: python3 tools/openclaw-eacces-lint --all
+      - name: Block scheduler-adapter construction outside the seam
+        # 8.3 Linux port (design doc §3, scheduler portability seam): a bare
+        # LaunchdScheduler()/SystemdScheduler() construction bypasses the
+        # process-wide get_scheduler()/set_scheduler() injection and pins
+        # launchctl on a host where it may not exist (Linux pod) — the exact
+        # bug class the scheduler-seam migration fixed. AST-based; allowlist
+        # is the seam, the platform gate, and the verified guarded-derive
+        # accessors. No baseline — repo-wide invariant, any new construction
+        # is a regression. --strict so a hit BLOCKS (warns locally).
+        run: python3 tools/scheduler-factory-lint --all --strict
+      - name: Block a Signal producer with no declared fresh-pod protection posture
+        # Fresh-pod alert protection BY CONSTRUCTION (spec docs/spec-transient-
+        # signal-suppression-2026-06-23.md § "Protection by construction"). The
+        # settle/flap/maturity gates that stop a freshly-provisioned pod from
+        # spamming its operator are opt-in per producer; this lint forces every
+        # operator-facing Signal producer to declare its fresh-pod posture in
+        # signals.protection_registry. A NEW signals.store.observe() site in an
+        # unregistered file (= an undeclared producer) BLOCKS, as does a 'none'
+        # posture with no justification. --strict also blocks a producer added to
+        # producer_severity / the dispatcher source map but not the registry.
+        # Enforces a *declared* posture, not a gated one — gateway-down / security-
+        # floor alerts correctly declare none+justification and pass.
+        run: python3 tools/signal-protection-lint --all --strict
+      - name: Block an undeclared auto-generated disk output (footprint contract)
+        # Auto-generated output discipline BY CONSTRUCTION (spec docs/spec-
+        # footprint-2026-06-18.md § "Auto-generated output declaration contract").
+        # The 2026-06-28 disk audit found 537 MB of audit records that nothing
+        # reads and nothing prunes, because no mechanism forced a producer to
+        # declare a consumer or a retention policy. This lint statically finds
+        # every record/log write under {shared_dir}/** or ~/.openclaw/workspace/
+        # evolve/** and BLOCKS when the writing file is not claimed by an
+        # OutputDeclaration in footprint.components carrying BOTH a retention
+        # policy AND a consumer (or a justified consumer:none + finite retention).
+        # --strict also blocks the heuristic-ambiguous append tier.
+        run: python3 tools/footprint-output-lint --all --strict
+      - name: Validate the F-3 posture component graph (load-validator)
+        # The F-3 posture dial cascades a disable through the dependency graph in
+        # footprint.components (the graph-node entries). This load-validator keeps
+        # that graph structurally sound as F-4 lands new components: every
+        # requires[] target exists and is a graph node, requires/required_by are
+        # reciprocal, the cascade DAG is acyclic, the infra floor is never
+        # dial-scoped (FD-7), and FD-3 safety-floor items are dial-scoped. An
+        # unverified (graph §6 soft) edge is validated as real (fail-safe).
+        run: python3 tools/footprint-graph-lint
+      - name: Block growth of the hot hazard files (no-growth cap)
+        # Phase 4.1a (agent-legibility doctrine): the hot hazard files
+        # (routes_admin.py / server.py / cli.py / deploy.py) may not gain net
+        # lines. Per-file line-count baselines frozen in
+        # tools/file-size-baseline.txt; the cap only shrinks (delete lines or
+        # split the file, then --update-baseline). This stops the bleeding;
+        # it does NOT do the 4.1b decomposition.
+        #
+        # Diff-relative: the gate fails only if THIS branch grows a capped file
+        # past max(cap, count-on-base), so a file already over cap from a prior
+        # merge can't red a PR that didn't touch it (memory
+        # green_pr_reds_main_on_whole_repo_ratchet). The base is the PR base sha
+        # on pull_request, or the pre-push tip on a main push; empty on other
+        # events -> the tool auto-detects (merge-base origin/main) or, failing
+        # that, applies the stricter absolute cap.
+        env:
+          RATCHET_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python3 tools/file-size-ratchet --all --base "$RATCHET_BASE_SHA"
+      - name: Block growth of the CI quarantine (no-growth cap)
+        # Phase 6.5: ci-quarantine.txt (repo root) is the central failing-test
+        # allowlist. The count is frozen in tools/ci-quarantine-baseline.txt
+        # and may only ratchet DOWN. Monthly target (recorded in
+        # tools/quarantine-ratchet): net >=10 lines removed per calendar month.
+        run: python3 tools/quarantine-ratchet --all
+      - name: No Python changes — ruff baseline skipped
+        if: ${{ needs.changes.outputs.any_python == 'false' }}
+        run: echo "No *.py/*.pyi or pyright/ruff-environment changes in this PR — ruff baseline (its own uv sync) skipped; the pure-python lints above still ran repo-wide."
+      - name: Block new ruff violations (frozen baseline)
+        # Phase 6.3: ruff's high-confidence default rules (E4/E7/E9/F), legacy
+        # frozen in tools/ruff-baseline.txt, baseline only shrinks. The ruff
+        # version comes from uv.lock's dev group (Phase 6.4) so CI and dev
+        # run the exact same build; rule behavior drifts across releases.
+        # Gated on any_python (whole-repo) — it lints the whole project, so it
+        # only needs to run when Python source or its environment changed.
+        if: ${{ needs.changes.outputs.any_python != 'false' }}
+        run: |
+          pip install uv
+          uv sync --locked --only-group dev
+          uv run --no-sync python3 tools/ruff-baseline-lint --all
+
+  pyright-ratchet:
+    name: "Pyright type-error ratchet (frozen baseline)"
+    # Phase 6.3: full-project pyright (basic mode) with per-(file, rule)
+    # error counts frozen in tools/pyright-baseline.txt — new code must
+    # type-check clean, legacy only ratchets down. A full run (~1-3 min)
+    # beats changed-files-only: pyright's counts for a file can differ when
+    # only part of the import graph is analyzed. Runs parallel to the admin
+    # shards, so it doesn't extend the critical path. Version pinned —
+    # diagnostics drift across pyright releases; bumps re-freeze the
+    # baseline in the same PR (see tools/pyright-baseline-lint).
+    #
+    # Always-start / conditional-steps (same shape as the suites): the job
+    # always reports, but skips its install + pyright run unless `changes` saw a
+    # whole-repo Python-relevant edit (any_python). MUST be any_python, NOT the
+    # admin/analyzer-scoped `python` flag — pyright type-checks the ENTIRE repo
+    # (tools/, edr/, scripts/ …), so gating it narrower would skip a type
+    # regression outside packages/{admin,analyzer} on a required check.
+    needs: changes
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: No Python changes — pyright skipped
+        if: ${{ needs.changes.outputs.any_python == 'false' }}
+        run: echo "No *.py/*.pyi or pyright-environment (pyproject/uv.lock/baseline) changes in this PR — pyright ratchet skipped (it type-checks the whole repo, so it runs whenever ANY Python source or its environment changes)."
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+      - name: Run pyright against the frozen baseline
+        # Both packages (and their deps) must be installed or pyright reports
+        # missing imports for every third-party module and the counts blow
+        # past the baseline — the baseline was frozen with deps resolvable.
+        # Everything (packages, deps, pyright itself) comes from uv.lock
+        # (Phase 6.4) so the diagnostic set is reproducible.
+        if: ${{ needs.changes.outputs.any_python != 'false' }}
+        run: |
+          pip install uv
+          uv sync --locked
+          uv run --no-sync python3 tools/pyright-baseline-lint
+
+  web-eslint:
+    name: Admin SPA ESLint (suppressions baseline)
+    # Phase 6.3: ESLint recommended (minus no-undef — the SPA is classic
+    # shared-global-scope scripts; see eslint.config.mjs) over
+    # packages/admin/evolve_admin/web JS. Legacy violations live in
+    # eslint-suppressions.json (ESLint bulk suppressions — native ratchet:
+    # new code clean, suppressions only shrink via --prune-suppressions).
+    #
+    # Always-start / conditional-steps: the job always reports, but skips its
+    # npm ci + eslint unless `changes` saw an admin-SPA web asset, the eslint
+    # config/suppressions baseline, or the root npm manifest change (`web`).
+    needs: changes
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: No web changes — eslint skipped
+        if: ${{ needs.changes.outputs.web == 'false' }}
+        run: echo "No admin-SPA web asset, eslint-config, or root npm-manifest changes in this PR — web eslint skipped."
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install workspace dependencies
+        if: ${{ needs.changes.outputs.web != 'false' }}
+        run: npm ci
+      - name: Lint admin SPA JavaScript
+        if: ${{ needs.changes.outputs.web != 'false' }}
+        run: npx eslint "packages/admin/evolve_admin/web/**/*.js" --max-warnings 0
+
+  public-manifest:
+    name: Public manifest cut-line guard
+    # Unconditional + cheap: validates docs/public-manifest.yaml (the
+    # public/private cut line for publishing to evolve-ops/evolve) and fails
+    # on a malformed manifest or a denylist glob that matches no tracked file
+    # (a dead/typo'd glob silently widens or narrows the cut line). Must run on
+    # any PR — a docs-only PR can add a file under a private dir or break a
+    # glob. No network. Spec: docs/spec-public-2026-06-18.md §4.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+      - name: Install PyYAML
+        run: pip install pyyaml
+      - name: Validate the public manifest against the tracked tree
+        run: python3 tools/check-public-manifest
+
+  publish-suites:
+    name: Publish/scrub guard test suites
+    # tools/test_publish_public.py (66 tests) + tools/test_publish_sanitize.py
+    # (13) ran in NO CI job and NO preflight gate until this job existed. Since
+    # #3482 the private→public republish is automated on every push to main, so
+    # these are the guard rails on an unattended FORCE-push to a public repo:
+    # the denylist partition, the sanitizer, the reserved-token scrub (incl. the
+    # anti-vacuous "inject a token → the scrub MUST fail" proof), --verify's
+    # assertions, and the shape of publish-public.yml itself. Unwired they
+    # protect nothing — a refactor could break the scrub ordering or the
+    # main-only guard with nothing red.
+    #
+    # Always-start / conditional-steps (same shape as the suites above): the job
+    # always reports, but skips its install + tests unless `changes` saw a
+    # publish-surface edit (`publish`). Path-gated because the suite is ~4m
+    # wall-clock — the four --execute/--verify tests each build the full public
+    # tree and force-push it to a local bare remote (see the PR body); the rest
+    # are seconds. It runs in parallel with the admin shards, so it does not
+    # extend the critical path on the PRs where it fires.
+    needs: changes
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: No publish-surface changes — publish/scrub suites skipped
+        if: ${{ needs.changes.outputs.publish == 'false' }}
+        run: echo "No publish tooling, manifest, publish workflow, or scrub-module changes in this PR — publish/scrub suites skipped."
+      - uses: actions/checkout@v7
+        with:
+          # fetch-depth: 0 — test_status_reports_drift_since_recorded_sha resolves
+          # HEAD~2 in the CHECKED-OUT clone, so a shallow fetch would break it.
+          fetch-depth: 0
+          # Check out the PR HEAD COMMIT, not the default synthetic merge ref.
+          # These tests assert against the real repo's git history: --status
+          # computes `git rev-list --count <recorded>..HEAD` and the test pins it
+          # to exactly 2 for HEAD~2. On a merge commit, HEAD~2 walks first-parent
+          # into the base branch, so the count is 3+ (verified on a real merge in
+          # this repo's history: 7) and the assertion would fail for reasons that
+          # have nothing to do with the publish path. github.sha covers the
+          # main-push event, where head.sha is empty.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+      - name: Install pytest + PyYAML
+        if: ${{ needs.changes.outputs.publish != 'false' }}
+        # pyyaml: publish-public parses docs/public-manifest.yaml and the
+        # workflow-shape tests parse publish-public.yml. pytest: run_scrub loads
+        # packages/admin/tests/test_public_launch_scrub.py, which imports pytest
+        # at top level (the same pairing publish-public.yml installs).
+        run: pip install pytest pyyaml
+      - name: Run the publish + sanitizer suites
+        if: ${{ needs.changes.outputs.publish != 'false' }}
+        working-directory: tools
+        # cwd=tools is how both files document themselves; they resolve the repo
+        # root from __file__ regardless, but keep the documented invocation.
+        run: python -m pytest test_publish_public.py test_publish_sanitize.py -q --tb=short -p no:cacheprovider
+
+  help-coverage:
+    name: Help-page registry coverage
+    # Anti-drift gate for the admin-page ↔ help-doc mapping (docs/help/_pages.yaml
+    # is the canonical registry). BLOCKS on: a live data-page in index.html with
+    # no registry row (an unregistered NEW page), a registry row pointing at a
+    # retired page, a `doc_status: present` page whose doc is missing, or a
+    # docs/help `ui_surface: admin.<x>` that resolves to no live page (the stale-
+    # frontmatter bug this backbone kills). Known doc gaps + the AGENTS.md-mention
+    # dimension WARN only. Cheap, no network. Must run on any PR — a docs-only or
+    # index.html-only PR can drift the mapping.
+    # TODO(evo-asst): switch the run line to `--strict` once the AGENTS.md
+    # coverage chip lands, to promote the AGENTS.md-mention WARN to BLOCK.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+      - name: Install PyYAML
+        run: pip install pyyaml
+      - name: Lint admin-page ↔ help-doc coverage
+        run: python3 tools/help-coverage-lint
+
+  oc-channel-snapshot:
+    name: OC channel-snapshot parser invariant
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+      - name: Install pytest
+        run: pip install pytest
+      - name: Run list_oc_channels.py parser + snapshot-shape tests
+        run: python -m pytest tests/test_list_oc_channels.py -v
+
+  plugin-tsc:
+    name: Plugin TypeScript build
+    # Added 2026-06-08 after #1925 (TS 5.9.3 → 6.0.3) silently broke
+    # `tsc` for ~6 days. None of the other jobs ran `tsc` on the plugin,
+    # so the breakage went unnoticed until someone tried to regenerate
+    # dist .map files manually during a merge. Fix landed in #2399
+    # (explicit `"types": ["node"]` in tsconfig); this job pins the
+    # invariant so the next silent breakage gets caught immediately.
+    #
+    # `--noEmit` runs the full type-check without writing to dist/, so
+    # the job is fast (~10s) and produces no side effects. The dist/
+    # tree stays the source of truth for runtime; this job only catches
+    # the "tsc itself is broken" regression class — it does NOT catch
+    # "src edited but dist not regenerated" drift (that would require
+    # rebuilding and diffing, which we may add later).
+    #
+    # Also runs the plugin's node:test unit suite (~695 tests, ~1.3s) —
+    # pure-.mjs, no node_modules needed — which previously ran nowhere in
+    # CI. The job name is left unchanged so the required-check mapping
+    # stays valid without a branch-protection edit.
+    #
+    # Node 22 matches the supported runtime on the reference pod
+    # (cf. project_sentry_filehandle_crash_loop_may2026.md).
+    #
+    # Always-start / conditional-steps: the job always reports, but skips its
+    # npm ci + standalone-lockfile sync check + tsc + node:test unless `changes`
+    # saw a plugin-source/config edit (tsconfig + the node:test suites all live
+    # under packages/plugin/) or a root npm-manifest change (`plugin`).
+    needs: changes
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: No plugin changes — build skipped
+        if: ${{ needs.changes.outputs.plugin == 'false' }}
+        run: echo "No plugin source or root npm-manifest changes in this PR — plugin tsc + node:test skipped."
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install workspace dependencies
+        if: ${{ needs.changes.outputs.plugin != 'false' }}
+        run: npm ci
+      - name: Validate standalone plugin lockfile is in sync
+        if: ${{ needs.changes.outputs.plugin != 'false' }}
+        working-directory: packages/plugin
+        # The `npm ci` above validates the ROOT workspace lockfile. But
+        # build_plugin() in deploy.py installs the plugin on every live pod with
+        # `npm ci --workspaces=false`, which reads the STANDALONE
+        # packages/plugin/package-lock.json — a DIFFERENT file that nothing else
+        # in CI exercises (the root `npm ci` hoists the workspace via the root
+        # lockfile). `npm ci` HARD-FAILS (EUSAGE) if that standalone lockfile
+        # has drifted from packages/plugin/package.json, so an undetected drift
+        # would pass CI here yet break the plugin build on every pod — the
+        # silent-until-live failure mode. --dry-run runs the identical
+        # package.json↔lockfile sync preflight without the install write, so it
+        # catches drift cheaply (the npm cache is warm from the root `npm ci`).
+        # Fix a failure with: cd packages/plugin && npm install (then commit the
+        # refreshed package-lock.json).
+        run: npm ci --dry-run --workspaces=false
+      - name: Type-check plugin (tsc --noEmit)
+        if: ${{ needs.changes.outputs.plugin != 'false' }}
+        working-directory: packages/plugin
+        run: npx tsc --noEmit
+      - name: Run plugin unit tests (node:test)
+        if: ${{ needs.changes.outputs.plugin != 'false' }}
+        working-directory: packages/plugin
+        # Bare `node --test` uses default recursive discovery (**/*.test.mjs,
+        # node_modules excluded). NOT `node --test tests/` — Node 22 treats a
+        # bare directory arg as a script path and fails with "Cannot find
+        # module .../tests" (Node 20 scanned the dir; the behaviour changed).
+        run: node --test
+
+  full-suite-admin-shard:
+    # The ~12.6k-test admin suite, sharded 4 ways across parallel runners.
+    # GitHub's hosted runners are 2-core (private repo), where pytest-xdist
+    # gave ~no speedup for this subprocess/IO-heavy suite — so we parallelise
+    # ACROSS runners instead of within one. conftest.py partitions the suite by
+    # crc32(nodeid) % 4 == EVOLVE_SHARD_ID, and also applies the quarantine +
+    # the poll-loop sleep cap. Each shard runs serially (no xdist). Wall-clock
+    # ~10 min -> ~3 min.
+    #
+    # These four shard legs are NOT the required check — the aggregator below
+    # (`full-suite-admin`, name unchanged) is, so branch protection needs no edit.
+    #
+    # Each leg always starts (so the aggregator always has a result) but skips
+    # its install + test steps when `changes` found no Python-relevant edits.
+    name: Admin suite shard ${{ matrix.shard }}/4
+    needs: changes
+    if: ${{ always() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ["0", "1", "2", "3"]
+    runs-on: ubuntu-latest
+    steps:
+      - name: No Python changes — shard skipped
+        if: ${{ needs.changes.outputs.python == 'false' }}
+        run: echo "No packages/admin, packages/analyzer, or test-infra changes in this PR — admin shard ${{ matrix.shard }} skipped."
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+      - name: Install workspace from uv.lock
+        if: ${{ needs.changes.outputs.python != 'false' }}
+        # Phase 6.4: reproducible install — both packages (editable workspace
+        # members) + locked deps + the dev group (pytest, pytest-xdist).
+        # --locked fails if uv.lock is stale instead of silently re-resolving.
+        run: |
+          pip install uv
+          uv sync --locked
+      - name: Run admin suite shard ${{ matrix.shard }}/4
+        if: ${{ needs.changes.outputs.python != 'false' }}
+        working-directory: packages/admin
+        env:
+          EVOLVE_NUM_SHARDS: "4"
+          EVOLVE_SHARD_ID: ${{ matrix.shard }}
+        run: uv run --no-sync python -m pytest -q --tb=short -p no:cacheprovider
+
+  full-suite-admin:
+    # Aggregator. Keeps the EXISTING required-check name so branch protection
+    # is unchanged. Green iff every shard leg was green (or all were skipped on
+    # a non-Python PR). `if: always()` so it runs even when a shard fails.
+    name: Full admin test suite (quarantined baseline)
+    needs: full-suite-admin-shard
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all admin shards to pass
+        run: |
+          result='${{ needs.full-suite-admin-shard.result }}'
+          echo "Aggregate shard result: $result"
+          # 'success' = every shard passed (or every shard skipped its tests on
+          # a non-Python PR, which still reports success). Anything else fails.
+          if [ "$result" = "success" ]; then
+            echo "All admin shards green."
+          else
+            echo "::error::One or more admin shards failed (result=$result)."
+            exit 1
+          fi
+
+  full-suite-analyzer:
+    name: Full analyzer test suite (quarantined baseline)
+    # Blocking: any test outside ci-quarantine.txt that fails will break
+    # the build. Baseline failures are quarantined by packages/analyzer/conftest.py
+    # which reads ci-quarantine.txt and marks them as skipped.
+    # Same path-aware skip behaviour as full-suite-admin (see its comment).
+    needs: changes
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: No Python changes — analyzer suite skipped
+        if: ${{ needs.changes.outputs.python == 'false' }}
+        run: echo "No packages/admin, packages/analyzer, or test-infra changes in this PR — full analyzer suite skipped (the always-on guard jobs still ran)."
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+      - name: Install workspace from uv.lock
+        if: ${{ needs.changes.outputs.python != 'false' }}
+        # Phase 6.4: see the admin-shard job comment. pytest-xdist comes
+        # from the locked dev group.
+        run: |
+          pip install uv
+          uv sync --locked
+      - name: Run full analyzer suite (baseline failures quarantined)
+        # -n auto parallelizes the ~5.7k analyzer tests; --dist loadscope keeps
+        # each module on one worker. NOTE: no conftest sleep-cap here (unlike
+        # admin) — the analyzer's time-sensitive tests (TTL expiry, request
+        # timeout, warn-once) need real wall-clock, and the suite has no 30s
+        # poll-loop hot spots that a cap would fix. ~96s -> ~20s locally.
+        if: ${{ needs.changes.outputs.python != 'false' }}
+        working-directory: packages/analyzer
+        run: uv run --no-sync python -m pytest -q --tb=short -p no:cacheprovider -n auto --dist loadscope
+
+  edr-smoke:
+    # EDR (Evolve Development Rig) — dev-environment-only. This job is the
+    # falsifiable proof that EDR can drive Evolve's OWN primitives by
+    # IMPORTING the packaged evolve-analyzer libraries (never forking them):
+    #   - test_library_reuse_smoke: Signal + Proposal round-trip through the
+    #     real signals.store / arbiter.store.
+    #   - test_not_shipped_guard (G1): fails if any pod deploy/install path
+    #     references edr/ — EDR ships nothing a pod loads.
+    #
+    # Same always-run-job / conditional-steps pattern as the suites above: the
+    # job ALWAYS starts (so the check reports promptly) but skips install +
+    # tests unless `changes` saw edr/ or analyzer edits. A top-level paths:
+    # filter would stall the check forever if it were ever made required.
+    name: EDR library-reuse + not-shipped smoke
+    needs: changes
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: No edr/ or analyzer changes — edr smoke skipped
+        if: ${{ needs.changes.outputs.edr == 'false' }}
+        run: echo "No edr/ or packages/analyzer changes in this PR — EDR smoke skipped."
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+      - name: Install workspace from uv.lock
+        if: ${{ needs.changes.outputs.edr != 'false' }}
+        # Phase 6.4: reproducible install — installs evolve-analyzer +
+        # evolve-edr (editable workspace members) + locked deps + dev group.
+        # --locked fails if uv.lock is stale instead of re-resolving.
+        run: |
+          pip install uv
+          uv sync --locked
+      - name: Run EDR smoke tests
+        if: ${{ needs.changes.outputs.edr != 'false' }}
+        run: uv run --no-sync python -m pytest edr/tests -q --tb=short -p no:cacheprovider
+
+  linux-e2e:
+    # Roadmap 8.3's exit criterion, live (design-linux-port-2026-06-10.md §9):
+    # a bot deploys, runs, and is administered on Linux. ubuntu-24.04 runners
+    # are full VMs — systemd PID 1, passwordless sudo — so the job exercises
+    # the REAL adapters end-to-end with a STUB agent (a python heartbeat; no
+    # OpenClaw, no tokens, no network): real visudo on the rendered Linux
+    # sudoers (the m\:\:rwX escaped-colon risk item), real useradd via
+    # LinuxUserIsolation, real setfacl/getfacl effective-perm checks via
+    # LinuxPerms (the POSIX mask sharp edge), real systemd units via
+    # SystemdScheduler (restart-guarantee pid change), and the real Flask
+    # admin server running as the evolve user answering HTTP.
+    #
+    # Same always-run-job/conditional-steps pattern as the suites: the job
+    # always reports, but skips its install + e2e steps unless the `changes`
+    # job saw platform-surface edits (or this is a main push). The harness
+    # itself is guarded on (linux AND CI AND EVOLVE_PLATFORM=linux AND
+    # not-sharded), so it can never fire inside the admin shard legs or on
+    # a developer machine; the sentinel step below turns an accidentally
+    # all-skipped run into a FAILURE instead of a vacuous green.
+    name: Linux e2e (Ubuntu bot deploy/run/admin)
+    needs: changes
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: No platform-surface changes — e2e skipped
+        if: ${{ needs.changes.outputs.linux_e2e == 'false' }}
+        run: echo "No platform-surface changes in this PR — Linux e2e skipped (the harness guard + unit tests still cover the adapters)."
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+      # step6e drives the REAL deploy.build_plugin() (npm install + npm run
+      # build) — the only e2e step that needs node. Pin a known-good toolchain
+      # (mirrors the plugin-tsc job) and warm the npm cache so build_plugin's
+      # `npm install` is deterministic and resilient to a transient registry
+      # hiccup. Without this the step would lean on the runner image's default
+      # node + a cold cache.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install workspace from uv.lock
+        if: ${{ needs.changes.outputs.linux_e2e != 'false' }}
+        run: |
+          set -x
+          pip install uv
+          uv sync --locked
+      - name: Run the Ubuntu end-to-end (creates users + systemd units on this VM)
+        if: ${{ needs.changes.outputs.linux_e2e != 'false' }}
+        working-directory: packages/admin
+        env:
+          # The 8.3 experimental opt-in — one third of the harness guard
+          # (linux + CI + this). Never set anywhere else in CI.
+          EVOLVE_PLATFORM: linux
+          EVOLVE_E2E_DIAG_DIR: ${{ runner.temp }}/linux-e2e-diag
+        # -s streams the harness's subprocess journal (every argv + rc +
+        # output) live into the job log so the first failing run is
+        # debuggable without a rerun; -p no:cacheprovider matches the suites.
+        run: uv run --no-sync python -m pytest tests/e2e_linux/ -v -s -rA --tb=long -p no:cacheprovider
+      - name: Assert the e2e actually ran (anti-vacuous-green sentinel)
+        if: ${{ needs.changes.outputs.linux_e2e != 'false' }}
+        run: |
+          set -x
+          test -f "${{ runner.temp }}/linux-e2e-diag/COMPLETED"
+          cat "${{ runner.temp }}/linux-e2e-diag/COMPLETED"
+      - name: Collect failure diagnostics (journal, sudoers, ACLs, unit state)
+        if: ${{ failure() && needs.changes.outputs.linux_e2e != 'false' }}
+        run: |
+          set -x
+          diag="${{ runner.temp }}/linux-e2e-diag"
+          mkdir -p "$diag"
+          # The harness already wrote rendered sudoers / getfacl dumps /
+          # admin-server logs there before its teardown; add the host view.
+          sudo journalctl --no-pager -n 400 -u 'ai.openclaw.*' -u 'ai.evolve.*' \
+            > "$diag/journalctl-units.txt" 2>&1 || true
+          sudo journalctl --no-pager -n 200 > "$diag/journalctl-tail.txt" 2>&1 || true
+          sudo cat /etc/sudoers.d/evolve > "$diag/sudoers-evolve.live" 2>&1 || true
+          sudo ls -la /etc/systemd/system/ > "$diag/systemd-unit-dir.txt" 2>&1 || true
+          sudo systemctl list-units --all 'ai.*' --no-pager > "$diag/systemctl-list.txt" 2>&1 || true
+          getent passwd > "$diag/getent-passwd.txt" 2>&1 || true
+          sudo getfacl -R -p /home/e2ebot 2>&1 | head -300 > "$diag/getfacl-bot-home.txt" || true
+          ls -la "$diag"
+      - name: Upload failure diagnostics
+        if: ${{ failure() && needs.changes.outputs.linux_e2e != 'false' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-e2e-diagnostics
+          path: ${{ runner.temp }}/linux-e2e-diag/
+          if-no-files-found: warn
+          retention-days: 14
+
+  gitleaks:
+    name: Gitleaks secrets scan
+    runs-on: ubuntu-latest
+    # gitleaks-action@v2 needs pull-requests:read to enumerate the PR's
+    # commits via the GitHub API. The default GITHUB_TOKEN permissions
+    # don't grant it on repos whose workflow default is "Read repository
+    # contents and packages permissions". Granting explicitly here makes
+    # the job work regardless of repo-level workflow-permissions setting.
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

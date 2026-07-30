@@ -1,0 +1,69 @@
+# Principle: Each Bot Applies Its Own Changes (No Cross-User Writes)
+
+**Status:** load-bearing architecture principle (not a soft guideline).
+**Adopted:** 2026-05-31, consolidating the rule already enforced in [architecture.md](architecture.md) §"Bot Autonomy Model" (lines 150-164).
+
+---
+
+## The principle, in two clauses
+
+1. **Approved proposals are applied by the target bot in its own user context.** When a proposal targets `member-bot`, it is `apply.py` running as `member-bot` (in `/Users/member-bot/...`) that writes the change — not the admin server, not the primary bot, not root. The shared directory at `/Users/Shared/evolve/` is the message bus: the primary writes a proposal there, the target bot polls and picks it up.
+
+2. **There are no cross-user writes during normal operation.** The admin user (`pod-admin`) and root are involved only in initial setup and exceptional interventions (re-installing a missing file, recovering from a broken deploy). Anything that happens day-to-day — config updates, capability changes, fixes — happens inside the target bot's account, signed and approved, then applied locally.
+
+## What this implies in code
+
+Practical translation across the codebase:
+
+### The shared directory is the only cross-user surface
+
+`/Users/Shared/evolve/` is `1777` (sticky bit) so every bot can write its own files but cannot overwrite another bot's files ([architecture.md:140](architecture.md:140)). The primary writes proposals there; the target bot reads them there; the target writes apply-results there. All cross-bot communication routes through this shared dir.
+
+### `apply.py` runs per-bot, polling for proposals targeting it
+
+Each bot has its own `apply.py` polling `/Users/Shared/evolve/proposals/approved/`. When a proposal targets that bot, the bot's `apply.py` picks it up and writes the change inside `/Users/<bot>/.openclaw/...` — its own account, no sudo, no cross-user file ops.
+
+### The pod-admin sudoers grant is for setup, not for normal flow
+
+`/etc/sudoers.d/evolve-admin` grants `pod-admin` the ability to `sudo` as bot users (per CLAUDE.md). That grant exists for CLI use during setup and exceptional recovery — not for the day-to-day pipeline. Daemons running as `evolve` deliberately do NOT have `sudo -u <bot>` (CLAUDE.md is explicit on this); they use ACL reads + `/tmp` staging + `sudo /bin/cp` instead.
+
+### Exceptions are named and bounded
+
+There are narrow exceptions where evolve must write a bot-owned file — initial deploy, applier installing config, recovery flows. Each uses the `/tmp` staging + `sudo /bin/cp` pattern from CLAUDE.md and is treated as exceptional, not normal. The principle bounds these: they exist for installation and recovery, not for runtime improvement flows.
+
+### Evo's privileged ops route through the admin-daemon unix socket, not direct sudo
+
+Per `project_evo_account_separation`, evo (running as its own `evo` macOS user) does not sudo. Privileged operations evo requests go through a unix-socket API exposed by the admin daemon, which itself respects the per-bot-applies pattern (it writes to `/Users/Shared/evolve/` for the target bot to pick up, rather than writing into `/Users/<target>/` directly).
+
+## Anti-patterns to grep for
+
+These are violations:
+
+- A daemon running as `evolve` calling `subprocess.run(["sudo", "-u", "<bot>", ...])` for routine ops (will fail by design; also wrong by principle)
+- An applier or generator that writes into `/Users/<other-bot>/.openclaw/` directly
+- An admin endpoint that bypasses the proposal pipeline to "just fix" a bot's config
+- Code that assumes pod-admin sudo is available at runtime (it's a setup-time grant)
+- "Cross-bot" actions that aren't routed through the shared-dir message bus
+
+## What this principle is NOT
+
+- **Not a ban on shared infrastructure.** `/Users/Shared/evolve/` is by design a shared surface for messages, signals, proposals, metrics. The principle is about *who writes into a bot's own directory*, not about whether there's any shared state.
+- **Not a claim that setup is also per-bot.** Initial deploy (`evolve-admin deploy <bot>`) is admin-initiated and uses elevated grants to install the bot's first config. Once running, the bot owns its own files. The principle covers normal operation, not bootstrap.
+- **Not a substitute for the security model.** Proposals still pass through `review.py` before any bot applies them. The principle is about *where* the write happens, not whether it's gated.
+
+## Why this matters
+
+The pattern is what makes the whole pipeline tractable. Every bot's filesystem is its own — there's no "central admin writes everywhere" surface that has to be airtight against every bug in every generator. The blast radius of an applier bug is one bot's config, recoverable from git + the pre-apply test gate. The blast radius of a cross-user-write bug, by contrast, is every bot at once.
+
+It also makes the security model defensible: when proposals can only be applied by the bot they target, a compromised generator can at most produce bad proposals (which the reviewer will catch), not bypass the reviewer to directly write files in someone else's account. The boundary holds at the user-account level, which the OS already enforces.
+
+This is the same logic that motivated the evo-account-separation work — privileged daemons should not be able to silently mutate any bot's state. By keeping all writes inside the target bot, the system's blast-radius math stays simple.
+
+## References
+
+- [architecture.md](architecture.md) §"Bot Autonomy Model" (lines 150-164) — the canonical statement
+- [architecture.md](architecture.md) §"Shared directory" (line 140) — the `1777` sticky-bit invariant
+- CLAUDE.md §"File Access Pattern" — the practical implication for code interacting with bot-owned files
+- `project_evo_account_separation` — the evo-side evolution of the same principle
+- [principle-per-bot-inference.md](principle-per-bot-inference.md) — sibling principle: inference also runs per-bot
+- [principle-no-self-modification.md](principle-no-self-modification.md) — sibling principle: the reviewer's mandate is unmodifiable

@@ -1,0 +1,162 @@
+# Source of truth for the public/private cut line when publishing to
+# evolve-ops/evolve. Everything tracked is PUBLIC unless it matches a
+# glob here. Consumed by tools/publish-public and the CI guard
+# (tools/check-public-manifest). Spec: docs/spec-public-2026-06-18.md §4.
+#
+# The model is PUBLIC-BY-DEFAULT minus this denylist. The cut line is an
+# explicit, small list of PRIVATE paths — NOT an allowlist of public ones.
+# Adding a path here removes it from the published output.
+#
+# REVERSAL (operator, 2026-07-02): the 2026-06-18 posture said the META
+# coordinator system and the internal design corpus ship with the public
+# repo ("DO NOT add these here — intentionally PUBLIC"). That decision is
+# REVERSED: the public repo is the PRODUCT, not the dev methodology, and
+# the META coordinator apparatus (registry, session guides, skills,
+# tools/meta-*) indexes and paraphrases the withheld design specs — so
+# shipping it would leak the corpus it coordinates. Both the internal
+# design corpus (spec-/design-/decision-/research-/roadmap-/audit-/
+# census-/runbook- docs) and the META apparatus are now denylisted.
+#
+# Still intentionally PUBLIC (do not add): CLAUDE.md, AGENTS.md,
+# ONBOARDING.md, .claude/settings.json (sanitized at publish time by
+# tools/publish_sanitize.py); docs/system/** (runtime content injected
+# into bot session prompts — product, not methodology); and the product
+# doc corpus — architecture.md, deployment-guide.md, configuration.md,
+# style-guide.md, docs/help/**, docs/gitpages/**, docs/schemas/**,
+# docs/skills/**, docs/reference/**, docs/atlas-app-manifests/**,
+# applications.md, applications-vs-skills.md, application-manifests.md,
+# contributing-skills.md, docs/PLACEHOLDER_NAMING.md.
+#
+# Reconciliation invariant (tested in tools/test_publish_public.py): a
+# path is either sanitized-and-shipped (a tools/publish_sanitize.py
+# target) or denylisted here — NEVER both.
+#
+# The operator-local meta-state/ ledgers and per-aspect memory files are
+# NOT tracked in this repo at all (they live under the operator's
+# ~/.claude/.../memory and a gitignored meta-state/), so they need no glob
+# here — git ls-files never surfaces them to the publisher.
+private:
+  - docs/private/**          # already gitignored; defensive
+  - issues/**                # internal issue tracker
+  - docs/market-intelligence/**   # competitive strategy
+  - docs/incidents/**        # reference-deployment ops incidents (billing/transcripts)
+  - docs/forensic-*          # security incidents naming real bots
+  - docs/diagnosis-*         # reference-deployment operational diagnoses
+  - docs/diag-*
+
+  # Internal design corpus (2026-07-02 reversal). Specs, design notes,
+  # decisions, research, roadmaps, audits, censuses, and operational
+  # runbooks are the dev methodology's paper trail, not product docs.
+  # docs/runbook-* subsumes the three token-bearing runbooks previously
+  # listed individually (PUBLIC-3) AND docs/runbook-public-cutover.md,
+  # which therefore left the publish-time sanitize target set — a file is
+  # either sanitized-and-shipped or denylisted, never both.
+  - docs/spec-*
+  - docs/design-*
+  - docs/design/**
+  - docs/decision-*
+  - docs/research-*
+  - docs/research/**         # market/positioning research — same class as market-intelligence
+  - docs/roadmap-*
+  - docs/audit-*
+  - docs/census-*
+  - docs/runbook-*
+
+  # META coordinator apparatus (2026-07-02 reversal). The registry,
+  # session guides, procedure docs, dispatch briefs, coordinator skills,
+  # and the tools/meta-* CLI surface index and paraphrase the withheld
+  # design corpus.
+  - docs/META-*
+  - docs/meta-*
+  - docs/using-the-meta-system.md
+  - docs/dispatch/**
+  - docs/routines/**
+  - .claude/skills/**        # the META coordinator skills (/meta, /status, /queue, ...)
+  - .claude/meta.json        # META substrate parameterization
+  - .claude/hooks/**         # dev-guardrail session hooks (pair with docs/dev-guardrails.md)
+  - tools/meta-*
+  - tools/meta_config.py
+  - tools/test_meta_*.py
+  - tools/hooks/meta-*
+  - tools/hooks/test_meta_*
+  - tools/hooks/prepend-meta-prefix.sh
+  - tools/hooks/test_prepend_meta_prefix.sh
+  - tools/hooks/record-dispatch-claim.sh
+  - tools/hooks/test_record_dispatch_claim.sh
+  - packages/admin/tests/test_meta_queue.py   # tests the denylisted tools/meta-queue
+
+  # Dated one-off audits / internal-process docs (2026-07-02 sweep —
+  # judged by the same content test: internal, dated, or
+  # reference-deployment-specific, not reusable product docs).
+  - docs/apps-shared-contract-audit-*
+  - docs/alert-root-cause-audit-*
+  - docs/apps-lineage-repoint-atlas-OBE-*
+  - docs/contract-app-result-block-*
+  - docs/cascade-validation-on-the-mini.md
+  - docs/dev-guardrails.md
+  - docs/edr/**              # dev-rig (EDR) design docs
+
+  # Dated internal working docs (2026-07-28 pre-beta sweep — same content
+  # test as above; these carried prefixes the earlier globs didn't cover:
+  # findings, incident postmortems, one-off validations/verifications,
+  # internal plans/notes/backlogs, and reference-deployment health checks).
+  - docs/admin-coverage-backlog.md
+  - docs/ci-flaky-jobs.md
+  - docs/finding-*
+  - docs/footprint-*
+  - docs/gallery-merge-task-manager-*
+  - docs/gallery-removals-*
+  - docs/gallery-spec-quality-audit-*
+  - docs/incident-*
+  - docs/investigation-*
+  - docs/note-*
+  - docs/oc-install-health-*
+  - docs/openclaw-coverage-audit-*
+  - docs/pending-ideas.md
+  - docs/plan-*
+  - docs/postmortem-*
+  - docs/primary-bot-interface-status.md
+  - docs/reference-conversational-bot-creation-*
+  - docs/review-reports-subscriptions-*
+  - docs/rsi-dry-run-operator-guide-*
+  - docs/skills-deep-audit-*
+  - docs/test-spend-alert-replay.md
+  - docs/ui-audit-*
+  - docs/validation-*
+  - docs/verification-*
+  - docs/vetting-*
+
+  # Token-bearing test fixtures. These embed the reserved bot/account
+  # tokens BY DESIGN (they assert the scrub catches them, keep an
+  # authoritative RESERVED_TOKENS copy, or use real names as fixtures).
+  # They are exempt from the private-CI scrub via ALLOWLISTED_PATHS in
+  # packages/admin/tests/test_public_launch_scrub.py, but that exemption
+  # must NOT carry into the public output — denylist them so the public
+  # repo never ships the embedded tokens. (PUBLIC-3)
+  - packages/admin/tests/test_files_pack_integrity.py
+  - packages/admin/tests/test_no_personal_pii_in_source.py
+  - packages/admin/tests/test_public_launch_scrub.py
+  - packages/analyzer/tests/test_oc_cli_dedup.py
+  - packages/plugin/tests/turnObserver.chosenBy.test.mjs
+  - tools/test_publish_public.py
+
+  # The publish workflow itself (2026-07-29). Not withheld for secrecy —
+  # tools/publish-public and this manifest both ship — but because shipping it
+  # is an active footgun: `on: push: branches: [main]` would fire inside the
+  # PUBLIC repo on every force-pushed snapshot, and its body instructs a reader
+  # to mint a PUBLIC_REPO_PUSH_TOKEN "on THIS (private) repo". In the public
+  # repo it can only ever skip (no secret) or, if someone took that instruction
+  # literally, force-push the repo to itself in a loop. It is publish
+  # apparatus with no public consumer.
+  - .github/workflows/publish-public.yml
+
+  # Reference-deployment operational scripts — same class as
+  # docs/incidents/** (the runbooks of this class are covered by
+  # docs/runbook-* above).
+  - scripts/decommission_sentry_watchdog.sh
+
+  # Darwin PM spec — §10 is an operator runbook against the live Linux VPS
+  # pod (names the real `darwin` bot, /home/darwin, systemd unit names, the
+  # ssh/PAT flow). Same reference-deployment-ops class as the runbooks above;
+  # withhold the whole doc from the public snapshot. (META:public, 2026-07-02)
+  - docs/spec-darwin-pm-2026-07-02.md

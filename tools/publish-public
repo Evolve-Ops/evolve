@@ -1,0 +1,1268 @@
+#!/usr/bin/env python3
+"""publish-public — compute and (eventually) push the public mirror of Evolve.
+
+Evolve develops in the private ``cjalden/evolve`` repo and is published as a
+FRESH PUBLIC REPO at ``evolve-ops/evolve``. There is NO history rewrite: the
+private repo stays the dev origin and is never scrubbed; only the *published
+output* is gated. This tool computes that output and proves it is clean.
+
+The cut line is PUBLIC-BY-DEFAULT minus an explicit private denylist:
+
+    public tree = (git ls-files at HEAD) − (paths matching docs/public-manifest.yaml)
+
+Two gates run on the PUBLIC SUBSET (never the whole repo):
+
+  1. The denylist (docs/public-manifest.yaml) removes private paths.
+  2. The reserved-token scrub reuses the launch-scrub module's token list
+     and per-line scanner (packages/admin/tests/test_public_launch_scrub.py)
+     so they cannot drift, but DECOUPLES the path exemptions: it scans
+     every shipped file and exempts ONLY the explicit, minimal
+     ``PUBLIC_OUTPUT_EXEMPTIONS`` set defined below — NOT the private-CI
+     ``ALLOWLISTED_PATHS`` (whose job is to keep token-bearing test
+     fixtures from reddening per-PR CI, and which must never silently
+     greenlight a public leak). PASS therefore means "no reserved tokens
+     in any shipped file outside that named set."
+
+Between them, a publish-time sanitizer (tools/publish_sanitize.py, PUBLIC-2)
+rewrites the few load-bearing dev-apparatus files (CLAUDE.md, .claude/settings.json,
+the cutover runbook, .mailmap, PLACEHOLDER_NAMING.md) in the public output only — the
+private repo keeps their real values. The scrub therefore scans WHAT WOULD SHIP.
+
+Default mode is ``--dry-run``: it makes NO network calls and NO commits. It
+prints the public file count + sample, the full excluded (private) list with
+the glob that excluded each, the scrub result, and a WARN-level list of
+shipped files that still reference denylisted paths (broken links in the
+public tree — rewrite or accept each).
+
+FORWARD-SYNC (PD-4, forward-sync v1, operator-approved 2026-07-02; AUTOMATED
+2026-07-29). The first snapshot was pushed 2026-07-01. Every subsequent
+release is a republish under **Model A**: the public repo is always exactly
+ONE squashed commit. Each ``--execute --target <url> --push`` builds a fresh
+``git init`` tree sharing no history with the remote and FORCE-pushes it —
+the force is the designed behavior, not an override. No public history
+accumulates.
+
+Since 2026-07-29 the loop runs in CI on every push to ``main``
+(``.github/workflows/publish-public.yml``); the sequence below is the
+break-glass/manual path and the canonical definition of what the workflow
+does (docs/runbook-public-cutover.md, PD-4):
+
+    tools/publish-public --status                  # drift since last publish (no network)
+    tools/publish-public --dry-run                 # must end SCRUB: PASS (exit 0)
+    tools/publish-public --execute --target <url> --push \
+        --i-understand-this-publishes              # build, gate, force-push
+    tools/publish-public --verify --target <url>   # fresh clone: token grep + 1-commit check
+    # then manually close public issues fixed in this release
+
+NOTE the mode dispatch order in main(): --status, then --verify, then
+--execute. They are NOT composable — passing --verify in the same invocation
+as --execute short-circuits to verify and NOTHING is published. Always run
+--verify as a separate invocation.
+
+CI adds ``--skip-if-unchanged`` to the --execute step so a push that changes
+only manifest-denied paths does not churn the public commit sha; the check
+compares the built tree's git tree-id against the published one, which cannot
+lose a commit the way a "did this push touch a public path" filter can.
+
+On a successful push the tool records a provenance marker at
+``docs/private/last-public-release.json`` (gitignored — never ships) so the
+next ``--status`` can report how far the public snapshot is behind.
+
+Spec: docs/spec-public-2026-06-18.md §4.
+
+Run:
+    tools/publish-public                 # dry-run (default)
+    tools/publish-public --dry-run       # explicit
+    tools/publish-public --json          # dry-run, machine-readable
+    tools/publish-public --status        # drift vs the last published release
+"""
+from __future__ import annotations
+
+import argparse
+import importlib.util
+import json
+import posixpath
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+
+# Repo root: tools/publish-public -> parents[1].
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+DEFAULT_MANIFEST = REPO_ROOT / "docs" / "public-manifest.yaml"
+
+# Provenance marker written after each successful push (PD-4 forward-sync).
+# Lives under docs/private/ (gitignored) so it NEVER ships and never turns
+# the working tree dirty. It records what the last published release was so
+# --status can report drift without any network call.
+PROVENANCE_PATH = REPO_ROOT / "docs" / "private" / "last-public-release.json"
+
+# The public author-of-record for the squashed release commit; --verify
+# checks the cloned snapshot against this identity (2026-07-01 cutover shape).
+PUBLIC_AUTHOR_NAME = "Evolve"
+PUBLIC_AUTHOR_EMAIL = "hello@evolveops.dev"
+
+# Scrub source of truth — reused, never re-hardcoded. See module docstring.
+_SCRUB_SRC = REPO_ROOT / "packages" / "admin" / "tests" / "test_public_launch_scrub.py"
+
+# Public-output scrub exemption set — DELIBERATELY DISTINCT from the
+# private-CI ``ALLOWLISTED_PATHS`` in the scrub module.
+#
+# Why a separate set: ``ALLOWLISTED_PATHS`` exists so token-bearing TEST
+# FIXTURES and reference-deployment ops docs don't redden the *private*
+# repo's per-PR CI. If ``run_scrub`` reused it, any allowlisted file that
+# is NOT also on the manifest denylist would ship to the PUBLIC repo WITH
+# its reserved tokens while the dry-run still reported PASS — a false green
+# on the gate's own allowlist (the PUBLIC-3 blind spot). So the public
+# scrub scans EVERY shipped file and exempts ONLY this explicit, minimal
+# set. A "PASS" therefore means: every reserved-token-bearing file that
+# still ships is on THIS list.
+#
+# NOW EMPTY (PUBLIC-2/PUBLIC-3 complete). The five load-bearing dev-apparatus
+# files that used to be exempt (CLAUDE.md, .claude/settings.json, .mailmap,
+# docs/PLACEHOLDER_NAMING.md, docs/runbook-public-cutover.md) are handled at
+# publish time by tools/publish_sanitize.py, whose output is proven
+# reserved-token-clean by tools/test_publish_sanitize.py. Because run_scrub
+# applies that sanitizer before scanning (see run_scrub), those files are now
+# SCANNED (in their sanitized form) rather than skipped — a strictly stronger
+# gate. The token-bearing test fixtures + ops runbooks are manifest-denied
+# (docs/public-manifest.yaml) and never reach run_scrub at all. So nothing is
+# knowingly shipped with reserved tokens, and the exemption set is empty.
+#
+# The mechanism is retained (not deleted) as a narrow, audited escape hatch:
+# if a future file genuinely must ship token-bearing, adding it here — with a
+# justification and a matching private-CI allowlist entry — is the one
+# sanctioned way, and the dry-run will surface it via exempted_but_token_bearing.
+PUBLIC_OUTPUT_EXEMPTIONS: frozenset[str] = frozenset()
+
+# Denylist globs whose prefix is already gitignored may legitimately match
+# nothing (the directory is local-only on most checkouts). Everything else
+# must match ≥1 tracked file or it is a dead/typo'd glob. Kept here so the
+# CI guard (tools/check-public-manifest) and this tool share one definition.
+ALLOWED_EMPTY_PREFIXES = ("docs/private/", "issues/open/")
+
+# Only this top-level key is permitted in the manifest.
+_ALLOWED_TOP_KEYS = {"private"}
+
+
+# --------------------------------------------------------------------------
+# Manifest
+# --------------------------------------------------------------------------
+def load_manifest(path: Path | None = None) -> list[str]:
+    """Parse docs/public-manifest.yaml and return the list of private globs.
+
+    Raises ValueError on malformed YAML, unknown top-level keys, or a
+    ``private`` value that is not a list of non-empty strings.
+    """
+    import yaml  # PyYAML is an existing dependency.
+
+    manifest_path = path or DEFAULT_MANIFEST
+    try:
+        raw = manifest_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"cannot read manifest {manifest_path}: {exc}") from exc
+
+    try:
+        data = yaml.safe_load(raw)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"malformed YAML in {manifest_path}: {exc}") from exc
+
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"{manifest_path}: top level must be a mapping, got {type(data).__name__}"
+        )
+    unknown = set(data) - _ALLOWED_TOP_KEYS
+    if unknown:
+        raise ValueError(
+            f"{manifest_path}: unknown top-level key(s): {', '.join(sorted(unknown))}. "
+            f"Only {sorted(_ALLOWED_TOP_KEYS)} are allowed."
+        )
+    globs = data.get("private", [])
+    if globs is None:
+        globs = []
+    if not isinstance(globs, list):
+        raise ValueError(
+            f"{manifest_path}: 'private' must be a list, got {type(globs).__name__}"
+        )
+    out: list[str] = []
+    for i, entry in enumerate(globs):
+        if not isinstance(entry, str) or not entry.strip():
+            raise ValueError(
+                f"{manifest_path}: private[{i}] must be a non-empty string, got {entry!r}"
+            )
+        out.append(entry.strip())
+    return out
+
+
+# --------------------------------------------------------------------------
+# Glob matching (gitignore-ish; handles ** without the pathspec dependency)
+# --------------------------------------------------------------------------
+def _glob_to_regex(glob: str) -> re.Pattern[str]:
+    """Translate a repo-root-relative glob to a full-path-anchored regex.
+
+    Semantics (a deliberate, small subset of gitignore):
+      ``**``  matches any number of characters, INCLUDING ``/``.
+      ``*``   matches any number of characters EXCEPT ``/`` (one segment).
+      ``?``   matches a single character except ``/``.
+    Everything else is matched literally. We avoid fnmatch because its ``*``
+    spans ``/``, which would make ``docs/forensic-*`` silently match nested
+    paths and blur the cut line.
+    """
+    i, n = 0, len(glob)
+    out = ["(?s:"]
+    while i < n:
+        c = glob[i]
+        if c == "*":
+            if glob[i : i + 2] == "**":
+                i += 2
+                out.append(".*")
+            else:
+                out.append("[^/]*")
+                i += 1
+            continue
+        if c == "?":
+            out.append("[^/]")
+        else:
+            out.append(re.escape(c))
+        i += 1
+    out.append(r")\Z")
+    return re.compile("".join(out))
+
+
+def compile_globs(globs: list[str]) -> list[tuple[str, re.Pattern[str]]]:
+    """Pair each glob string with its compiled regex (order preserved)."""
+    return [(g, _glob_to_regex(g)) for g in globs]
+
+
+def first_matching_glob(
+    rel_posix: str, compiled: list[tuple[str, re.Pattern[str]]]
+) -> str | None:
+    """Return the first glob string that matches rel_posix, or None."""
+    for glob, pattern in compiled:
+        if pattern.match(rel_posix):
+            return glob
+    return None
+
+
+# --------------------------------------------------------------------------
+# Tracked files + partition
+# --------------------------------------------------------------------------
+def tracked_files(root: Path = REPO_ROOT) -> list[str]:
+    """Repo-root-relative POSIX paths tracked by git at HEAD."""
+    proc = subprocess.run(
+        ["git", "ls-files"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return [line for line in proc.stdout.splitlines() if line]
+
+
+def partition(
+    tracked: list[str], compiled: list[tuple[str, re.Pattern[str]]]
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Split tracked paths into (public, excluded).
+
+    public   — sorted list of repo-relative paths NOT matching any glob.
+    excluded — sorted list of (path, glob) for paths removed by the denylist.
+    """
+    public: list[str] = []
+    excluded: list[tuple[str, str]] = []
+    for rel in tracked:
+        glob = first_matching_glob(rel, compiled)
+        if glob is None:
+            public.append(rel)
+        else:
+            excluded.append((rel, glob))
+    public.sort()
+    excluded.sort()
+    return public, excluded
+
+
+# --------------------------------------------------------------------------
+# Scrub (reused from the launch-scrub test — token list + scan + exemptions)
+# --------------------------------------------------------------------------
+def _load_scrub_module():
+    """Load the reserved-token scrub module by path (it has a .py name but
+    lives under tests/). Lazy so importers that only need the manifest/glob
+    helpers (e.g. the CI guard) never pull in pytest, which this module
+    imports at top level."""
+    loader = SourceFileLoader("public_launch_scrub", str(_SCRUB_SRC))
+    spec = importlib.util.spec_from_loader("public_launch_scrub", loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+# Publish-time content sanitizer (PUBLIC-2). A handful of dev-apparatus files keep
+# their real reference-deployment detail in the private repo (the permission gate +
+# Claude's own ssh detail depend on it) and are sanitized only in the PUBLIC OUTPUT.
+# We apply it at the point the scrub reads each public file, so the scrub always sees
+# WHAT WOULD SHIP. It is a no-op for every non-target path. This is orthogonal to the
+# path-exemption logic below (which is PUBLIC-3's): sanitizing changes the *content*
+# scanned, not *which* paths are scanned.
+_SANITIZE_SRC = REPO_ROOT / "tools" / "publish_sanitize.py"
+
+
+def _load_sanitize_module():
+    loader = SourceFileLoader("publish_sanitize", str(_SANITIZE_SRC))
+    spec = importlib.util.spec_from_loader("publish_sanitize", loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+def run_scrub(public_paths: list[str], root: Path = REPO_ROOT) -> list[tuple[str, int, str, str]]:
+    """Scan ONLY the public subset for reserved tokens.
+
+    Reuses the launch-scrub module's RESERVED_TOKENS, per-line scanner
+    (``_violations_in``) and binary skiplist — so the token list and the
+    legitimate-inline-token strips (e.g. @eslint/plugin-kit, sentry-sdk)
+    cannot drift from the CI scrub guard. The critical invariant: the scan
+    iterates ``public_paths`` and nothing else, so a private file's tokens
+    can never mask, or be masked by, the public verdict.
+
+    PATH EXEMPTIONS ARE DECOUPLED. We deliberately do NOT reuse the scrub
+    module's ``_is_allowlisted`` (= the private-CI ``ALLOWLISTED_PATHS`` /
+    ``ALLOWLISTED_PREFIXES``). That allowlist exists to keep token-bearing
+    test fixtures from reddening the *private* repo's CI; reusing it here
+    would let any such file that isn't ALSO manifest-denied ship to the
+    public repo WITH its tokens while this gate reported PASS (the PUBLIC-3
+    blind spot). Instead we exempt ONLY ``PUBLIC_OUTPUT_EXEMPTIONS`` — an
+    explicit, minimal, separately-documented set — so PASS means "no
+    reserved tokens in any shipped file outside that named set."
+
+    Returns a list of (rel_path, lineno, token, snippet) violations.
+    """
+    scrub = _load_scrub_module()
+    sanitize = _load_sanitize_module()
+    violations: list[tuple[str, int, str, str]] = []
+    for rel in public_paths:
+        path = root / rel
+        if not path.is_file():
+            continue
+        if rel in PUBLIC_OUTPUT_EXEMPTIONS:
+            continue
+        if path.suffix.lower() in scrub._BINARY_EXTENSIONS:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        # Scan WHAT WOULD SHIP: publish-time sanitization is applied to the
+        # load-bearing dev-apparatus files (no-op for everything else). PUBLIC-2.
+        text = sanitize.sanitize_public_text(rel, text)
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            for match in scrub._violations_in(line):
+                snippet = line.strip()
+                if len(snippet) > 110:
+                    snippet = snippet[:107] + "..."
+                violations.append((rel, lineno, match, snippet))
+    return violations
+
+
+def exempted_but_token_bearing(
+    public_paths: list[str], root: Path = REPO_ROOT
+) -> list[str]:
+    """Public-shipping files that ARE exempt but STILL contain reserved
+    tokens — i.e. the live, load-bearing members of PUBLIC_OUTPUT_EXEMPTIONS.
+
+    Surfaced in the dry-run so a PASS is never a silent green: the operator
+    sees exactly which shipped files still carry tokens pending the
+    PUBLIC-2 publish-time transform. Also lets a regression test prove the
+    exemption set is not hiding a dead (token-free) entry.
+    """
+    scrub = _load_scrub_module()
+    out: list[str] = []
+    for rel in public_paths:
+        if rel not in PUBLIC_OUTPUT_EXEMPTIONS:
+            continue
+        path = root / rel
+        if not path.is_file() or path.suffix.lower() in scrub._BINARY_EXTENSIONS:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if any(scrub._violations_in(line) for line in text.splitlines()):
+            out.append(rel)
+    return sorted(out)
+
+
+# --------------------------------------------------------------------------
+# WARN check: shipped files referencing denylisted paths (dead public links)
+# --------------------------------------------------------------------------
+# Path-like token: two or more /-joined segments (e.g. a docs path or a tool path).
+_PATHREF_RE = re.compile(r"[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)+")
+# Markdown-link target: [text](spec-foo.md#anchor) — catches doc-relative links
+# that carry no directory prefix and so miss the token regex above.
+_MDLINK_RE = re.compile(r"\]\(([^)#?\s]+)")
+
+
+def denylisted_references(
+    public_paths: list[str],
+    excluded_paths: list[str],
+    root: Path = REPO_ROOT,
+) -> list[tuple[str, str]]:
+    """WARN-level: shipped files that reference now-denylisted paths.
+
+    A public doc linking to a denylisted path is a broken link in the public
+    tree (the target never ships). This is advisory, never a gate: each hit is
+    a rewrite-or-accept judgment call (e.g. CLAUDE.md ships sanitized and cites
+    spec files by design). Matches both repo-rooted path tokens
+    (``docs/spec-foo.md``) and doc-relative markdown links (``](spec-foo.md)``),
+    plus references to a denylisted DIRECTORY (a dir all of whose tracked
+    content is excluded).
+
+    Returns sorted (shipping_file, referenced_denylisted_path) pairs.
+    """
+    scrub = _load_scrub_module()
+    excluded = set(excluded_paths)
+    public_set = set(public_paths)
+
+    def _ancestors(rel: str):
+        parts = rel.split("/")
+        for i in range(1, len(parts)):
+            yield "/".join(parts[:i])
+
+    # A directory reference counts only if the dir contains excluded files and
+    # NO public ones (e.g. "docs" is an ancestor of both → not flagged).
+    excluded_dirs = {d for p in excluded for d in _ancestors(p)}
+    excluded_dirs -= {d for p in public_set for d in _ancestors(p)}
+
+    hits: set[tuple[str, str]] = set()
+    for rel in public_paths:
+        path = root / rel
+        if not path.is_file() or path.suffix.lower() in scrub._BINARY_EXTENSIONS:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        parent_dir = posixpath.dirname(rel)  # git paths are always posix
+        candidates = set(_PATHREF_RE.findall(text))
+        for target in _MDLINK_RE.findall(text):
+            target = target.strip().rstrip("/")
+            if not target or target.startswith(("http://", "https://", "mailto:", "/")):
+                continue
+            # Resolve the doc-relative link against the referencing file's dir
+            # and normalize ./ and ../ segments without touching the filesystem.
+            joined = posixpath.join(parent_dir, target) if parent_dir else target
+            candidates.add(posixpath.normpath(joined))
+        for cand in candidates:
+            cand = cand.rstrip("/.")
+            if cand in excluded or cand in excluded_dirs:
+                hits.add((rel, cand))
+    return sorted(hits)
+
+
+# --------------------------------------------------------------------------
+# Report + CLI
+# --------------------------------------------------------------------------
+def compute(manifest_path: Path | None = None) -> dict:
+    """Run the full dry-run computation and return a structured result."""
+    globs = load_manifest(manifest_path)
+    compiled = compile_globs(globs)
+    tracked = tracked_files()
+    public, excluded = partition(tracked, compiled)
+    violations = run_scrub(public)
+    return {
+        "globs": globs,
+        "tracked_count": len(tracked),
+        "public": public,
+        "excluded": excluded,
+        "violations": violations,
+        "exempted_with_tokens": exempted_but_token_bearing(public),
+        "denylist_references": denylisted_references(public, [p for p, _ in excluded]),
+    }
+
+
+def _print_dry_run(result: dict) -> None:
+    public = result["public"]
+    excluded = result["excluded"]
+    violations = result["violations"]
+
+    print("=== tools/publish-public --dry-run ===")
+    print(f"Manifest globs ({len(result['globs'])}):")
+    for g in result["globs"]:
+        print(f"  - {g}")
+    print()
+    print(f"Tracked at HEAD : {result['tracked_count']}")
+    print(f"Public files    : {len(public)}")
+    print(f"Excluded (private): {len(excluded)}")
+    print()
+
+    print("Public sample (first 15):")
+    for rel in public[:15]:
+        print(f"  {rel}")
+    if len(public) > 15:
+        print(f"  ... and {len(public) - 15} more")
+    print()
+
+    print(f"Excluded files ({len(excluded)}) — path  <-  excluding glob:")
+    for rel, glob in excluded:
+        print(f"  {rel}  <-  {glob}")
+    print()
+
+    exempted = result.get("exempted_with_tokens", [])
+
+    if violations:
+        shown = violations[:40]
+        print(
+            f"SCRUB: FAIL — {len(violations)} reserved-token hit(s) in shipped "
+            f"files OUTSIDE the public-output exemption set:"
+        )
+        for rel, lineno, token, snippet in shown:
+            print(f"  {rel}:{lineno}  [{token}]  {snippet}")
+        if len(violations) > 40:
+            print(f"  ... and {len(violations) - 40} more")
+        print()
+        print(
+            "These are deployment-specific identifiers that must be scrubbed "
+            "before the public mirror can be published (see "
+            "docs/PLACEHOLDER_NAMING.md). The dry-run is doing its job: it "
+            "DETECTED them. Re-scrubbing the offending files is a separate task."
+        )
+    else:
+        suffix = (
+            f"outside the {len(PUBLIC_OUTPUT_EXEMPTIONS)} documented "
+            "public-output exemption(s)."
+            if PUBLIC_OUTPUT_EXEMPTIONS
+            else "(the exemption set is empty — nothing is knowingly shipped "
+            "with tokens; the load-bearing files are sanitized at publish time)."
+        )
+        print(f"SCRUB: PASS — no reserved tokens in any shipped file {suffix}")
+    print()
+
+    # Never a silent green: always surface the exemption set so a PASS can
+    # be audited. These files ship WITH reserved tokens and need PUBLIC-2's
+    # publish-time transform before the mirror is truly clean.
+    if exempted:
+        print(
+            f"Public-output exemptions ({len(exempted)} of "
+            f"{len(PUBLIC_OUTPUT_EXEMPTIONS)} still contain reserved tokens; "
+            f"PUBLIC-2 must apply a publish-time transform before these ship clean):"
+        )
+        for rel in exempted:
+            print(f"  {rel}")
+        print()
+
+    refs = result.get("denylist_references", [])
+    if refs:
+        # Reader-facing docs first (a rendered markdown link that 404s is the
+        # real cost); code/test references (spec citations in comments) are
+        # summarized — full detail in --json.
+        doc_refs = [(r, t) for r, t in refs if r.endswith((".md", ".html"))]
+        code_count = len(refs) - len(doc_refs)
+        print(
+            f"WARN: {len(refs)} reference(s) to denylisted paths in shipped "
+            f"files (broken links in the public tree — rewrite or accept each; "
+            f"advisory, never blocks)."
+        )
+        if doc_refs:
+            print(f"  Reader-facing docs ({len(doc_refs)}):")
+            for rel, target in doc_refs:
+                print(f"    {rel}  ->  {target}")
+        if code_count:
+            print(
+                f"  ... and {code_count} more from code/tests (spec citations "
+                f"in comments/docstrings — see --json for the full list)."
+            )
+        print()
+
+    print("DRY RUN — no commits, no network, nothing published.")
+
+
+class PublishAborted(RuntimeError):
+    """Raised when a safety gate fails during --execute (scrub, rescrub, dirty tree)."""
+
+
+# --------------------------------------------------------------------------
+# Publish build (the manual runbook Phase 4–5, automated)
+# --------------------------------------------------------------------------
+def _working_tree_clean(root: Path = REPO_ROOT) -> bool:
+    """True if `git status --porcelain` is empty (HEAD == working tree)."""
+    proc = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return not proc.stdout.strip()
+
+
+def build_public_tree(
+    dest: Path, manifest_path: Path | None = None, root: Path = REPO_ROOT
+) -> dict:
+    """Materialize the sanitized public output tree into ``dest``.
+
+    Computes the public subset (tracked − denylist), runs the reserved-token
+    scrub on it, and ABORTS (PublishAborted) if the scrub finds anything. Then
+    writes every public file into ``dest``, applying the publish-time sanitizer
+    (publish_sanitize.sanitize_public_text) to text files — so ``dest`` holds
+    exactly WHAT SHIPS: private paths removed, load-bearing dev-apparatus files
+    sanitized, org-URL links rewritten. Binary files are copied verbatim; the
+    executable bit is preserved.
+
+    Returns the compute() result dict augmented with ``written``/``sanitized``
+    counts. Does NOT touch git or the network.
+    """
+    result = compute(manifest_path)
+    if result["violations"]:
+        raise PublishAborted(
+            f"scrub FAILED on the public subset: {len(result['violations'])} "
+            f"reserved-token hit(s). Refusing to build a leaking tree."
+        )
+    sanitize = _load_sanitize_module()
+    scrub = _load_scrub_module()
+    dest = Path(dest)
+    written = 0
+    sanitized = 0
+    for rel in result["public"]:
+        src = root / rel
+        # Skip anything not a regular file at HEAD (e.g. a submodule gitlink or
+        # a path removed in the working tree). git ls-files can list gitlinks.
+        if not src.is_file():
+            continue
+        out_path = dest / rel
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        is_binary = src.suffix.lower() in scrub._BINARY_EXTENSIONS
+        text: str | None = None
+        if not is_binary:
+            try:
+                text = src.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                is_binary = True  # undecodable → treat as binary, copy verbatim
+        if is_binary or text is None:
+            shutil.copyfile(src, out_path)
+        else:
+            new = sanitize.sanitize_public_text(rel, text)
+            if new != text:
+                sanitized += 1
+            out_path.write_text(new, encoding="utf-8")
+        shutil.copymode(src, out_path)
+        written += 1
+    result["written"] = written
+    result["sanitized"] = sanitized
+    return result
+
+
+def rescrub_tree(dest: Path) -> list[tuple[str, int, str, str]]:
+    """Belt-and-suspenders: scan the BUILT tree on disk for reserved tokens.
+
+    Zero exemptions — the built tree contains no legitimately token-bearing
+    file (fixtures/ops-docs are manifest-denied; the five load-bearing files
+    are sanitized). Any hit here is a real leak in the artifact about to be
+    published. Returns (rel, lineno, token, snippet) violations.
+    """
+    scrub = _load_scrub_module()
+    dest = Path(dest)
+    violations: list[tuple[str, int, str, str]] = []
+    for path in sorted(dest.rglob("*")):
+        if not path.is_file():
+            continue
+        # Skip .git plumbing: reflogs (.git/logs/*) record the LOCAL committer
+        # identity (which may be a reserved token) but are never pushed, so they
+        # are not part of the shipped artifact. In the real _execute flow rescrub
+        # runs before `git init` so this is belt-and-suspenders for callers that
+        # scan an already-committed tree.
+        if ".git" in path.parts:
+            continue
+        if path.suffix.lower() in scrub._BINARY_EXTENSIONS:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        rel = str(path.relative_to(dest))
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            for match in scrub._violations_in(line):
+                snippet = line.strip()
+                if len(snippet) > 110:
+                    snippet = snippet[:107] + "..."
+                violations.append((rel, lineno, match, snippet))
+    return violations
+
+
+def _git(dest: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", *args], cwd=dest, capture_output=True, text=True, check=True
+    )
+
+
+# --------------------------------------------------------------------------
+# Provenance marker + --status (PD-4 forward-sync; no network)
+# --------------------------------------------------------------------------
+def read_provenance(path: Path | None = None) -> dict | None:
+    """Read the last-publish marker, or None if absent/unreadable/malformed.
+
+    Fail-open on a bad marker: --status degrades to "no publish recorded"
+    rather than blocking (the marker is informational, never a gate)."""
+    marker = path or PROVENANCE_PATH
+    try:
+        data = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def write_provenance(
+    *,
+    private_head_sha: str,
+    public_commit_sha: str,
+    published_at: str,
+    public_file_count: int,
+    target: str,
+    path: Path | None = None,
+) -> Path:
+    """Record what was just published. Written only after a successful push."""
+    marker = path or PROVENANCE_PATH
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(
+        json.dumps(
+            {
+                "private_head_sha": private_head_sha,
+                "public_commit_sha": public_commit_sha,
+                "published_at": published_at,
+                "public_file_count": public_file_count,
+                "target": target,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return marker
+
+
+def _status(args: argparse.Namespace) -> int:
+    """Report drift between the last published release and private HEAD.
+
+    Reads only the local git repo + the provenance marker — NO network calls.
+    """
+    print("=== tools/publish-public --status ===")
+    try:
+        result = compute(args.manifest)
+    except ValueError as exc:
+        print(f"publish-public: {exc}", file=sys.stderr)
+        return 2
+    public_set = set(result["public"])
+
+    marker = read_provenance()
+    if marker is None:
+        try:
+            shown = PROVENANCE_PATH.relative_to(REPO_ROOT)
+        except ValueError:
+            shown = PROVENANCE_PATH
+        print(f"No provenance marker at {shown}.")
+        print(
+            "Either nothing has been published from this checkout yet, or the "
+            "marker predates --status. It is written automatically on the next "
+            "successful --execute --push."
+        )
+        print()
+        print(f"Public files at HEAD : {len(public_set)}")
+        print(f"Scrub                : {'PASS' if not result['violations'] else 'FAIL'}")
+        return 0
+
+    last_sha = str(marker.get("private_head_sha", ""))
+    head = _git(REPO_ROOT, "rev-parse", "HEAD").stdout.strip()
+    print(f"Last published       : {marker.get('published_at', 'unknown')}")
+    print(f"  target             : {marker.get('target', 'unknown')}")
+    print(f"  public commit      : {str(marker.get('public_commit_sha', 'unknown'))[:12]}")
+    print(f"  public file count  : {marker.get('public_file_count', 'unknown')}")
+    print(f"  private HEAD then  : {last_sha[:12] or 'unknown'}")
+    print(f"Private HEAD now     : {head[:12]}")
+
+    # The recorded sha may be unknown to this clone (marker copied across
+    # machines, history rewritten) — degrade to "cannot compute drift".
+    known = (
+        bool(last_sha)
+        and subprocess.run(
+            ["git", "cat-file", "-e", f"{last_sha}^{{commit}}"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+        ).returncode
+        == 0
+    )
+    if not known:
+        print()
+        print(
+            f"Recorded private sha {last_sha[:12] or '(empty)'} is not a commit "
+            f"in this clone — cannot compute drift. Re-publish to refresh the marker."
+        )
+        return 0
+
+    behind = int(
+        _git(REPO_ROOT, "rev-list", "--count", f"{last_sha}..HEAD").stdout.strip()
+    )
+    changed = [
+        line
+        for line in _git(
+            REPO_ROOT, "diff", "--name-only", last_sha, "HEAD"
+        ).stdout.splitlines()
+        if line in public_set
+    ]
+    print()
+    print(f"Private commits since last publish : {behind}")
+    print(f"Changed files in the public subset : {len(changed)}")
+    for rel in changed[:20]:
+        print(f"  {rel}")
+    if len(changed) > 20:
+        print(f"  ... and {len(changed) - 20} more")
+    print()
+    if behind == 0:
+        print("Public snapshot is current with private HEAD.")
+    else:
+        print(
+            "To republish (Model A — one squashed commit, force-push by design):\n"
+            f"  tools/publish-public --execute --target {marker.get('target', '<url>')} "
+            "--push --i-understand-this-publishes"
+        )
+    return 0
+
+
+# --------------------------------------------------------------------------
+# --skip-if-unchanged: don't force-push a byte-identical snapshot
+# --------------------------------------------------------------------------
+# Stable marker line so a CI log (and a test) can tell "skipped, already
+# current" apart from "published".
+SKIP_UNCHANGED_MARKER = (
+    "PUBLISH: SKIPPED — the published snapshot is already byte-identical"
+)
+
+
+def published_snapshot_matches(
+    dest: Path, target: str, author_email: str | None = None
+) -> tuple[bool, str]:
+    """Is the remote ALREADY exactly the snapshot we just built?
+
+    Compares the freshly built commit's **tree object id** against the remote
+    tip's. Git tree ids are content-addressed over paths + modes + blob
+    contents and carry no commit metadata, so equal tree ids mean the published
+    artifact is byte-identical to what we would push — a force-push would only
+    churn the commit sha.
+
+    Why identity-of-content and NOT "did this push touch a public path": the
+    obvious cheap filter is to diff the pushed commit range against the
+    denylist, but under GitHub's concurrency rules a QUEUED workflow run is
+    cancelled when a newer one queues behind an in-progress run. Its commit's
+    public changes would then never be published, and the next run — diffing
+    only from ITS predecessor — would see nothing public and skip. That is
+    silent public-repo lag, i.e. exactly the failure this automation exists to
+    end. Comparing against what is actually published cannot lose a commit,
+    and it self-heals drift from any cause (a hand-push, a failed run, a
+    snapshot that predates the automation).
+
+    The remote must ALSO be a Model-A-shaped, correctly-authored single commit
+    for a skip to be safe; otherwise we republish to repair it.
+
+    Fetches into a throwaway BARE repo, never into ``dest`` — a shallow fetch
+    would mark ``dest`` shallow and can make the subsequent force-push refuse.
+
+    Returns (matches, reason). ``matches`` is False on ANY uncertainty.
+    """
+    probe = Path(tempfile.mkdtemp(prefix="evolve-public-probe-"))
+    try:
+        init = subprocess.run(
+            ["git", "init", "--quiet", "--bare", str(probe)],
+            capture_output=True,
+            text=True,
+        )
+        if init.returncode != 0:
+            return False, "could not create the comparison repo"
+        # depth 2 (not 1) so `rev-list --count` can distinguish "exactly one
+        # commit" (Model A) from "more than one".
+        fetch = subprocess.run(
+            ["git", "fetch", "--quiet", "--depth", "2", target, "main"],
+            cwd=probe,
+            capture_output=True,
+            text=True,
+        )
+        if fetch.returncode != 0:
+            return False, "remote main is unreadable or has no commits yet"
+        try:
+            count = _git(probe, "rev-list", "--count", "FETCH_HEAD").stdout.strip()
+            remote_tree = _git(probe, "rev-parse", "FETCH_HEAD^{tree}").stdout.strip()
+            remote_author = _git(
+                probe, "log", "-1", "--format=%an <%ae>", "FETCH_HEAD"
+            ).stdout.strip()
+            local_tree = _git(dest, "rev-parse", "HEAD^{tree}").stdout.strip()
+        except subprocess.CalledProcessError:
+            return False, "could not read the remote snapshot"
+    finally:
+        shutil.rmtree(probe, ignore_errors=True)
+
+    if count != "1":
+        return False, f"remote has {count} commits, not the Model A single commit"
+    expected_author = f"{PUBLIC_AUTHOR_NAME} <{author_email or PUBLIC_AUTHOR_EMAIL}>"
+    if remote_author != expected_author:
+        return False, f"remote author is {remote_author!r}, expected {expected_author!r}"
+    if remote_tree != local_tree:
+        return False, f"tree differs (remote {remote_tree[:12]}, built {local_tree[:12]})"
+    return True, f"identical tree {local_tree[:12]}, single commit, public author"
+
+
+# --------------------------------------------------------------------------
+# --verify: post-push inspection of the ACTUAL published artifact
+# --------------------------------------------------------------------------
+def _verify(args: argparse.Namespace) -> int:
+    """Fresh throwaway clone of --target → reserved-token grep + metadata check.
+
+    Mirrors the manual verification done at the 2026-07-01 cutover: the thing
+    inspected is the REMOTE artifact (what the world sees), not the local build.
+    Checks: exactly one commit (Model A), author is the public identity, and
+    zero reserved tokens in any shipped file (rescrub_tree, zero exemptions).
+    """
+    if not args.target:
+        print("--verify requires --target <git-remote-url>.", file=sys.stderr)
+        return 2
+    clone = Path(tempfile.mkdtemp(prefix="evolve-public-verify-"))
+    try:
+        subprocess.run(
+            ["git", "clone", "--quiet", args.target, str(clone)],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        print(f"publish-public: --verify clone failed: {exc.stderr}", file=sys.stderr)
+        shutil.rmtree(clone, ignore_errors=True)
+        return 3
+
+    failures: list[str] = []
+    commit_count = int(_git(clone, "rev-list", "--count", "HEAD").stdout.strip())
+    if commit_count != 1:
+        failures.append(
+            f"expected exactly 1 commit (Model A: per-release squashed snapshot), "
+            f"found {commit_count}"
+        )
+    author = _git(clone, "log", "-1", "--format=%an <%ae>").stdout.strip()
+    expected_author = (
+        f"{PUBLIC_AUTHOR_NAME} <{args.author_email or PUBLIC_AUTHOR_EMAIL}>"
+    )
+    if author != expected_author:
+        failures.append(f"author is {author!r}, expected {expected_author!r}")
+
+    leaks = rescrub_tree(clone)
+    if leaks:
+        failures.append(f"{len(leaks)} reserved-token hit(s) in the published tree")
+
+    file_count = sum(
+        1 for p in clone.rglob("*") if p.is_file() and ".git" not in p.parts
+    )
+    shutil.rmtree(clone, ignore_errors=True)
+
+    print("=== tools/publish-public --verify ===")
+    print(f"Target          : {args.target}")
+    print(f"Commits         : {commit_count}")
+    print(f"Author          : {author}")
+    print(f"Files in clone  : {file_count}")
+    if leaks:
+        for rel, lineno, token, snippet in leaks[:20]:
+            print(f"  LEAK {rel}:{lineno}  [{token}]  {snippet}")
+    if failures:
+        print("VERIFY: FAIL")
+        for f in failures:
+            print(f"  - {f}")
+        return 3
+    print("VERIFY: PASS — single squashed commit, public author, zero reserved tokens.")
+    return 0
+
+
+def _commit_public_tree(dest: Path, author_email: str | None) -> str:
+    """git init a fresh repo in ``dest`` and make ONE squashed public commit.
+
+    No history is carried from the private repo (PD-2). Returns the commit SHA.
+    """
+    _git(dest, "init", "-q", "-b", "main")
+    if author_email:
+        _git(dest, "config", "user.email", author_email)
+        _git(dest, "config", "user.name", "Evolve")
+    _git(dest, "add", "-A")
+    msg = (
+        "Evolve — public release\n\n"
+        "Curated public snapshot published from the private dev repo via\n"
+        "tools/publish-public. https://evolveops.dev\n"
+    )
+    _git(dest, "commit", "-q", "-m", msg)
+    return _git(dest, "rev-parse", "HEAD").stdout.strip()
+
+
+def _execute(args: argparse.Namespace) -> int:
+    """Build the sanitized public tree, gate it, commit it, and (optionally) push.
+
+    This automates runbook Phase 4–5. The genuinely irreversible steps —
+    creating the public GitHub repo and flipping it public — remain operator
+    actions (Phase 5–7); this tool stops at "a scrub-clean, committed local
+    tree" unless a --target remote is given with --push.
+    """
+    if not args.i_understand_this_publishes:
+        print(
+            "Refusing to --execute without --i-understand-this-publishes.",
+            file=sys.stderr,
+        )
+        return 2
+    if not args.build_only and not args.target:
+        print(
+            "Refusing to --execute without --target <git-remote-url> "
+            "(or pass --build-only to build+commit a local tree without pushing).",
+            file=sys.stderr,
+        )
+        return 2
+    if not args.allow_dirty and not _working_tree_clean():
+        print(
+            "Refusing to publish from a DIRTY working tree — HEAD would not match "
+            "what ships. Commit/stash first, or pass --allow-dirty if intentional.",
+            file=sys.stderr,
+        )
+        return 2
+
+    if args.build_dir:
+        dest = Path(args.build_dir)
+        if dest.exists() and any(dest.iterdir()):
+            print(f"Refusing to build into non-empty --build-dir {dest}.", file=sys.stderr)
+            return 2
+        dest.mkdir(parents=True, exist_ok=True)
+    else:
+        dest = Path(tempfile.mkdtemp(prefix="evolve-public-"))
+
+    try:
+        result = build_public_tree(dest, args.manifest)
+    except PublishAborted as exc:
+        print(f"publish-public: ABORT — {exc}", file=sys.stderr)
+        return 3
+
+    leaks = rescrub_tree(dest)
+    if leaks:
+        print(
+            f"publish-public: ABORT — rescrub of the BUILT tree found "
+            f"{len(leaks)} reserved-token hit(s):",
+            file=sys.stderr,
+        )
+        for rel, lineno, token, snippet in leaks[:20]:
+            print(f"  {rel}:{lineno}  [{token}]  {snippet}", file=sys.stderr)
+        return 3
+
+    sha = _commit_public_tree(dest, args.author_email)
+
+    print("=== tools/publish-public --execute ===")
+    print(f"Built tree      : {dest}")
+    print(f"Public files    : {result['written']}")
+    print(f"Sanitized files : {result['sanitized']}")
+    print(f"Excluded (private): {len(result['excluded'])}")
+    print("SCRUB           : PASS (subset) + PASS (built-tree rescrub, 0 exemptions)")
+    print(f"Squashed commit : {sha[:12]}")
+
+    if args.target and args.push:
+        _git(dest, "remote", "add", "origin", args.target)
+        if args.skip_if_unchanged:
+            matches, reason = published_snapshot_matches(
+                dest, args.target, args.author_email
+            )
+            print(f"Already published?: {'yes' if matches else 'no'} — {reason}")
+            if matches:
+                print()
+                print(SKIP_UNCHANGED_MARKER)
+                print("Nothing pushed; the public repo is already current.")
+                return 0
+        # FORCE by design (Model A): each release is a fresh `git init` + one
+        # squashed commit sharing no history with the remote, so a plain push
+        # is always rejected as non-fast-forward. The public repo is always
+        # exactly one commit; no public history accumulates.
+        #
+        # Surface git's own stderr on failure. _git uses check=True +
+        # capture_output, and CalledProcessError's message does NOT include the
+        # captured stderr — so an unhandled failure here would give a bare
+        # traceback with no git diagnostic, which is unusable in CI logs. The
+        # message is safe to print because --target carries NO credential: auth
+        # comes from the ambient git credential config (see
+        # .github/workflows/publish-public.yml), never from the URL.
+        try:
+            _git(dest, "push", "--force", "-u", "origin", "main")
+        except subprocess.CalledProcessError as exc:
+            print(
+                f"publish-public: ABORT — force-push to {args.target} failed "
+                f"(exit {exc.returncode}). Nothing was published; the built tree "
+                f"is at {dest}.",
+                file=sys.stderr,
+            )
+            for stream in (exc.stdout, exc.stderr):
+                if stream:
+                    print(stream.rstrip(), file=sys.stderr)
+            return 3
+        print(f"Pushed          : {args.target} (main, --force — Model A snapshot)")
+        marker = write_provenance(
+            private_head_sha=_git(REPO_ROOT, "rev-parse", "HEAD").stdout.strip(),
+            public_commit_sha=sha,
+            published_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            public_file_count=result["written"],
+            target=args.target,
+        )
+        print(f"Provenance      : {marker}")
+        print()
+        print("Next: tools/publish-public --verify --target " + args.target)
+        print("Then: close public issues fixed in this release (runbook PD-4 step 4).")
+    else:
+        print()
+        print("NOT pushed (no --target/--push). To publish this artifact:")
+        print(f"  cd {dest}")
+        print("  gh repo create evolve-ops/evolve --private \\")
+        print('    --description "Packaging layer for OpenClaw — Linux/Ubuntu for AI agents on your hardware" \\')
+        print("    --source=. --remote=origin --push")
+        print("  # inspect (Phase 6), then flip public:")
+        print("  gh repo edit evolve-ops/evolve --visibility public")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="publish-public",
+        description="Compute (and, when explicitly authorized, push) the public mirror.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Compute and print the public/private split + scrub result (default).",
+    )
+    parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="Publish for real (guarded; per-release manual republish, PD-4).",
+    )
+    parser.add_argument(
+        "--status",
+        action="store_true",
+        help="Report drift since the last published release (provenance marker "
+        "at docs/private/last-public-release.json). No network calls.",
+    )
+    parser.add_argument(
+        "--skip-if-unchanged",
+        action="store_true",
+        help="With --execute --push: skip the force-push when the remote is "
+        "already a correctly-authored single commit whose tree is identical to "
+        "the freshly built snapshot. Fails safe (publishes) on any uncertainty. "
+        "Used by the CI publish workflow so private-only changes don't churn "
+        "the public commit sha.",
+    )
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="Fresh throwaway clone of --target: reserved-token grep + "
+        "single-squashed-commit/author check on the PUBLISHED artifact.",
+    )
+    parser.add_argument(
+        "--i-understand-this-publishes",
+        action="store_true",
+        help="Required acknowledgement flag for --execute.",
+    )
+    parser.add_argument(
+        "--target",
+        metavar="GIT_REMOTE_URL",
+        help="Public remote to push to (required for --execute unless --build-only).",
+    )
+    parser.add_argument(
+        "--build-only",
+        action="store_true",
+        help="With --execute: build+commit the sanitized tree locally, do NOT push "
+        "(no --target needed). The safe way to inspect the artifact first.",
+    )
+    parser.add_argument(
+        "--build-dir",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help="With --execute: where to materialize the public tree (must be empty; "
+        "default: a fresh mkdtemp). Kept so the operator can inspect/clone it.",
+    )
+    parser.add_argument(
+        "--push",
+        action="store_true",
+        help="With --execute --target: actually push to the remote (default: no push).",
+    )
+    parser.add_argument(
+        "--author-email",
+        default=None,
+        metavar="EMAIL",
+        help="With --execute: author-of-record for the squashed public commit "
+        "(e.g. hello@evolveops.dev). Default: the committing git identity.",
+    )
+    parser.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="With --execute: permit publishing from a dirty working tree "
+        "(default: refuse, since HEAD would not match what ships).",
+    )
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=None,
+        help=f"Path to the manifest (default: {DEFAULT_MANIFEST.relative_to(REPO_ROOT)}).",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the dry-run result as JSON instead of a human report.",
+    )
+    args = parser.parse_args(argv)
+
+    # Mode dispatch — deliberately NOT composable (see the module docstring).
+    # In particular --verify wins over --execute, so `--execute --verify` in one
+    # invocation publishes NOTHING. Callers must run --verify separately.
+    if args.status:
+        return _status(args)
+    if args.verify:
+        return _verify(args)
+    if args.execute:
+        return _execute(args)
+
+    # Default and --dry-run both land here — never publishes.
+    try:
+        result = compute(args.manifest)
+    except ValueError as exc:
+        print(f"publish-public: {exc}", file=sys.stderr)
+        return 2
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "globs": result["globs"],
+                    "tracked_count": result["tracked_count"],
+                    "public_count": len(result["public"]),
+                    "excluded_count": len(result["excluded"]),
+                    "excluded": [{"path": p, "glob": g} for p, g in result["excluded"]],
+                    "violation_count": len(result["violations"]),
+                    "violations": [
+                        {"path": p, "line": ln, "token": tk, "snippet": sn}
+                        for p, ln, tk, sn in result["violations"]
+                    ],
+                    "scrub_passed": not result["violations"],
+                    "public_output_exemptions": sorted(PUBLIC_OUTPUT_EXEMPTIONS),
+                    "exempted_with_tokens": result.get("exempted_with_tokens", []),
+                    "denylist_references": [
+                        {"path": p, "references": t}
+                        for p, t in result.get("denylist_references", [])
+                    ],
+                },
+                indent=2,
+            )
+        )
+    else:
+        _print_dry_run(result)
+
+    # Dry-run exit code reflects scrub health so callers can gate on it, but
+    # the report is the real deliverable. Reserved tokens currently present
+    # in public files are a known, separately-tracked re-scrub task.
+    return 1 if result["violations"] else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

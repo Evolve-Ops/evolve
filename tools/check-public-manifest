@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+"""check-public-manifest — CI guard for docs/public-manifest.yaml.
+
+The manifest is the single source of truth for the public/private cut line
+(see tools/publish-public). A typo'd or dead glob silently widens or narrows
+that line, so this guard fails the build when:
+
+  * the YAML is malformed, or has an unknown top-level key, or a malformed
+    ``private`` entry (delegated to publish-public.load_manifest); or
+  * a denylist glob matches ZERO currently-tracked files — i.e. it is dead
+    or typo'd — UNLESS its prefix is already gitignored
+    (docs/private/, issues/open/), where matching nothing is legitimate.
+
+Pure-stdlib + PyYAML (an existing dependency). No network. Fast.
+
+Wired into .github/workflows/ci.yml as the ``public-manifest`` job.
+Spec: docs/spec-public-2026-06-18.md §4.
+"""
+from __future__ import annotations
+
+import importlib.util
+import sys
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+
+# Reuse the manifest parser, glob compiler, tracked-file lister, and the
+# allowed-empty-prefix list from publish-public — one definition of the cut
+# line, no drift. publish-public loads the scrub module lazily, so importing
+# it here does NOT pull in pytest.
+_PUBLISH = Path(__file__).resolve().parent / "publish-public"
+_loader = SourceFileLoader("publish_public", str(_PUBLISH))
+_spec = importlib.util.spec_from_loader("publish_public", _loader)
+_pp = importlib.util.module_from_spec(_spec)
+_loader.exec_module(_pp)
+
+
+def main() -> int:
+    try:
+        globs = _pp.load_manifest()
+    except ValueError as exc:
+        print(f"check-public-manifest: FAIL — {exc}", file=sys.stderr)
+        return 1
+
+    if not globs:
+        print(
+            "check-public-manifest: FAIL — manifest has an empty 'private' "
+            "denylist; expected at least one private glob.",
+            file=sys.stderr,
+        )
+        return 1
+
+    compiled = _pp.compile_globs(globs)
+    tracked = _pp.tracked_files()
+
+    dead: list[str] = []
+    for glob, pattern in compiled:
+        matched = any(pattern.match(rel) for rel in tracked)
+        if matched:
+            continue
+        if glob.startswith(_pp.ALLOWED_EMPTY_PREFIXES):
+            # Gitignored prefix — legitimately may match nothing on a checkout
+            # where the local-only dir is absent.
+            print(
+                f"  ok (allowed-empty, gitignored prefix): {glob} — matches no "
+                f"tracked file, permitted."
+            )
+            continue
+        dead.append(glob)
+
+    if dead:
+        print(
+            f"check-public-manifest: FAIL — {len(dead)} denylist glob(s) match "
+            f"no tracked file (dead or typo'd):",
+            file=sys.stderr,
+        )
+        for glob in dead:
+            print(f"  - {glob}", file=sys.stderr)
+        print(
+            "\nEither fix the glob, remove it, or — if it intentionally guards "
+            "a not-yet-present gitignored dir — ensure its prefix is in "
+            "ALLOWED_EMPTY_PREFIXES in tools/publish-public.",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(
+        f"check-public-manifest: OK — {len(globs)} denylist glob(s), all "
+        f"matching ≥1 tracked file or allowed-empty (of {len(tracked)} tracked)."
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

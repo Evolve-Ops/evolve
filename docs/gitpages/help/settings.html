@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Settings Page · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">settings</span><span class="chip">pod-configuration</span><span class="chip">network-json</span><span class="chip">modules</span><span class="chip">primary-bot</span></div><div class="reviewed">Last reviewed 2026-06-05</div></div><h1 id="help-settings-page">Settings Page</h1>
+<p>The Settings page (in the <strong>Settings</strong> bucket) is where you configure the pod and manage individual Evolve components. It has two main areas: pod configuration and the Modules tab.</p>
+<p><strong>Looking for pod admins, passphrases, or per-bot owners?</strong> Those moved to the <a href="users.html">Users</a> page (also in the Settings bucket). Settings now covers pod / network / bot configuration only.</p>
+<p><strong>Ask evo from chat.</strong> Most settings changes can be staged as proposals
+through chat: <em>"change the primary bot to admin-bot"</em>, <em>"edit the pod alert
+chat target"</em>. Evo surfaces the relevant proposal (or stages a one-off
+when no generator exists for that change) for you to confirm. The
+<code>evolve-admin wipe-telemetry</code> CLI also has a chat path — <em>"wipe my evo
+telemetry"</em>. Generic config edits use <code>ConfigPatch</code> via
+<code>action.proposal.apply</code>.</p>
+<hr>
+<h2 id="pod-configuration">Pod Configuration</h2>
+<p>The top section of Settings covers pod-level config — network identity, bot roster, shared directory path, feature flags, and module enable/disable toggles. Changes here write to <code>network.json</code> and take effect on the next daemon cycle.</p>
+<p>Three tabs:</p>
+<ul>
+<li><strong>Network</strong> — pod context (deploy machine, Unix admin account, admin URL), shared SSH key path for backups, default backup account.</li>
+<li><strong>Bot</strong> — the bot roster (add / remove bots, primary-bot designation, ordering).</li>
+<li><em>(Identity moved to <a href="users.html">Users</a>)</em></li>
+</ul>
+<p>See <a href="../configuration.md">docs/configuration.md</a> for the full <code>network.json</code> reference.</p>
+<hr>
+<h2 id="modules-tab">Modules tab</h2>
+<p>The Modules tab shows each Evolve component as a toggleable module — what it does, whether it's enabled, and key tuning settings. Use this tab to turn components on or off without editing config files directly.</p>
+<h3 id="what-modules-are">What Modules Are</h3>
+<p>Evolve is composed of loosely coupled components. Each module corresponds to one or more scripts and plugin hooks that can be enabled or disabled independently. You don't need all modules running — you can use Evolve purely for the Operate layer (running the pod) without the Improve layer (the Better Engine), or run the full stack.</p>
+<h3 id="the-module-grid">The Module Grid</h3>
+<p>Each card shows:
+- <strong>Module name</strong> — e.g., "Continuity Engine", "Security Audit", "Weekly Analysis"
+- <strong>Status</strong> — enabled / disabled / degraded
+- <strong>Description</strong> — what this module does
+- <strong>Toggle</strong> — enable or disable the module
+- <strong>Settings</strong> (if any) — key configuration parameters surfaced without editing JSON</p>
+<h3 id="core-modules">Core Modules</h3>
+<h4 id="pod-management">Pod Management</h4>
+<p>Always on. Gateway health monitoring, heal.py auto-restart, and the admin server. Cannot be disabled without uninstalling Evolve.</p>
+<h4 id="security-audit-auditpy">Security Audit (<code>audit.py</code>)</h4>
+<p>Runs every 15 minutes. Checks identity integrity (SOUL.md/AGENTS.md hashes), gateway bind address, exec allowlist, machine-level security (firewall, SSH config, user accounts, listening ports). Generates CRITICAL alerts for serious findings.</p>
+<h4 id="cost-monitoring-costpy">Cost Monitoring (<code>cost.py</code>)</h4>
+<p>Runs daily. Tracks spend per bot and per model, checks auth health, detects model drift from expected configuration. Generates alerts when spend anomalies are detected.</p>
+<h4 id="session-metrics-measurepy">Session Metrics (<code>measure.py</code>)</h4>
+<p>Runs daily at 01:00. Aggregates session annotations from the plugin into structured daily metrics — productive/maintenance ratio, resolution rate, app usage, cost per session. The Better Engine depends on this module.</p>
+<h4 id="continuity-engine-task_runnerpy">Continuity Engine (<code>task_runner.py</code>)</h4>
+<p>Runs every 15 minutes. Executes inline tasks immediately; dispatches agent tasks when the human is idle. See the Continuity help for detailed configuration.</p>
+<h4 id="weekly-analysis-analyzepy">Weekly Analysis (<code>analyze.py</code>)</h4>
+<p>Runs Sunday at 02:00. Runs pattern detectors on accumulated metrics and session summaries; materializes findings into the v2 arbiter queue. Requires Session Metrics to have been running for at least 1 week. New patterns increasingly land as v2 generators in <code>packages/analyzer/generators/</code> rather than additions here.</p>
+<h4 id="security-review-reviewpy">Security Review (<code>review.py</code>)</h4>
+<p>Runs every 2 minutes. Screens pending proposals against 8 hard auto-reject rules. A proposal that passes becomes <code>reviewed</code> and appears in Recommendations for your approval.</p>
+<h4 id="proposal-application-applypy">Proposal Application (<code>apply.py</code>)</h4>
+<p>Runs every 5 minutes. Applies approved proposals to target bots with backup, health check, and auto-rollback.</p>
+<h4 id="outcome-tracking-outcomepy">Outcome Tracking (<code>outcome.py</code>)</h4>
+<p>Runs daily at 09:00. Sends 7-day check-in messages for applied proposals. Your responses calibrate the analysis engine's thresholds.</p>
+<h4 id="expansion-engine-expansionpy">Expansion Engine (<code>expansion.py</code>)</h4>
+<p>Runs monthly (first Sunday at 04:00). Finds app coverage gaps — things bots do repeatedly that aren't covered by any manifest.</p>
+<h4 id="community-intelligence-community_intelpy">Community Intelligence (<code>community_intel.py</code>)</h4>
+<p>Aggregates signals from external sources. Community-derived findings surface as suggestions through the standard arbiter queue.</p>
+<h4 id="better-engine-refresh-better_engine_refreshpy">Better Engine refresh (<code>better_engine_refresh.py</code>)</h4>
+<p>Runs every 15 minutes. Drives the v2 generator portfolio: pulls observations, runs each generator on its cadence, ingests proposals into the arbiter, advances verify-daemon state, and refreshes calibration snapshots. This is the heartbeat of the Better Engine.</p>
+<h4 id="check-in-verify">Check-in (<code>verify/</code>)</h4>
+<p>Runs alongside the Better Engine refresh. For every applied suggestion carrying a falsifiable claim, checks whether the metric moved in the claimed direction within the claim's window (1d / 7d / 30d). On refutation: revert / flag / escalate per the suggestion's revert plan.</p>
+<h3 id="common-questions">Common Questions</h3>
+<p><strong>Which modules are safe to disable?</strong>
+The Improve-layer modules (Weekly Analysis, Expansion Engine, Outcome Tracking, Community Intelligence) can be disabled if you want Evolve to operate as a pure ops tool. The core modules (Pod Management, Security Audit, Cost Monitoring, Session Metrics, Continuity Engine) are safe to disable individually but reduce Evolve's usefulness.</p>
+<p><strong>A module shows "degraded" — what does that mean?</strong>
+The module is running but encountering errors on some (not all) operations. Examples: Session Metrics is running but failing for one specific bot; Security Audit is running but can't read one bot's config file. Check the module's associated log or the Gateway Logs for the affected bot.</p>
+<p><strong>I disabled a module — when does it take effect?</strong>
+Immediately for the next scheduled run. The launchd job still fires, but the script checks the enabled flag and exits early. The current run (if in progress) completes normally.</p>
+<p><strong>Can I change module schedule frequency?</strong>
+Not via this UI currently — schedules are set in the launchd plist files. To change a schedule, modify the plist via Admin Actions or manually (Maintenance → Infra Jobs).</p>
+<p><strong>What's the difference between disabling a module here vs. unloading its launchd service?</strong>
+Disabling here sets a flag in Evolve's config — the launchd service still fires on schedule, but the script sees the disabled flag and exits immediately. Unloading the launchd service prevents it from firing at all. Either works; the Modules UI is easier to toggle back on.</p>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/settings.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>

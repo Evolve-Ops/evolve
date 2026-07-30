@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+"""footprint-graph-lint — load-time validator for the F-3 posture component graph.
+
+Spec: docs/spec-footprint-2026-06-18.md § "FD-5 engine design" (part 1, the
+component graph + load validator). Authoritative edge list: the VERIFIED-from-code
+graph docs/footprint-dependency-graph-2026-06-18.md (F-2.5).
+
+The F-3 posture dial resolves a desired component state and cascades a disable
+through the dependency graph in ``packages/analyzer/footprint/components.py``
+(``FOOTPRINT_COMPONENTS``, the graph-node entries). If that graph drifts — a
+``requires`` target that no longer exists, a non-reciprocal edge, a cycle, an
+infra-floor node mislabelled dial-scoped — the cascade engine would compute the
+wrong blast radius and could leave a component in a starving half-state (or, worse,
+offer to dial off a control-plane floor item). This lint is the CI gate that keeps
+the graph structurally sound as F-4 lands new components, mirroring the
+``signals.protection_registry`` / ``footprint-output-lint`` load-validator pattern.
+
+What it checks (all BLOCK) — see
+``footprint.components.graph_consistency_errors``:
+
+  * valid ``kind`` / ``classification`` / ``footprint_dims`` on every graph node;
+  * every ``requires`` target exists AND is itself a graph node (not an
+    output-only entry), with no self-loops / duplicates;
+  * ``requires`` / ``required_by`` are reciprocal (required_by is derived, so this
+    guards against any hand-edited override);
+  * **no cycles** in the cascade DAG;
+  * **infra-floor** nodes are never dial-scoped (FD-7 excludes the floor);
+  * **safety_floor** items are dial-scoped, never infra-floor (FD-3);
+  * a **cascade** node carries ≥1 edge (else it is a mis-classified safe-leaf);
+  * every **unverified** (graph §6 soft-edge) node documents its provenance.
+
+Fail-safe (spec FD-5): an ``unverified`` ``requires`` edge is validated **exactly
+like a verified one** — never skipped — so the engine honors it as a real
+dependency and the cascade never silently drops a dependent.
+
+This is a registry-internal validator: it loads the graph and checks it. It takes
+no files and is diff-independent (the whole graph is always validated).
+
+Usage
+-----
+  tools/footprint-graph-lint            # validate the graph (exit 1 on any error)
+  tools/footprint-graph-lint --list     # dump the graph nodes + edges, exit 0
+
+Exit status: 0 clean; 1 a structural violation.
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# Make the analyzer package importable so we can read the component registry.
+_ANALYZER = REPO_ROOT / "packages" / "analyzer"
+if str(_ANALYZER) not in sys.path:
+    sys.path.insert(0, str(_ANALYZER))
+
+from footprint import components as reg  # noqa: E402
+
+
+def _dump() -> None:
+    nodes = reg.graph_nodes()
+    for cid in sorted(nodes):
+        c = nodes[cid]
+        scope = "dial" if reg.is_dial_scoped(c) else "FLOOR"
+        flags = []
+        if c.safety_floor:
+            flags.append("safety_floor")
+        if c.unverified:
+            flags.append("unverified")
+        suffix = f"  [{', '.join(flags)}]" if flags else ""
+        print(f"[{c.classification}/{scope}] {cid}  ({c.kind}){suffix}")
+        print(f"    dims:        {', '.join(c.footprint_dims)}")
+        if c.requires:
+            print(f"    requires:    {', '.join(c.requires)}")
+        if c.required_by:
+            print(f"    required_by: {', '.join(c.required_by)}")
+        if c.gate:
+            print(f"    gate:        {c.gate}")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description="Load-time validator for the F-3 posture component dependency "
+        "graph in packages/analyzer/footprint/components.py.",
+    )
+    ap.add_argument("--list", action="store_true",
+                    help="dump the graph nodes + edges and exit 0")
+    args = ap.parse_args()
+
+    if args.list:
+        _dump()
+        return 0
+
+    errors = reg.graph_consistency_errors()
+    if errors:
+        print("✗ the F-3 posture component graph is structurally inconsistent:\n")
+        for err in errors:
+            print(f"  {err}")
+        print(
+            "\nFix the graph nodes in packages/analyzer/footprint/components.py. "
+            "Every requires[] target must be a registered graph node, "
+            "requires/required_by must be reciprocal, the cascade DAG must be "
+            "acyclic, and the infra floor must never be dial-scoped. The edge list "
+            "is the verified F-2.5 graph "
+            "(docs/footprint-dependency-graph-2026-06-18.md)."
+        )
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

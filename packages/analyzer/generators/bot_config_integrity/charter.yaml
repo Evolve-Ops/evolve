@@ -1,0 +1,59 @@
+id: bot_config_integrity
+schema_version: 1
+type: guardian
+dimension: safety
+bucket: operate
+# Surface routing: firing. Structural openclaw.json bugs the operator can't see from behavior
+#   alone. A broken integrity check means the bot is running off broken
+#   config — Firing-class.
+# Spec: docs/spec-recommendations-rework-2026-06-02.md §"Generator routing".
+surface: firing
+purpose: >
+  Detect structural integrity bugs in a bot's openclaw.json that the
+  operator can't tell are broken from the bot's behaviour alone, and
+  propose mechanical fixes. Each registered check looks at one specific
+  invariant — see ``__init__.py`` for the full architecture and the
+  currently-shipped check list.
+
+  Originally created for the catalog-tier drift case (team_bot_a, 2026-05-28)
+  but designed as the home for a wider family of "config setup didn't
+  finish" / "these two fields should be in sync" / "obviously missing
+  default" checks. New checks land as additional files in ``checks/``;
+  the dispatcher in ``observe.py`` reads each bot's openclaw.json once
+  and fans out to every registered check.
+
+cadence: daily
+
+# When all of a bot's integrity issues are resolved, any open
+# proposals from this generator are auto-archived. Standard guardian
+# pattern — mirrors auth_drift_filler / cron_caps_filler.
+resolves_when_silent: true
+
+invariants:
+  - id: action_kind_allowed
+    description: >
+      Only typed openclaw.json mutations that route through dedicated
+      appliers. No ConfigPatch (which would bypass the canonical
+      oc_model.py / safe_write_bot_config writers).
+
+      ReconcileModelCatalog: appends missing models to the runtime
+      whitelist (agents.defaults.models). Used by catalog_tier_drift
+      and catalog_provider_coverage checks.
+
+      As new checks land, the corresponding action kind is added here.
+      Each new entry requires a matching applier in arbiter.appliers.
+    check_kind: action_kind_allowed
+    params:
+      allowlist: [ReconcileModelCatalog]
+
+  - id: touches_forbidden
+    description: >
+      Generator stays in the structural-config corner of
+      agents.defaults. Auth, permission posture, plugins, channel
+      config, gateway core, and cron all have dedicated generators
+      (auth_drift_filler, cron_caps_filler, app_permission_drift,
+      plugin_curator, gateway_diagnostician). Keeping the scope tight
+      avoids overlapping responsibility for the same surfaces.
+    check_kind: touches_forbidden
+    params:
+      forbidden: [auth, tools, plugins, channel_config, gateway_core, cron_config]

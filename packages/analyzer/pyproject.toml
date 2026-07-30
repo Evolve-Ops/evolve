@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "evolve-analyzer"
+version = "0.1.0"
+description = "Evolve pod analyzer: monitors, generators, arbiter, signals, and daemon entry points"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "BUSL-1.1" }
+
+# Floor pins only — the resolved lock lives at the repo root (Phase 6.4).
+dependencies = [
+    # Charter/config loaders — charters and posture rules are YAML on disk.
+    "PyYAML>=6.0",
+    # LLM escalation paths (arbiter refine, security_warden LLM verifier,
+    # tier-3 audit). Callers degrade gracefully when no API key is present,
+    # but the import itself is unconditional in those modules.
+    "anthropic>=0.40",
+    # Host metrics for tile_metrics.py.
+    "psutil>=5.9",
+]
+
+[project.optional-dependencies]
+# Self-hosted Opik observability backend (observability/opik_client.py).
+# Falls back to the JSONL backend when absent — see install_opik_companion.
+observability = ["opik>=1.0"]
+
+# The analyzer is a FLAT layout: ~140 top-level modules (audit.py, heal.py,
+# pod_report.py, ...) plus ~25 subpackages (arbiter/, signals/, generators/,
+# ...), all imported by their bare names. Runtime daemons have always seen
+# this directory via PYTHONPATH in their launchd plists, so the installed
+# namespace must match it exactly. The module/package lists are computed in
+# setup.py (globbed) so a new module added in a PR is included without
+# editing a manifest.
+#
+# Deploy boxes install this package EDITABLE IN COMPAT MODE
+# (`pip install -e . --config-settings editable_mode=compat`), which writes
+# a plain .pth entry pointing at this directory. That matters: the default
+# PEP 660 editable install records a static module-name mapping at install
+# time, so a module added later by `git pull` would not import until
+# reinstall — compat mode keeps the "git pull is the deploy" model working.
+[tool.setuptools]
+# py-modules and packages are supplied dynamically by setup.py.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

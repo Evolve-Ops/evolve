@@ -1,0 +1,23 @@
+
+── OpenClaw Upgrade ──────────────────────────────────
+  Installed:  2026.7.0
+  Checking npm registry…  Latest:     2026.7.1      
+
+  Upgrading 2026.7.0 → 2026.7.1
+
+  Running safe-upgrade preflight…
+  ❌ preflight blockers: 1
+    1.  brave plugin missing from candidate
+       → Install @openclaw/brave-plugin on team_bot_a first.
+  ⚠️  --neutralize-externalized will work around the blocker(s) above
+
+  Phantom install cleanup (1 bot(s)):
+    • team_bot_b (team_bot_b): uninstall stale records ['discord'] (install path lacks a loadable 
+entry — likely TS-source-only from a previous failed upgrade attempt)
+
+  --neutralize-externalized plan (1 bot(s)):
+    • team_bot_a (team_bot_a): neutralize ['brave'] → install @openclaw/brave-plugin
+    The dance will: clean up phantoms → snapshot each bot's openclaw.json → strip refs → upgrade 
+openclaw → install externalized plugins → restore configs → restart.
+
+  --dry-run: no changes made.

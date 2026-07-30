@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Issues Page · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">issues</span><span class="chip">intake</span><span class="chip">intake-drafts</span><span class="chip">issue-tracking</span><span class="chip">triage</span><span class="chip">auto-response-policy</span></div><div class="reviewed">Last reviewed 2026-06-06</div></div><h1 id="help-issues-page">Issues Page</h1>
+<p>The Issues page (in the <strong>Improve</strong> bucket, sidebar entry <strong>❗ Issues</strong>) is where you manage GitHub issues that involve Evolve — drafts evo captured for you, issues you've already filed and want to follow, and the repos being watched for replies.</p>
+<p>It was called <strong>Inbox</strong> until 2026-06-04; the rename keeps the data and endpoints intact but matches what operators actually use it for. Internal IDs in the JS still read <code>inbox-…</code> for back-compat.</p>
+<p><strong>Ask evo to file or check.</strong> Most of this page is reachable from chat:</p>
+<ul>
+<li><em>"file this as a bug"</em> / <em>"evo improve <description>"</em> — evo captures an intake and shows the draft. No GitHub call yet.</li>
+<li><em>"show me my drafts"</em> — lists pre-promotion intakes; evo can also dismiss or promote one for you.</li>
+<li><em>"any unread replies on the evolve issues?"</em> — evo reads the activity log via <code>pod_state.intake</code>.</li>
+</ul>
+<p>Drafts never auto-file. Promotion is always explicit, either from chat or from this page.</p>
+<hr>
+<h2 id="summary-band">Summary band</h2>
+<p>Four tiles across the top:</p>
+<ul>
+<li><strong>Drafts</strong> — captured-but-not-yet-filed intakes (open + triaged).</li>
+<li><strong>Filed issues</strong> — intakes that have been promoted to GitHub.</li>
+<li><strong>With unread activity</strong> — filed issues whose threads have new comments or state changes you haven't acknowledged.</li>
+<li><strong>Tracking is automatic</strong> — note that the watcher polls GitHub every ~15 min once an intake is filed.</li>
+</ul>
+<p>The summary tiles also feed the sidebar's <strong>❗ Issues</strong> badge count, so unread replies are visible from any tab.</p>
+<hr>
+<h2 id="drafts-card">Drafts card</h2>
+<p>Sits at the top of the page when at least one draft exists. Each row is a pre-promotion intake — the <code>evo intake</code> or <code>evo improve</code> flow captured a title and body but you haven't filed it yet. Drafts live at <code>{shared_dir}/intake/open/</code> and <code>triaged/</code>.</p>
+<p>Each row shows the title, kind (bug / feature / question), creation time, and two buttons:</p>
+<ul>
+<li><strong>Promote →</strong> — opens the promote flow. Picks the default tracked repo (or prompts for one if multiple are configured) and creates the GitHub issue using your <code>github_intake</code> token. The intake moves to the <strong>Filed issues</strong> table below.</li>
+<li><strong>Dismiss</strong> — drops the draft. No GitHub call.</li>
+</ul>
+<p>Click a row title to open the <strong>draft-detail modal</strong> before promoting — it shows the full body evo wrote so you can verify the issue is well-framed. The modal has Promote and Dismiss buttons too.</p>
+<p><strong>Where drafts come from.</strong> Two ways:</p>
+<ol>
+<li><strong><code>evo intake</code></strong> — the conversational front door. You describe a problem to evo, the classifier picks one of <code>local_env</code> / <code>evolve_code</code> / <code>upstream</code> / <code>mixed</code>, and if it's filable evo drafts a structured body. Cheap (~$0.001/call).</li>
+<li><strong><code>evo improve &lt;description&gt;</code></strong> — like <code>intake</code> but framed as "make this better." Same classifier, same draft format.</li>
+</ol>
+<p>You can also iterate on a draft inline with <strong><code>evo revise &lt;intake_id&gt; &lt;instruction&gt;</code></strong> — "make it more concise," "add a stack trace section," "reframe as a feature request." Each revision is appended to the draft's history. <strong><code>evo revise &lt;intake_id&gt; --undo</code></strong> rolls back one revision without an LLM call.</p>
+<hr>
+<h2 id="tracked-repos-card">Tracked repos card</h2>
+<p>Below Drafts. Lists every repo the watcher is following — adds, removes, and at-a-glance permission status. Each row shows the owner/repo, an identity chip (<code>as @&lt;your-login&gt;</code>), and a maintainer-tier badge (<code>maintainer</code> / <code>triage</code> / <code>read-only</code> / <code>not a collaborator</code>).</p>
+<ul>
+<li><strong>+ Add repo</strong> opens a modal: owner, repo name, optional target name, and a keystore slot for the GitHub token (defaults to <code>github_intake</code>). Tick <strong>Make this the default target</strong> to send un-suffixed <code>evo intake promote</code> calls here.</li>
+<li><strong>Remove</strong> (per row) — destructive; confirms before deleting. If the removed target was the default and others exist, another is promoted to default automatically.</li>
+<li>The first time you add a repo on a fresh install, an inline "Set up GitHub token" prompt appears. The modal walks you through which PAT scope to pick: <code>repo</code> for private repos you own, <code>public_repo</code> for public upstreams only, or a fine-grained PAT with <code>Issues: read+write</code> + <code>Metadata: read</code> on the specific repos.</li>
+</ul>
+<p><strong>Suggestions strip.</strong> Below the list, quick-add chips for repos that are likely candidates (Evolve's own + the OpenClaw upstream) appear when they're not already tracked.</p>
+<h3 id="inbound-triage-watcher-pill">Inbound triage watcher pill</h3>
+<p>Sits at the bottom of the Tracked repos card, hidden until at least one repo is tracked. The watcher (<code>inbound_issues_watcher</code> LaunchDaemon, 15-minute poll) reads issues filed by <strong>others</strong> on tracked repos you maintain and runs the triage classifier against each one — see the Triage queue card below.</p>
+<ul>
+<li><strong>Status indicator</strong> — off / enabled-but-not-installed / running, with a "last ran 4m ago" hint.</li>
+<li><strong>Toggle</strong> — one click. Enabling it shows a confirmation dialog warning you that the watcher polls third-party repos and needs the same <code>github_intake</code> PAT as the promote flow.</li>
+<li><strong>Expandable install log</strong> — surfaces the actions taken when you flip the toggle (which plist was installed, which command launchctl ran). Useful when something doesn't start cleanly.</li>
+</ul>
+<p>The watcher only makes sense for pods that maintain repos other people file issues against. Standard installs that just use Evolve don't need it; the default is off.</p>
+<hr>
+<h2 id="filed-issues-table">Filed issues table</h2>
+<p>The middle section. One row per intake that's been promoted to a GitHub issue. Sorted by most-recent activity first.</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>(dot)</td>
+<td>Colored dot when the thread has unread activity.</td>
+</tr>
+<tr>
+<td>Issue</td>
+<td><code>repo#number — title</code>, links to GitHub.</td>
+</tr>
+<tr>
+<td>Kind</td>
+<td><code>bug</code> / <code>feature</code> / <code>question</code> (from the classifier).</td>
+</tr>
+<tr>
+<td>Latest activity</td>
+<td>Most recent watcher-observed event with relative timestamp.</td>
+</tr>
+<tr>
+<td>Filed</td>
+<td>When you promoted the draft.</td>
+</tr>
+<tr>
+<td>Actions</td>
+<td><code>Mark as seen</code> (clears the unread dot) and <code>↗ GitHub</code> (opens the issue).</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Unread only</strong> checkbox filters down to threads with new activity. <strong>↺ Refresh</strong> re-fetches from <code>/api/inbox</code>.</p>
+<p>Click a row to open the issue's detail panel — original report body, full activity log (💬 comment / ↻ state change / ✓ closed / ↺ reopened) with snippets and actors, and the <strong>Mark as seen</strong> button. Unread events get an accent border.</p>
+<p>The watcher (<code>upstream_issues_watcher</code>, 15-minute poll) does the activity tracking; you don't have to subscribe to GitHub notifications.</p>
+<hr>
+<h2 id="triage-queue-card">Triage queue card</h2>
+<p>Visible only when you maintain at least one tracked repo AND there's at least one inbound issue to triage (i.e., the inbound watcher is enabled and has found something). Hidden otherwise so non-maintainer pods see a clean page.</p>
+<p>Each row is an issue someone else filed against one of your repos, with the LLM triage verdict:</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Urgency</td>
+<td><code>p0</code> / <code>p1</code> / <code>p2</code> / <code>p3</code> / <code>unknown</code> — color-coded.</td>
+</tr>
+<tr>
+<td>Category</td>
+<td><code>bug</code> / <code>feature</code> / <code>question</code> / <code>noise</code> / <code>unknown</code>.</td>
+</tr>
+<tr>
+<td>Issue</td>
+<td><code>repo#number — title</code>.</td>
+</tr>
+<tr>
+<td>Author</td>
+<td>The user who filed it on GitHub.</td>
+</tr>
+<tr>
+<td>Recommendation</td>
+<td>What the classifier suggests: <code>auto_close_duplicate</code> / <code>reply_clarifying</code> / <code>label_only</code> / <code>maintainer_review</code> / <code>unknown</code>.</td>
+</tr>
+<tr>
+<td>Triaged</td>
+<td>When the verdict was produced.</td>
+</tr>
+</tbody>
+</table>
+<p>Filter the list by urgency (<code>p0</code> only, <code>p0+p1</code>, <code>p0+p1+p2</code>, or all). Click a row to see the LLM's reasoning, draft reply (rendered as plain text — these come from external users, treated as untrusted), and suggested labels.</p>
+<p>The triage detail offers an <strong>Apply</strong> control showing the recommended action. Apply is operator-initiated — it bypasses the auto-response policy gates (manual = approved). For verdicts without an actionable recommendation, a secondary <strong>labels-only</strong> lane is available.</p>
+<h3 id="auto-response-policy">Auto-response policy</h3>
+<p>A collapsible panel below the triage queue. Default is <strong>disabled</strong> — every action requires you to click Apply. Most pods will want to leave it that way for a couple of weeks before opting in to anything.</p>
+<p>When you expand it:</p>
+<ul>
+<li><strong>Enable auto-responder (global)</strong> — master switch. Off → nothing fires automatically.</li>
+<li><strong>Close duplicates</strong> + minimum confidence (default 0.9) — auto-post a citation comment, then close the issue as <code>not_planned</code>.</li>
+<li><strong>Post clarifying replies</strong> + minimum confidence (default 0.85) — post the draft reply as a comment without changing issue state.</li>
+<li><strong>Label only</strong> + minimum confidence (default 0.7) — apply the draft labels with no other action.</li>
+</ul>
+<p>Each fired auto-action gets a <strong>24-hour undo window</strong>. The triage row shows an "Auto-acted ↺ Undo" pill while the deadline hasn't passed; click Undo to reverse the action (re-opens an issue + deletes the comment in the close-as-duplicate case; deletes the comment in the reply case; removes the labels in the label-only case). After 24 hours the action becomes permanent and the pill reads "permanent."</p>
+<p>The auto-responder runs as a batch job — every couple of minutes it scans inbound intakes and applies any matching the policy gates. Confidence floors prevent the LLM from acting on guesses; the close-duplicate floor is the highest because the action is the most disruptive.</p>
+<hr>
+<h2 id="common-questions">Common questions</h2>
+<p><strong>I told evo to file a bug and got an intake ID, but nothing was on GitHub — where is it?</strong>
+Drafts never auto-file. Open this page, find it in the Drafts card, and click <strong>Promote →</strong> when you're ready. Evo's intake flow is deliberately a two-step "capture, then approve" — the GitHub call is the moment of commitment.</p>
+<p><strong>The Drafts card isn't showing — does that mean I have no drafts?</strong>
+The card hides itself when there are zero drafts in the open or triaged state. If you ran <code>evo intake</code> and the card is empty, the call may have failed or evo captured it under a different bot — check the chat reply for the intake ID and the bot it was filed against.</p>
+<p><strong>Why is my Tracked repos card empty after a fresh install?</strong>
+By design. Evolve doesn't track any GitHub repo by default — the <code>+ Add repo</code> flow is opt-in, and the quick-add chips below the list show suggestions (typically Evolve's own + OpenClaw upstream) when nothing is configured yet.</p>
+<p><strong>I added a tracked repo but the row shows "PAT scope too narrow" — what happened?</strong>
+Classic PATs can't read private repos without the full <code>repo</code> scope, even when the token owner owns the repo (GitHub returns 404 across the board, which surfaces as scope drift). Replace the <code>github_intake</code> slot with a PAT that has <code>repo</code> (private repos) or <code>public_repo</code> (public-only) and re-add. The setup modal links straight to the right GitHub token-creation page for each variant.</p>
+<p><strong>The triage queue is empty even though I have inbound issues — is something broken?</strong>
+Three things to check: (1) the inbound triage watcher pill is <strong>enabled</strong> (not just installed); (2) the most recent run shown next to the pill isn't stale; (3) at least one tracked repo has inbound issues filed by someone other than you. The queue silently hides itself when these aren't all true.</p>
+<p><strong>An auto-action fired that I didn't want — can I undo it?</strong>
+Yes, for 24 hours after the action. The triage detail card shows "Auto-acted • Undo" until the deadline passes. Undo reverses GitHub state in the inverse order it was applied — re-opens the issue first, then deletes the citation comment, so you never leave an orphaned "closing as duplicate" message on an issue you couldn't close. After the 24-hour window the action becomes permanent; you'd have to act on GitHub manually.</p>
+<p><strong>Where do I configure the auto-response confidence floors?</strong>
+The Auto-response policy panel below the triage queue. Each action kind has its own floor; the close-duplicate floor is highest by default (0.9) because the action is the most disruptive. Lower the floor to fire on weaker verdicts; raise it to be more cautious. Setting all three checkboxes off makes the auto-responder a no-op even if the global toggle is on.</p>
+<p><strong>I rejected a triage recommendation — does the classifier remember?</strong>
+Not today. The triage classifier doesn't learn from per-issue rejections. If a particular category of inbound issue keeps getting mis-classified, file a bug against Evolve via <code>evo intake</code> — the classifier prompt is something we can tune.</p>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/issues.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>

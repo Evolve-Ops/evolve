@@ -1,0 +1,341 @@
+{
+  "pkg_id": "p-5f2bc54c",
+  "pkg_version": "2026.07.28-1.4",
+  "gallery_version": "2026.07.28-1.4",
+  "schema_version": 5,
+  "manifest_type": "evolve_application",
+  "display_name": "PM Inbox",
+  "author": "evolve",
+  "description": "Public-repo feedback PM for a maintainer bot. Hourly sweep of a public GitHub repo's issues and PRs: classifies and labels each new item, keeps a public-to-private crosswalk ledger, drafts replies and private-tracker filings, and sends every draft to the operator for approval before anything is posted. Labels are the only automatic public action.",
+  "application_tags": [
+    "github",
+    "developer-tools",
+    "productivity",
+    "integration",
+    "project-management",
+    "issue-triage",
+    "task-management"
+  ],
+  "disabled_tags": [
+    "email"
+  ],
+  "objective": "Make a public repo feel staffed without giving an LLM write access to code: triage inbound issues/PRs, bridge real feedback into the maintainer's private tracker, and keep every public-facing word operator-approved (draft-first autonomy, PAT-scope trust boundary).",
+  "id": "app_pm_inbox",
+  "name": "PM Inbox",
+  "status": "active",
+  "dependencies": [],
+  "app_dependencies": [],
+  "requirements": {
+    "integrations": [],
+    "secrets": [],
+    "system": [],
+    "python_packages": [],
+    "files": [
+      {
+        "id": "pm-inbox-github-tokens",
+        "path": ".openclaw/pm-inbox-github-tokens.json",
+        "display_name": "PM Inbox GitHub tokens file",
+        "mode": "0600",
+        "required": true,
+        "reason": "Holds the public (and optional private) GitHub PATs the hourly sweep authenticates with; the app fails closed without it (PM_INBOX_FAILED every window)."
+      }
+    ],
+    "messaging_channel": [
+      {
+        "id": "messaging_channel",
+        "display_name": "Connected messaging channel",
+        "required": true,
+        "reason": "Delivers draft approvals (replies, closes, private filings) to the operator's primary channel via `openclaw message send`."
+      }
+    ]
+  },
+  "recursive_llm": {
+    "purposes": [
+      "classify inbound public issues/PRs (bug/feature/question/support/spam-dupe + duplicate detection)",
+      "draft public replies (ack, repro request, docs-grounded answers, PR-concierge responses)",
+      "draft private-tracker issue titles/bodies for triaged non-trivial items"
+    ],
+    "transport": "openclaw_headless"
+  },
+  "interface_contract": {
+    "populated_by_forge": false,
+    "extracted_at": null,
+    "data_files": [
+      {
+        "path": "pm_inbox/crosswalk.json",
+        "description": "Public-to-private crosswalk ledger — one entry per public issue/PR with classification, labels applied, triage state, the private twin (once filed), contributor credit, and release-closeout state. Single source of truth for 'what public feedback exists and where it went'.",
+        "schema": {
+          "storage_format": "JSON",
+          "fields": {
+            "schema_version": "1",
+            "updated_at": "ISO timestamp of last write",
+            "entries": "list of {public{repo,number,kind,url,title,author,opened_at}, classification, labels_applied[], state, duplicate_of, private{repo,number,url}|null, contributor{login,credit}, first_response_at, release_closed_in, notes}"
+          }
+        }
+      },
+      {
+        "path": "pm_inbox/state.json",
+        "description": "Sweep watermark (`since`), rate-limit backoff, cached token identity.",
+        "schema": {
+          "storage_format": "JSON"
+        }
+      },
+      {
+        "path": "pm_inbox/drafts/pending/<draft_id>.json",
+        "description": "Drafts awaiting operator approval (public comments and private filings). Approved -> drafts/sent/, declined -> drafts/dismissed/. Nothing public-facing posts without leaving this directory via an approval verb.",
+        "schema": {
+          "storage_format": "JSON",
+          "fields": {
+            "draft_id": "d-YYYYMMDD-NNN",
+            "kind": "public_comment | private_issue",
+            "target": "{repo, number}",
+            "body": "text to post / issue body",
+            "title": "issue title (private_issue only)",
+            "labels": "labels for the private filing",
+            "context": "one-line why, shown to the operator"
+          }
+        }
+      },
+      {
+        "path": "pm_inbox/runs/YYYY-MM-DD-HHMM.json",
+        "description": "Per-sweep result file (ran-evidence + audit).",
+        "schema": {
+          "storage_format": "JSON"
+        }
+      }
+    ],
+    "cli": [
+      {
+        "command": "python3 scripts/pm_inbox.py sweep",
+        "key_flags": [],
+        "output_signals": [
+          "PM_INBOX_RAN:",
+          "PM_INBOX_IDLE:",
+          "PM_INBOX_PARTIAL:",
+          "PM_INBOX_FAILED:",
+          "DELIVERY_SKIPPED:"
+        ]
+      },
+      {
+        "command": "python3 scripts/pm_inbox.py post --draft <id>",
+        "key_flags": [
+          "--body-file PATH"
+        ],
+        "output_signals": [
+          "PM_INBOX_POSTED:"
+        ]
+      },
+      {
+        "command": "python3 scripts/pm_inbox.py file --draft <id>",
+        "key_flags": [
+          "--body-file PATH"
+        ],
+        "output_signals": [
+          "PM_INBOX_FILED:"
+        ]
+      },
+      {
+        "command": "python3 scripts/pm_inbox.py drafts",
+        "key_flags": [],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/pm_inbox.py status",
+        "key_flags": [],
+        "output_signals": []
+      }
+    ],
+    "key_paths": {
+      "cli": "scripts/pm_inbox.py",
+      "cron_trigger": "scripts/pm-inbox-cron.sh",
+      "crosswalk": "pm_inbox/crosswalk.json",
+      "state": "pm_inbox/state.json",
+      "config": "pm_inbox/config.json",
+      "tokens": "~/.openclaw/pm-inbox-github-tokens.json"
+    },
+    "signal_prefixes": [
+      "PM_INBOX_RAN:",
+      "PM_INBOX_PARTIAL:",
+      "PM_INBOX_FAILED:",
+      "PM_INBOX_POSTED:",
+      "PM_INBOX_FILED:"
+    ],
+    "cron_schedule": "hourly"
+  },
+  "files": [],
+  "install_job": null,
+  "improvement_history": [],
+  "identity": {
+    "purpose": "Act as the project manager for a public repo's feedback loop: triage inbound issues/PRs, keep the public-to-private crosswalk, and draft every public-facing response for operator approval — with the trust boundary enforced by GitHub PAT scopes, not prompts.",
+    "scope_includes": [
+      "Hourly sweep of the public repo's issues and PRs (updated-since watermark)",
+      "Classify each new item (bug/feature/question/support/spam-dupe) and auto-apply the matching label",
+      "Detect duplicates against the crosswalk and draft 'duplicate of #N' replies",
+      "Draft first responses: acks, repro-info requests, docs-grounded answers, PR-concierge replies",
+      "Maintain pm_inbox/crosswalk.json (public#N <-> private#M, contributor credit, triage state)",
+      "Draft well-formed private-tracker issues (provenance link, aspect-hint labels, Proof: line when falsifiable)",
+      "Deliver draft summaries to the operator and execute approved drafts via post/file verbs"
+    ],
+    "scope_excludes": [
+      "Writing, merging, or reverting code anywhere (no contents write scope exists)",
+      "Running or triggering the public publish/release flow",
+      "Closing public issues (release-closeout belongs to a separate app)",
+      "Deleting anything (issues, comments, labels definitions, files)",
+      "Watching the private repo's PRs, CI, or dev flow (issue tracker only)",
+      "Auto-posting substantive public comments at the default autonomy rung"
+    ],
+    "bot_interaction_pattern": "The hourly script does the sweeping and drafting; the bot's LLM is involved twice: (1) the sweep runs one headless `openclaw agent` turn to classify + draft (inheriting the bot's LLM stack), and (2) the operator approves/edits/dismisses drafts conversationally and the bot executes the matching pm_inbox.py verb per its AGENTS.md guidance block. The bot never touches GitHub except through the app's CLI verbs.",
+    "user": "The pod operator / repo maintainer — receives draft summaries and approves public-facing actions."
+  },
+  "success_criteria": {
+    "observable_outcomes": [
+      "A new public issue is labeled and has a crosswalk entry within one sweep interval (1h) of being opened",
+      "Every public comment posted by the bot corresponds to a draft file in pm_inbox/drafts/sent/ (nothing posts without the approval trail)",
+      "A filed private issue carries the from-public label and a 'Public: <url>' provenance line the intake tooling can parse",
+      "PM_INBOX_RAN: emitted every hour; drafts summary message arrives only when there are drafts (no empty-noise messages)",
+      "External PR authors get a concierge reply explaining the snapshot-repo contribution model, and accepted patches get contributor.credit=true in the crosswalk"
+    ],
+    "failure_signals": [
+      "PM_INBOX_FAILED: tokens-missing-or-insecure — tokens file absent or not 0600",
+      "PM_INBOX_FAILED: auth — a PAT expired or was revoked",
+      "PM_INBOX_PARTIAL: llm-fallback — classification ran on keyword heuristics; drafts need operator origination",
+      "PM_INBOX_PARTIAL: rate-limited — GitHub API backoff engaged",
+      "No PM_INBOX_RAN: for >2 hours — scheduler unit not firing",
+      "A public comment exists with no matching drafts/sent/ record — the approval boundary was bypassed; treat as an incident"
+    ],
+    "quality_bar": {
+      "minimum": "New public items are labeled and crosswalked hourly, and the operator sees a draft for everything that needs a response.",
+      "excellent": "Reporters get kind, specific, correct responses within a day; the private tracker receives well-formed, deduplicated, provenance-linked issues the maintainer can dispatch without rework; contributors get credited at release."
+    }
+  },
+  "build_spec": "# PM Inbox — Build Specification (V1)\n\n## Overview\n\nBuild an hourly public-repo feedback PM for a maintainer bot. The app sweeps a\npublic GitHub repo's issues + PRs, classifies each new item, auto-applies the\nmatching label (the ONLY automatic public action at the default autonomy rung),\nmaintains a public-to-private crosswalk ledger, and turns everything else —\npublic replies, closes, and private issue filings — into DRAFTS delivered to\nthe operator over the bot's primary channel for approval. The operator approves\ndrafts conversationally; the bot executes the approved action via this app's CLI.\n\nThis is a scheduled script (not a persistent daemon): the scheduler fires it\nhourly; it sweeps, drafts, delivers, and exits. It must run unchanged on macOS\nand Linux pods (the target deployment is a Linux/systemd pod — never hardcode\n`/Users/...`; resolve the home dir via `pwd.getpwuid(os.getuid()).pw_dir`).\n\nTrust frame (load-bearing — restate in scripts' docstrings): the app NEVER\nwrites or merges code, never runs a publish, never deletes. GitHub access is\nvia fine-grained PATs whose scopes enforce this below the LLM: the public repo\ntoken has Issues RW + Pull requests/Contents read-only; the private repo token\nhas Issues RW only (no Contents). The app must degrade loudly, never widen scope.\n\n---\n\n## File Layout\n\n```\nscripts/\n  pm_inbox.py            <- main CLI: sweep | drafts | post | file | dismiss | status\n  pm-inbox-cron.sh       <- hourly trigger (calls pm_inbox.py sweep)\npm_inbox/\n  config.json            <- operator config (seeded at install from template vars)\n  crosswalk.json         <- public<->private ledger (schema below)\n  state.json             <- sweep watermark + backoff state\n  drafts/pending/        <- awaiting operator approval\n  drafts/sent/           <- posted/filed (audit trail)\n  drafts/dismissed/      <- operator declined\n  runs/                  <- per-sweep result files: YYYY-MM-DD-HHMM.json\n```\n\nAll paths relative to the bot's workspace root (`~/.openclaw/workspace/`).\n\n---\n\n## config.json (seeded at install; created with defaults if absent)\n\n```json\n{\n  \"public_repo\": \"{public_repo}\",\n  \"private_repo\": \"{private_repo}\",\n  \"tokens_path\": \"~/.openclaw/pm-inbox-github-tokens.json\",\n  \"autonomy_level\": \"R0\",\n  \"aspects\": [],\n  \"labels\": {\n    \"bug\": \"bug\", \"feature\": \"feature\", \"question\": \"question\",\n    \"support\": \"support\", \"spam-dupe\": \"spam\", \"duplicate\": \"duplicate\"\n  },\n  \"from_public_label\": \"from-public\",\n  \"max_items_per_sweep\": 30\n}\n```\n\n- `public_repo` (required) — `owner/repo` the app triages.\n- `private_repo` (optional, may be \"\") — `owner/repo` where triaged non-trivial\n  items are filed. When empty, the `file` verb and private-filing drafts are\n  disabled; everything else still works.\n- `autonomy_level` — `R0` (default) | `R1` | `R2`. See \"Autonomy gating\" below.\n- `aspects` — the operator's aspect-hint vocabulary for private filings\n  (e.g. `[\"apps\", \"deploy\", \"ui\"]`). The classifier may ONLY emit an aspect\n  from this list; empty list means no aspect-prefixed labels are ever minted.\n\n## Tokens file (never in the workspace, never logged)\n\n`tokens_path` (default `~/.openclaw/pm-inbox-github-tokens.json`, bot-owned,\nmode 0600) holds `{\"public\": \"github_pat_...\", \"private\": \"github_pat_...\"}`.\n`private` may be absent when `private_repo` is \"\". On missing/unreadable file\nor mode-not-0600: emit `PM_INBOX_FAILED: tokens-missing-or-insecure` and exit 1\n(refuse to run with a world-readable token). Never echo token values anywhere.\n\n---\n\n## GitHub REST client (stdlib urllib only — no gh, no pip packages)\n\nBase `https://api.github.com`; headers on every request:\n`Authorization: Bearer <token>`, `Accept: application/vnd.github+json`,\n`X-GitHub-Api-Version: 2022-11-28`, `User-Agent: evolve-pm-inbox`.\n\nEndpoints used (public token unless noted):\n\n- `GET /repos/{owner}/{repo}/issues?state=all&sort=updated&direction=desc&since=<watermark>&per_page=100`\n  — NOTE: this endpoint returns PRs too (a PR is an issue with a\n  `pull_request` key); that is exactly what the sweep wants. Follow `Link`\n  pagination, capped by `max_items_per_sweep`.\n- `POST /repos/{owner}/{repo}/issues/{n}/labels` `{\"labels\": [...]}` — auto-label.\n- `POST /repos/{owner}/{repo}/issues/{n}/comments` — ONLY from the `post` verb\n  (approved draft) or R1+ template ack. Works for PR conversations too.\n- `POST /repos/{owner}/{repo}/issues` (private token, private repo) — ONLY from\n  the `file` verb (approved draft) or R1+ auto-file.\n- `GET /repos/{owner}/{repo}/issues/{n}` (private token) — refresh crosswalked\n  private issue state (closed => fixed) for entries with a private twin.\n\nOn 403 with `x-ratelimit-remaining: 0`: write the reset time into\n`state.json.backoff_until`, emit `PM_INBOX_PARTIAL: rate-limited`, finish what\nneeds no API, exit 0 (the next hourly run resumes). On 401: emit\n`PM_INBOX_FAILED: auth` and exit 1. Timeouts 30s; one retry on 5xx.\n\n---\n\n## Sweep algorithm (`pm_inbox.py sweep`)\n\n1. Load config + tokens + state (`state.json.since` watermark, ISO-8601;\n   first run: now minus 7 days). Honor `backoff_until`.\n2. Fetch updated issues/PRs since the watermark. Skip items authored by the\n   bot's own token identity (`GET /user` once, cached in state.json).\n3. For each item with no crosswalk entry: classify (below), apply the label\n   for its class (plus `duplicate` when a duplicate), append a crosswalk entry\n   (`state: \"swept\"`), and create drafts per the autonomy gating table.\n4. For existing crosswalk entries that changed: record state transitions only\n   (e.g. public issue closed by reporter -> `state: \"dismissed\"` if we never\n   responded); refresh private-twin state for entries with `private` set\n   (closed private twin = fix pending release — kept for the release radar).\n5. Deliver: if any drafts were created (or a sweep failure needs eyes), send\n   ONE summary message to the operator (delivery section below) listing each\n   draft id, target, one-line context, and the proposed text (truncate each\n   draft body to 400 chars in the message; the full text lives in the draft\n   file and the operator can ask the bot to read it out).\n6. Advance the watermark to the newest `updated_at` seen; write the run result\n   file; emit `PM_INBOX_RAN: <counts>`.\n\nCrosswalk writes are atomic (write `crosswalk.json.tmp` in the same dir, then\n`os.replace`). Same for state.json and every draft file.\n\n### Classification — one headless agent turn (inherits the bot's LLM)\n\nRun ONE `openclaw agent` turn per sweep batching all new items (never one per\nitem): `openclaw agent --agent main --message=<prompt> --json` (the `--agent`\ntarget is REQUIRED — current OC errors `No target session selected` without\nit). `--json` wraps the reply in OC's envelope: parse stdout as JSON and read\nthe model text from `result.meta.finalAssistantVisibleText` (fallback\n`finalAssistantRawText`), THEN extract the JSON array from that text with cwd = the bot's own\nhome. The prompt carries, per item: number, kind (issue|pr), title, body\n(truncated 1500 chars), author, and the crosswalk's open-item titles for dedup\ncontext, plus the `aspects` list. Output contract (the prompt must demand\nEXACTLY this, no prose, no fences):\n\n```json\n[{\"number\": 12,\n  \"classification\": \"bug|feature|question|support|spam-dupe\",\n  \"duplicate_of\": null,\n  \"aspect\": null,\n  \"agent_able\": false,\n  \"proof\": null,\n  \"reply_draft\": \"...\",\n  \"private_title\": null,\n  \"private_body\": null}]\n```\n\n- `aspect` must be from config `aspects` or null (drop anything else).\n- `proof` — a falsifiable acceptance test, ONLY when the report contains\n  enough to state one; never invented. `agent_able` true requires `proof`.\n- `reply_draft` — the proposed public reply (ack / repro request / docs-grounded\n  answer for question-class / PR-concierge text for PRs). Kind by default:\n  thank the reporter by name, plain language, no internal jargon.\n- `private_title`/`private_body` — only for non-trivial bug/feature items:\n  title `[public#N] <restatement>`; body MUST begin with a provenance line\n  `Public: https://github.com/<public_repo>/issues/<N>` followed by reporter\n  handle + classification, then the substance; include a `Proof: <test>` line\n  when `proof` is set. (This exact shape is what the maintainer's intake\n  tooling parses — the `Public:` link line, the `Proof:` line, and the labels\n  below are load-bearing, not style.)\n\nParse failure or non-zero exit -> heuristic fallback: classify only\n(keywords: title starting \"how\"/\"?\"-heavy -> question; \"error\"/\"crash\"/\n\"fail\"/\"broken\"/traceback -> bug; \"feature\"/\"request\"/\"would be nice\" ->\nfeature; else support; near-identical title to an open crosswalk entry ->\nspam-dupe/duplicate). Fallback creates NO reply or filing drafts — it labels,\nrecords the crosswalk entry with `\"needs_operator\": true`, and the summary\nmessage tells the operator classification ran degraded\n(`PM_INBOX_PARTIAL: llm-fallback`).\n\n### External-PR concierge\n\nFor PR items the reply_draft follows the snapshot-repo contribution model: the\npublic repo is a per-release snapshot, PRs are not merged in place; thank the\ncontributor, ask for / link the corresponding issue, explain the patch is\nre-applied to the development repo with attribution and ships in the next\nrelease. Set `contributor.credit: true` on the crosswalk entry when the patch\nis accepted for re-apply (operator approves the concierge draft that says so),\nso release notes can credit them.\n\n### Autonomy gating (enforced in code, not in the prompt)\n\n| autonomy_level | automatic | drafted for approval |\n|---|---|---|\n| R0 | labels only | every public comment; every private filing |\n| R1 | + fixed-template ack comment; + private filings | substantive comments |\n| R2 | + docs-grounded question answers (must cite a shipped doc) | anything off-template |\n\nThe sweep NEVER closes a public item at any rung. Closing at release time is a\nseparate app's job (release-closeout / release-radar), NOT pm-inbox — do not\nbuild a close path into this app. Unknown `autonomy_level` -> treat as R0.\n\n### Private filing (`file` verb or R1+ auto)\n\n`POST /repos/<private_repo>/issues` with title/body from the draft and labels:\n`from-public` always; `<aspect>:from-public` when aspect set;\n`<aspect>:agent-able` (or bare `agent-able` when no aspect) only when the body\ncarries a `Proof:` line. On success update the crosswalk entry: `private`\nblock + `state: \"filed\"`. Labels that don't exist on the repo are created\nimplicitly by the API when the token can — if the API refuses, retry the\ncreate WITHOUT labels, keep the issue, and surface\n`PM_INBOX_PARTIAL: labels-missing` so the operator adds label definitions.\n\n---\n\n## Crosswalk file (`pm_inbox/crosswalk.json`, schema_version 1)\n\n```json\n{\"schema_version\": 1, \"updated_at\": \"...\", \"entries\": [\n  {\"public\": {\"repo\": \"...\", \"number\": 12, \"kind\": \"issue\", \"url\": \"...\",\n               \"title\": \"...\", \"author\": \"...\", \"opened_at\": \"...\"},\n   \"classification\": \"bug\",\n   \"labels_applied\": [\"bug\"],\n   \"state\": \"swept\",\n   \"duplicate_of\": null,\n   \"private\": null,\n   \"contributor\": {\"login\": \"...\", \"credit\": false},\n   \"first_response_at\": null,\n   \"release_closed_in\": null,\n   \"notes\": \"\"}]}\n```\n\n`state` in `swept | acked | filed | answered | duplicate | closed-at-release |\ndismissed`. One entry per public item keyed by (repo, number); `post` sets\n`first_response_at` on the first public comment; `file` fills `private`.\n\n## Draft files (`pm_inbox/drafts/pending/<draft_id>.json`)\n\n```json\n{\"draft_id\": \"d-YYYYMMDD-NNN\", \"created_at\": \"...\",\n \"kind\": \"public_comment|private_issue\",\n \"target\": {\"repo\": \"...\", \"number\": 12},\n \"title\": null, \"labels\": [], \"body\": \"...\",\n \"context\": \"one-line why\"}\n```\n\n`draft_id` is date + zero-padded counter, unique across the three subdirs.\n\n---\n\n## Operator approval loop — CLI verbs\n\n- `pm_inbox.py drafts` — list pending drafts (id, kind, target, context).\n- `pm_inbox.py post --draft <id> [--body-file <path>]` — post a\n  `public_comment` draft (optionally with operator-edited text), move it to\n  `sent/`, update the crosswalk (`acked`/`answered`), emit `PM_INBOX_POSTED: <id>`.\n- `pm_inbox.py file --draft <id> [--body-file <path>]` — create the private\n  issue from a `private_issue` draft, move to `sent/`, crosswalk -> `filed`,\n  emit `PM_INBOX_FILED: <id>`.\n- `pm_inbox.py dismiss --draft <id> --reason <text>` — move to `dismissed/`.\n- `pm_inbox.py status` — watermark age, pending-draft count, oldest pending,\n  rate-limit state.\n\nAll verbs are idempotent: a draft id not in `pending/` is a no-op with a clear\nmessage (guards double-approval).\n\n## AGENTS.md guidance for the bot\n\nAdd this block to the bot's AGENTS.md:\n\n```\n## PM Inbox\n\nHourly, a script sweeps the public repo and sends you draft replies/filings\nfor the operator to approve. When the operator says:\n- \"approve <draft-id>\" -> run: python3 scripts/pm_inbox.py post --draft <id>\n  (or `file --draft <id>` if the draft's kind is private_issue — check with\n  `drafts` first if unsure). Report the command's outcome verbatim.\n- \"edit <draft-id>: <new text>\" -> write the new text to a temp file and run\n  the same verb with --body-file <temp>.\n- \"dismiss <draft-id> [reason]\" -> python3 scripts/pm_inbox.py dismiss ...\n- \"pm status\" / \"any drafts?\" -> python3 scripts/pm_inbox.py status / drafts.\nNEVER post to GitHub except through these verbs. NEVER run the sweep's private\nfiling without an approved draft (the script enforces this too).\n```\n\n---\n\n## Delivery\n\nUse the canonical delivery pattern (docs/spec-gallery-delivery-convention-2026-06-11.md;\nreference implementation docs/reference/capabilities/template/scripts/example_script.py):\nresolve (channel, target) from the pod network.json — at the canonical shared\npath for the platform: `/var/lib/evolve/network.json` on Linux,\n`/Users/Shared/evolve/network.json` on macOS (try both, first readable wins) —\nreading `bots.<bot_id>.primary_user.external_ids` (channel priority: telegram,\nwhatsapp, signal, imessage, slack, discord, sms, matrix — intersected with the\nbot's own enabled channels from its openclaw.json `channels.<name>.enabled`,\nfalling back to the best recorded id when there is no overlap so the send\nfails loudly), then run `openclaw message send --channel=<ch> --target=<target>\n--message=<text> --json` as the bot user (binary: `shutil.which(\"openclaw\")`,\nfalling back to /opt/homebrew/bin, /usr/local/bin, /usr/bin; cwd = the\nexecuting account's pwd-database home, NOT $HOME; child PATH prefixed with the\nCLI's own bin dir; timeout 60s). Exit 0 = channel accepted. Never read gateway\nport/token; never POST to the gateway.\n\nSend-outcome honesty: a sweep with zero drafts and zero failures sends NOTHING\n(no noise) and still writes its run file. A sweep that created drafts writes the\nrun file ONLY after the summary message send succeeds; on send failure emit\n`PM_INBOX_FAILED: delivery-error` and exit 1 without the run file. No route\nconfigured -> log `DELIVERY_SKIPPED:` and exit 0 without the run file.\n\nNOTE — deliberate divergence from the delivery convention: the convention\n(docs/spec-gallery-delivery-convention-2026-06-11.md §\"Send-outcome semantics\")\ntreats a run file's existence as the claim \"the user got a delivery\". pm-inbox\nis NOT a user-facing scheduled-delivery app — most sweeps have nothing to say,\nand forcing a message every hour would be pure noise. So here the run file is\nRAN-evidence (the sweep executed), and a delivery claim ONLY when drafts were\ncreated (those runs gate the run file on send success). Because of this, do NOT\ndeclare `run_file` as delivery evidence in this app's instance manifest — the\ndelivery monitor would otherwise read a quiet-hour run file as a delivered\nwindow and mask a broken channel. Declare `delivery_contract: null`; the sweep\nsignals (`PM_INBOX_RAN:`) are the health evidence, not delivery windows.\n\n## Run result file (`pm_inbox/runs/YYYY-MM-DD-HHMM.json`)\n\n```json\n{\"ran_at\": \"...\", \"since\": \"...\", \"items_seen\": 4, \"new\": 2,\n \"labeled\": 2, \"drafts_created\": 3, \"drafts_pending_total\": 3,\n \"llm_mode\": \"agent|fallback\", \"partial\": [], \"message_sent\": true}\n```\n\n---\n\n## Signals\n\n`PM_INBOX_RAN:` `PM_INBOX_IDLE:` (backoff window) `PM_INBOX_PARTIAL: <reason>`\n`PM_INBOX_FAILED: <reason>` `PM_INBOX_POSTED:` `PM_INBOX_FILED:`\n`DELIVERY_SKIPPED:`\n\n---\n\n## Scheduling\n\nOne hourly scheduled action (see the manifest's `scheduled_actions[]`; label\n`ai.evolve.${bot_id}.pm-inbox`). Emit the structured entry and nothing else —\ndo NOT write plist or unit files from the build; the structured entry is the\nsingle source of truth and the forge materializer wires the platform's unit.\n\nDeployment reality: the forge app-cron materializer is currently launchd/macOS\nonly (it hardcodes /Users paths and raises off macOS). On a Linux pod the\nhourly trigger will NOT be wired until the platform's Linux systemd materializer\nfor gallery scheduled_actions lands. Until then the app is fully usable via\nmanual `pm_inbox.py sweep` and the operator-approval verbs — only the automatic\nhourly fire is pending. Do not compensate by hand-writing a systemd unit from\nthis build; that is the materializer's job, not the app's.\n\n---\n\n## Rendered files\n\n## FILE: scripts/pm-inbox-cron.sh\n```bash\n#!/bin/bash\n# pm-inbox-cron.sh -- PM Inbox hourly trigger (installed by the PM Inbox app).\n# Portable: resolves the workspace from this script's own location so the same\n# file works under /home/<bot> (Linux) and /Users/<bot> (macOS).\nSCRIPT_DIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\nLOGFILE=\"/tmp/$(id -un)-pm-inbox.log\"\n\npython3 \"$SCRIPT_DIR/pm_inbox.py\" sweep >> \"$LOGFILE\" 2>&1\n```\n\n---\n\n## Template variables\n\n| Variable | Required | Default | Description |\n|---|---|---|---|\n| `{public_repo}` | yes | — | owner/repo of the public repo to triage |\n| `{private_repo}` | no | \"\" | owner/repo of the private tracker for filings (\"\" disables filing) |\n\n---\n\n## Test sequence\n\nAfter building (all steps must exit 0):\n\n```bash\n# 1. Syntax check\npython3 -m py_compile scripts/pm_inbox.py\n\n# 2. Status before any run\npython3 scripts/pm_inbox.py status\n# Expected: no watermark yet, 0 pending drafts\n\n# 3. Tokens guard: with tokens file absent, sweep must refuse\npython3 scripts/pm_inbox.py sweep; test $? -ne 0\n# Expected: PM_INBOX_FAILED: tokens-missing-or-insecure\n\n# 4. Mode guard: create a 0644 tokens file, sweep must refuse\n#    (then chmod 600 and confirm it proceeds to the API phase)\n\n# 5. Draft verbs are idempotent\npython3 scripts/pm_inbox.py post --draft d-00000000-000\n# Expected: clear 'no such pending draft' message, exit 0\n\n# 6. Executable check\ntest -x scripts/pm-inbox-cron.sh && echo 'OK: cron script executable'\n```\n",
+  "example_triggers": [
+    "any drafts?",
+    "approve d-20260702-001",
+    "edit d-20260702-002: thanks — can you share the exact error output?",
+    "dismiss d-20260702-003 spam",
+    "pm status",
+    "what public issues came in this week?"
+  ],
+  "test_cases": [
+    {
+      "trigger": "approve d-20260702-001",
+      "expected": "Run python3 scripts/pm_inbox.py post --draft d-20260702-001 (or file, per the draft's kind), report the outcome, confirm the draft moved to drafts/sent/"
+    },
+    {
+      "trigger": "any drafts?",
+      "expected": "Run python3 scripts/pm_inbox.py drafts and relay the pending list (id, target, one-line context each)"
+    },
+    {
+      "trigger": "pm status",
+      "expected": "Run python3 scripts/pm_inbox.py status and relay watermark age, pending-draft count, and rate-limit state"
+    }
+  ],
+  "constraints": {
+    "safety": [
+      "Trust boundary is the PAT scopes: public repo issues RW + PRs/contents read-only; private tracker issues RW ONLY (no contents) — never widen scopes to work around an error",
+      "Labels are the only automatic public action at the default rung; every comment/close/filing is draft-first",
+      "Tokens live in a bot-owned 0600 file outside the workspace; never in config.json, logs, run files, or messages",
+      "No code writes, no merges, no publish, no deletes — at every autonomy rung",
+      "LLM access inherits the bot's stack via headless openclaw agent turns — no per-app credentials, no direct provider API calls"
+    ],
+    "dependencies": [
+      "messaging_channel (required) — draft summaries and approvals ride the operator conversation",
+      "pm_inbox_github_pats (required) — two fine-grained PATs (one per resource owner), stored 0600"
+    ],
+    "boundaries": [
+      "One crosswalk entry per public item; drafts reference entries, never duplicate them",
+      "The sweep never closes public items; closeout is a separate app's job",
+      "Private-repo surface is the issue tracker only — no PR/CI/dev-flow watching",
+      "Empty sweeps send no operator message (run files are the ran-evidence)"
+    ]
+  },
+  "scheduled_actions": [
+    {
+      "id": "pm-inbox-sweep",
+      "mechanism": "launchd",
+      "trigger": {
+        "kind": "launchd"
+      },
+      "install": {
+        "plist_label": "ai.evolve.${bot_id}.pm-inbox",
+        "command": "/bin/bash ${workspace}/apps/pm-inbox/scripts/pm-inbox-cron.sh",
+        "cwd": "${workspace}",
+        "schedule": {
+          "every_minutes": 60
+        },
+        "exec_policy": "inherit"
+      },
+      "summary": "Hourly public-repo sweep: classify, label, crosswalk, draft, deliver."
+    }
+  ],
+  "usage": {
+    "model": "scheduled",
+    "trigger_recognition": {
+      "pattern": "The hourly sweep runs itself. The bot acts when the operator responds to a draft summary (approve/edit/dismiss <draft-id>) or asks about the public inbox (status, pending drafts, what came in). All GitHub actions go through scripts/pm_inbox.py verbs.",
+      "hint_words": [
+        "approve",
+        "dismiss",
+        "draft",
+        "pm status",
+        "public issue",
+        "triage"
+      ],
+      "requires_keyword": false
+    },
+    "auto_capture": {
+      "enabled": true,
+      "sources": [
+        "hourly public-repo sweep"
+      ]
+    },
+    "how_to_use": "Don't trigger the sweep manually except to verify an install. When the operator approves a draft, run the matching pm_inbox.py verb (post for public_comment, file for private_issue) and report the command outcome verbatim. When they edit, pass the new text via --body-file. Never post to GitHub any other way.",
+    "bot_voice_examples": [
+      "3 new items this sweep — labeled 2 bugs and a question; 3 drafts pending: d-20260702-001 (reply to #12, repro request), d-20260702-002 (private filing for #12), d-20260702-003 (PR concierge for #14).",
+      "Posted the reply to #12 and moved d-20260702-001 to sent — first response logged.",
+      "Filed the tracker issue for #12 (private #3401) with from-public labels; crosswalk updated."
+    ]
+  },
+  "verification": [
+    {
+      "kind": "artifact",
+      "name": "main_script_compiles",
+      "path": "scripts/pm_inbox.py",
+      "checks": [
+        "exists",
+        "py_compiles"
+      ]
+    },
+    {
+      "kind": "artifact",
+      "name": "cron_wrapper",
+      "path": "scripts/pm-inbox-cron.sh",
+      "checks": [
+        "exists",
+        "owner_exec"
+      ]
+    },
+    {
+      "kind": "command",
+      "name": "cli_status",
+      "argv": [
+        "python3",
+        "scripts/pm_inbox.py",
+        "status"
+      ],
+      "expected_exit": 0,
+      "timeout_s": 30
+    },
+    {
+      "kind": "artifact",
+      "name": "state_valid_if_present",
+      "path": "pm_inbox/state.json",
+      "checks": [
+        "json_valid"
+      ],
+      "modes": [
+        "dry-run"
+      ]
+    }
+  ]
+}

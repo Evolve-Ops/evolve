@@ -1,0 +1,1784 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Evolve — Evolve your OpenClaw pod</title>
+  <meta name="description" content="Evolve helps manage a group of OpenClaw instances for individuals and SMBs who can install software and care about their data — but don't want to spend weekends managing AI infrastructure.">
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="favicon-16x16.png">
+  <link rel="manifest" href="site.webmanifest">
+  <link rel="shortcut icon" href="favicon.ico">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* ===== THEME TOKENS — dark is the brand default; light reaches parity
+       with the admin UI palette (docs/style-guide.md §13). Light applies two
+       ways: automatically via prefers-color-scheme when the visitor hasn't
+       chosen, and explicitly via [data-theme] set by the nav toggle. ===== */
+    :root {
+      --bg: #0d0f12;
+      --surface: #161a20;
+      --border: #232830;
+      /* Aligned to the admin UI's --accent in 2026-06 (was #7c6af7).
+         The two surfaces share the same brand purple — see
+         docs/style-guide.md §2 / §13 known-discrepancy note. */
+      --accent: #7C5CFF;
+      --accent-dim: rgba(124, 92, 255, 0.15);
+      --green: #3ddc84;
+      --gold: #d4a84b;
+      --cyan: #4ec9c5;
+      --text: #e2e6ed;
+      --muted: #7a8494;
+      --warn: #f5a623;
+      --warn-text: #c8a85a;       /* warn-callout body text — amber-tan on dark */
+      --nav-bg: rgba(13,15,18,0.92);
+      --code-bg: #0a0c0f;
+      --code-text: #a8b5c8;
+      --nascar-filter: brightness(0) invert(1);   /* mono brand logos → white */
+      --shadow-hero: 0 24px 64px rgba(0,0,0,0.5);
+      --shadow-hero-hover: 0 32px 80px rgba(0,0,0,0.6);
+    }
+
+    /* Light-theme palette — mirrors the admin UI's [data-theme="light"] tokens
+       in base.css so the two surfaces stay one color system. The values are
+       listed twice on purpose: once for the explicit toggle state, once inside
+       the prefers-color-scheme block for the OS-preference default. */
+    [data-theme="light"] {
+      --bg: #F4F6F9;
+      --surface: #FFFFFF;
+      --border: #D0D7E3;
+      --green: #16A34A;
+      --gold: #B7791F;
+      --cyan: #0284C7;
+      --text: #0D1117;
+      --muted: #4A5568;
+      --warn: #B45309;
+      --warn-text: #92400E;
+      --nav-bg: rgba(255,255,255,0.85);
+      --code-bg: #EEF1F6;
+      --code-text: #384150;
+      --nascar-filter: brightness(0);             /* mono brand logos → black */
+      --shadow-hero: 0 24px 64px rgba(15,23,42,0.15);
+      --shadow-hero-hover: 0 32px 80px rgba(15,23,42,0.22);
+    }
+
+    /* OS-preference default: light palette when the system asks for light AND
+       the visitor has not explicitly toggled (no [data-theme] attribute). A
+       toggled choice (data-theme="light" or "dark") always wins over this. */
+    @media (prefers-color-scheme: light) {
+      :root:not([data-theme]) {
+        --bg: #F4F6F9;
+        --surface: #FFFFFF;
+        --border: #D0D7E3;
+        --green: #16A34A;
+        --gold: #B7791F;
+        --cyan: #0284C7;
+        --text: #0D1117;
+        --muted: #4A5568;
+        --warn: #B45309;
+        --warn-text: #92400E;
+        --nav-bg: rgba(255,255,255,0.85);
+        --code-bg: #EEF1F6;
+        --code-text: #384150;
+        --nascar-filter: brightness(0);
+        --shadow-hero: 0 24px 64px rgba(15,23,42,0.15);
+        --shadow-hero-hover: 0 32px 80px rgba(15,23,42,0.22);
+      }
+    }
+
+    html { scroll-behavior: smooth; background: var(--bg); }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      font-size: 16px;
+      line-height: 1.6;
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* NAV */
+    nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1.25rem 2rem;
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      background: var(--nav-bg);
+      backdrop-filter: blur(8px);
+      z-index: 100;
+    }
+
+    .nav-logo {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      font-weight: 700;
+      font-size: 1.1rem;
+      color: var(--text);
+    }
+
+    .nav-logo svg { height: 28px; width: auto; }
+
+    .nav-links {
+      display: flex;
+      gap: 1.75rem;
+      font-size: 0.9rem;
+      color: var(--muted);
+    }
+
+    .nav-links a { color: var(--muted); }
+    .nav-links a:hover { color: var(--text); text-decoration: none; }
+
+    .nav-cta {
+      background: var(--accent);
+      color: #fff !important;
+      padding: 0.5rem 1.2rem;
+      border-radius: 6px;
+      font-size: 0.875rem;
+      font-weight: 600;
+    }
+
+    .nav-cta:hover { opacity: 0.88; text-decoration: none !important; }
+
+    /* THEME TOGGLE — flips the explicit [data-theme] override + persists it.
+       Shown icon = the theme you'll switch TO (sun in dark, moon in light). */
+    .theme-toggle {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      border-radius: 6px;
+      width: 34px;
+      height: 34px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: color 0.15s, border-color 0.15s;
+    }
+
+    .theme-toggle:hover { color: var(--text); border-color: var(--accent); }
+    .theme-toggle svg { width: 16px; height: 16px; display: block; }
+
+    /* Dark (default): show sun. Light (OS-auto or explicit): show moon. */
+    .theme-toggle .icon-moon { display: none; }
+    @media (prefers-color-scheme: light) {
+      :root:not([data-theme]) .theme-toggle .icon-sun { display: none; }
+      :root:not([data-theme]) .theme-toggle .icon-moon { display: block; }
+    }
+    [data-theme="light"] .theme-toggle .icon-sun { display: none; }
+    [data-theme="light"] .theme-toggle .icon-moon { display: block; }
+
+    /* HERO */
+    .hero {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 5rem 2rem 3rem;
+      text-align: center;
+    }
+
+    .beta-badge {
+      display: inline-block;
+      background: rgba(245,166,35,0.12);
+      color: var(--warn);
+      border: 1px solid rgba(245,166,35,0.3);
+      padding: 0.3rem 0.9rem;
+      border-radius: 100px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      margin-bottom: 1.5rem;
+    }
+
+    h1 {
+      font-size: clamp(2.2rem, 5.5vw, 3.6rem);
+      font-weight: 800;
+      line-height: 1.1;
+      letter-spacing: -0.025em;
+      margin-bottom: 1.25rem;
+    }
+
+    h1 span { color: var(--accent); }
+
+    .hero-sub {
+      font-size: 1.15rem;
+      color: var(--muted);
+      max-width: 640px;
+      margin: 0 auto 2rem;
+      line-height: 1.65;
+    }
+
+    .hero-three-ways {
+      max-width: 640px;
+      margin: 0 auto 2.5rem;
+      font-size: 0.95rem;
+      color: var(--muted);
+      line-height: 1.65;
+    }
+
+    .hero-three-ways strong { color: var(--text); font-weight: 600; }
+
+    .hero-actions {
+      display: flex;
+      gap: 1rem;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+      padding: 0.8rem 1.8rem;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .btn-primary:hover { opacity: 0.88; text-decoration: none; }
+
+    .btn-secondary {
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 0.8rem 1.8rem;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 500;
+    }
+
+    .btn-secondary:hover { border-color: var(--accent); text-decoration: none; }
+
+    /* WARN BANNER */
+    .warn-banner {
+      max-width: 860px;
+      margin: 3rem auto 0;
+      padding: 0 2rem;
+    }
+
+    .warn-inner {
+      background: rgba(245,166,35,0.07);
+      border: 1px solid rgba(245,166,35,0.25);
+      border-radius: 10px;
+      padding: 1.25rem 1.5rem;
+      font-size: 0.9rem;
+      color: var(--warn-text);
+      line-height: 1.6;
+    }
+
+    .warn-inner strong { color: var(--warn); }
+
+    /* SECTIONS */
+    section {
+      max-width: 1000px;
+      margin: 0 auto;
+      padding: 5rem 2rem;
+    }
+
+    .section-label {
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 0.75rem;
+    }
+
+    h2 {
+      font-size: clamp(1.6rem, 3vw, 2.2rem);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 0.75rem;
+    }
+
+    .section-sub {
+      color: var(--muted);
+      font-size: 1.05rem;
+      max-width: 640px;
+      margin-bottom: 3rem;
+      line-height: 1.65;
+    }
+
+    /* PAIN GRID — classes of issues */
+    .pain-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 1rem;
+    }
+
+    .pain-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.25rem 1.4rem;
+    }
+
+    .pain-card-title {
+      font-size: 0.95rem;
+      font-weight: 700;
+      margin-bottom: 0.4rem;
+      color: var(--text);
+    }
+
+    .pain-card-desc {
+      font-size: 0.875rem;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    /* HIERARCHY LAYERS */
+    .layer {
+      margin-bottom: 3.5rem;
+    }
+
+    .layer:last-child { margin-bottom: 0; }
+
+    .layer-head {
+      display: flex;
+      gap: 1rem;
+      align-items: baseline;
+      margin-bottom: 0.5rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .layer-num {
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--accent);
+      flex-shrink: 0;
+    }
+
+    .layer-title {
+      font-size: 1.3rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .layer-framing {
+      font-size: 0.95rem;
+      color: var(--muted);
+      line-height: 1.6;
+      margin-bottom: 1.25rem;
+    }
+
+    /* CAPABILITY TILES */
+    .cap-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 1rem;
+    }
+
+    .cap-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .cap-card:hover { border-color: rgba(124, 92, 255, 0.4); }
+
+    .cap-thumb {
+      display: block;
+      width: 100%;
+      height: auto;
+      border-bottom: 1px solid var(--border);
+      cursor: zoom-in;
+      opacity: 0.88;
+      transition: opacity 0.15s;
+    }
+
+    .cap-thumb:hover { opacity: 1; }
+
+    .cap-thumb-pending {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      aspect-ratio: 16/9;
+      background:
+        repeating-linear-gradient(
+          45deg,
+          rgba(124, 92, 255,0.04),
+          rgba(124, 92, 255,0.04) 10px,
+          rgba(124, 92, 255,0.08) 10px,
+          rgba(124, 92, 255,0.08) 20px
+        );
+      border-bottom: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 0.72rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      text-align: center;
+      padding: 0.5rem;
+    }
+
+    /* Logo placeholder for tiles representing concepts that don't have
+       a single canonical UI surface (Pod Conduct, evo, Continuity, MCP). */
+    .cap-thumb-logo {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      aspect-ratio: 16/9;
+      background: linear-gradient(135deg, rgba(124, 92, 255,0.06), rgba(124, 92, 255,0.02));
+      border-bottom: 1px solid var(--border);
+    }
+
+    .cap-thumb-logo svg {
+      width: 45%;
+      max-width: 160px;
+      height: auto;
+      color: var(--text);
+      opacity: 0.28;
+    }
+
+    .cap-body {
+      padding: 1rem 1.25rem 1.25rem;
+      flex: 1;
+    }
+
+    .cap-name {
+      font-size: 0.95rem;
+      font-weight: 700;
+      margin-bottom: 0.4rem;
+      color: var(--text);
+    }
+
+    .cap-desc {
+      font-size: 0.85rem;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    /* BETTER ENGINE FEATURE CARD */
+    .be-card {
+      background: var(--surface);
+      border: 1px solid var(--accent);
+      border-radius: 12px;
+      padding: 1.75rem 2rem;
+      margin-bottom: 1rem;
+      overflow: hidden;
+    }
+
+    .be-card img {
+      display: block;
+      width: calc(100% + 4rem);
+      margin: -1.75rem -2rem 1.5rem;
+      border-radius: 10px 10px 0 0;
+      border-bottom: 1px solid var(--accent);
+      cursor: zoom-in;
+      opacity: 0.9;
+      transition: opacity 0.15s;
+    }
+
+    .be-card img:hover { opacity: 1; }
+
+    .be-card .be-headline {
+      font-size: 1.05rem;
+      font-weight: 700;
+      margin-bottom: 0.6rem;
+      color: var(--text);
+    }
+
+    .be-card .be-body {
+      font-size: 0.9rem;
+      color: var(--muted);
+      line-height: 1.65;
+      margin-bottom: 1.25rem;
+    }
+
+    .be-card .be-modes {
+      display: flex;
+      gap: 2rem;
+      flex-wrap: wrap;
+    }
+
+    .be-card .be-mode-label {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 0.35rem;
+    }
+
+    .be-card .be-mode-text { font-size: 0.875rem; color: var(--text); }
+
+    code {
+      background: var(--code-bg);
+      padding: 0.1rem 0.4rem;
+      border-radius: 4px;
+      font-size: 0.85em;
+      color: var(--code-text);
+      font-family: "SF Mono", "Fira Mono", monospace;
+    }
+
+    /* EVO AT THE CENTER section */
+    .evo-lead {
+      font-size: 1.05rem;
+      color: var(--muted);
+      line-height: 1.65;
+      max-width: 760px;
+      margin-bottom: 2rem;
+    }
+
+    .evo-three {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 1.25rem;
+      margin-bottom: 2rem;
+    }
+
+    .evo-three-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      border-radius: 10px;
+      padding: 1.25rem 1.5rem;
+    }
+
+    .evo-three-card h4 {
+      font-size: 1rem;
+      font-weight: 700;
+      margin-bottom: 0.6rem;
+      color: var(--text);
+    }
+
+    .evo-three-card p {
+      font-size: 0.9rem;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .evo-tail {
+      background: linear-gradient(135deg, rgba(124, 92, 255,0.06), rgba(124, 92, 255,0.02));
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.25rem 1.5rem;
+      font-size: 0.95rem;
+      color: var(--muted);
+      line-height: 1.65;
+    }
+
+    .evo-tail strong { color: var(--text); }
+
+    /* FUN CALLOUT — Layer 7 */
+    .fun-callout {
+      background: linear-gradient(135deg, var(--surface), rgba(124, 92, 255,0.05));
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--gold);
+      border-radius: 12px;
+      padding: 1.75rem 2rem;
+    }
+
+    .fun-callout .fun-headline {
+      font-size: 1.1rem;
+      font-weight: 700;
+      margin-bottom: 0.75rem;
+      color: var(--text);
+    }
+
+    .fun-callout .fun-body {
+      font-size: 0.95rem;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+
+    .fun-callout .fun-body em { color: var(--text); font-style: normal; font-weight: 500; }
+
+    /* NASCAR — integration logos */
+    .nascar-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+      gap: 2rem 1.75rem;
+      align-items: center;
+      justify-items: center;
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 1.5rem 0 1rem;
+    }
+
+    .nascar-logo {
+      width: 44px;
+      height: 44px;
+      object-fit: contain;
+      opacity: 0.55;
+      transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+
+    /* IMG-based logos: mono brand marks tinted to the foreground via filter —
+       white on dark, black on light (token flips with the theme). */
+    img.nascar-logo {
+      filter: var(--nascar-filter);
+    }
+
+    /* Inline SVG logos: tint via fill — themes through --text. */
+    svg.nascar-logo {
+      fill: var(--text);
+    }
+
+    .nascar-logo:hover {
+      opacity: 1;
+      transform: scale(1.1);
+    }
+
+    .nascar-footer {
+      text-align: center;
+      font-size: 0.9rem;
+      color: var(--muted);
+      margin-top: 2rem;
+      line-height: 1.65;
+    }
+
+    /* AUDIENCE */
+    .audience-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+
+    .audience-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.25rem 1.5rem;
+    }
+
+    .audience-card.no { border-left: 3px solid #e05f5f; }
+    .audience-card.yes { border-left: 3px solid var(--green); }
+
+    .audience-card h4 {
+      font-size: 0.95rem;
+      font-weight: 700;
+      margin-bottom: 0.4rem;
+      color: var(--text);
+    }
+
+    .audience-card p {
+      font-size: 0.875rem;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    /* ARCH */
+    .arch-layers {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    .arch-layer {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.5rem 1.75rem;
+      background: var(--surface);
+      position: relative;
+    }
+
+    .arch-layer + .arch-layer { margin-top: 0.5rem; }
+
+    .arch-layer-num {
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 0.35rem;
+    }
+
+    .arch-layer-title {
+      font-weight: 700;
+      font-size: 1rem;
+      margin-bottom: 0.2rem;
+    }
+
+    .arch-layer-sub {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-bottom: 0.75rem;
+    }
+
+    .arch-layer-points {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+    }
+
+    .arch-layer-points li {
+      font-size: 0.875rem;
+      color: var(--muted);
+    }
+
+    .arch-layer-points li::before { content: "→ "; }
+
+    .arch-layer-1 { border-left: 3px solid var(--muted); }
+    .arch-layer-2 { border-left: 3px solid var(--accent); }
+    .arch-layer-3 { border-left: 3px solid var(--green); }
+
+    /* INSTALL */
+    .install-steps {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+
+    .install-step {
+      display: flex;
+      gap: 1.25rem;
+      align-items: flex-start;
+    }
+
+    .step-num {
+      background: var(--accent-dim);
+      color: var(--accent);
+      border-radius: 50%;
+      width: 28px;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.8rem;
+      font-weight: 700;
+      flex-shrink: 0;
+      margin-top: 0.2rem;
+    }
+
+    .step-body { flex: 1; }
+    .step-title { font-weight: 600; margin-bottom: 0.4rem; font-size: 0.95rem; }
+    .step-note { color: var(--muted); font-size: 0.875rem; }
+
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.25rem 1.5rem;
+      font-family: "SF Mono", "Fira Mono", monospace;
+      font-size: 0.82rem;
+      line-height: 1.65;
+      overflow-x: auto;
+      color: var(--code-text);
+      margin-top: 0.75rem;
+    }
+
+    pre code { background: transparent; padding: 0; }
+
+    /* REQ TABLE */
+    .req-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.25rem;
+    }
+
+    @media (max-width: 600px) { .req-grid { grid-template-columns: 1fr; } }
+
+    .req-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.25rem 1.5rem;
+    }
+
+    .req-card h4 {
+      font-size: 0.875rem;
+      font-weight: 700;
+      margin-bottom: 0.75rem;
+      color: var(--text);
+    }
+
+    .req-card ul {
+      list-style: none;
+      font-size: 0.875rem;
+      color: var(--muted);
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+
+    .req-card li::before { content: "→ "; color: var(--accent); }
+
+    /* FOOTER */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 2rem;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.875rem;
+    }
+
+    footer a { color: var(--muted); }
+    footer a:hover { color: var(--text); }
+
+    @media (max-width: 720px) {
+      .nav-links { gap: 1rem; font-size: 0.85rem; }
+    }
+
+    @media (max-width: 560px) {
+      .nav-links a:not(.nav-cta) { display: none; }
+    }
+
+    /* HERO SCREENSHOT */
+    .hero-screenshot {
+      max-width: 1000px;
+      margin: 3.5rem auto 0;
+      padding: 0 2rem;
+    }
+
+    .hero-screenshot img {
+      width: 100%;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow-hero);
+      cursor: zoom-in;
+      display: block;
+      transition: box-shadow 0.2s;
+    }
+
+    .hero-screenshot img:hover { box-shadow: var(--shadow-hero-hover); }
+
+    /* LIGHTBOX */
+    .lightbox {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(5,7,10,0.95);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+      cursor: zoom-out;
+    }
+
+    .lightbox.open { display: flex; }
+
+    .lightbox-inner {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
+      max-width: 1100px;
+      width: 100%;
+    }
+
+    .lightbox-inner img {
+      max-width: 100%;
+      max-height: 82vh;
+      border-radius: 10px;
+      box-shadow: 0 30px 70px rgba(0,0,0,0.7);
+      border: 1px solid var(--border);
+    }
+
+    .lightbox-label {
+      font-size: 0.85rem;
+      /* The scrim is a theme-independent dark overlay (see .lightbox), so the
+         caption is fixed light in both themes — var(--muted) would go dark and
+         vanish against the scrim in light mode. */
+      color: rgba(255,255,255,0.72);
+    }
+
+    /* ===== Early-access email capture ===== */
+    .early-access {
+      max-width: 720px;
+      margin: 4rem auto 0;
+      padding: 2.5rem 2rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      text-align: center;
+      box-shadow: var(--shadow-hero);
+    }
+    .early-access h2 { font-size: 1.8rem; margin-bottom: 0.75rem; }
+    .early-access .ea-lead {
+      color: var(--muted);
+      max-width: 520px;
+      margin: 0 auto 1.75rem;
+      line-height: 1.6;
+    }
+    .ea-form {
+      display: flex;
+      gap: 0.6rem;
+      max-width: 480px;
+      margin: 0 auto;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .ea-input {
+      flex: 1 1 260px;
+      min-width: 220px;
+      padding: 0.85rem 1rem;
+      font-size: 1rem;
+      color: var(--text);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      outline: none;
+      transition: border-color 0.2s ease;
+    }
+    .ea-input:focus { border-color: var(--accent); }
+    .ea-input::placeholder { color: var(--muted); }
+    .ea-btn {
+      flex: 0 0 auto;
+      padding: 0.85rem 1.5rem;
+      font-size: 1rem;
+      font-weight: 600;
+      color: #fff;
+      background: var(--accent);
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: opacity 0.2s ease;
+    }
+    .ea-btn:hover { opacity: 0.9; }
+    .ea-btn:disabled { opacity: 0.55; cursor: default; }
+    .ea-status {
+      min-height: 1.4rem;
+      margin-top: 1rem;
+      font-size: 0.95rem;
+    }
+    .ea-status.ok { color: var(--green); }
+    .ea-status.err { color: var(--warn); }
+    .ea-fineprint {
+      margin-top: 0.75rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+  </style>
+  <meta name="theme-color" content="#0d0f12" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#F4F6F9" media="(prefers-color-scheme: light)">
+  <script>
+    /* Apply a stored explicit theme choice before first paint (no FOUC).
+       With no stored choice we leave [data-theme] unset so the CSS
+       prefers-color-scheme default governs. */
+    (function () {
+      try {
+        var t = localStorage.getItem('evolve-theme');
+        if (t === 'light' || t === 'dark') {
+          document.documentElement.setAttribute('data-theme', t);
+        }
+      } catch (e) {}
+    })();
+  </script>
+</head>
+<body>
+
+<!-- Reusable Evolve wordmark for placeholder tiles -->
+<svg width="0" height="0" style="position:absolute" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+  <symbol id="evolve-wordmark" viewBox="0 0 310.68 176.43">
+    <g fill="currentColor">
+      <path d="M234.5,90.75c31.18,12.13,62.13,7.59,76.13-24.94-3.43,30.61-31.6,51.49-61.86,46.66-10.45-1.67-20.12-5.33-29.72-10.19-11.69-6.35-22.54-13.35-32.76-21.92l-38.31-32.14C123.28,27.48,99.47,8.93,68.09,0c27.34,3.09,56.16,19.63,78.53,35.24l18.34,12.8,37.66,25.86c10.07,6.91,20.52,12.43,31.88,16.85Z"/>
+      <path d="M247.04,114.24c-28.1-1.94-52.8-14.73-75.9-30.06l-37.88-27.12c-19.31-13.83-39.17-28.46-61.71-36.35C42.09,10.38,13.38,16.74.06,46.49,3.75,14.99,33.58-5.73,64.32,1.47c7.87,1.84,15.19,4.58,22.57,8.36,38.39,19.85,67.73,51.64,101.87,77.44,13.25,10.02,27.35,18.03,43.08,23.4l15.21,3.56Z"/>
+      <path d="M42.43,111.4c10.06,1.22,19.79,1.5,29.53-.2l-5.58-6.47c-6.48,2.68-13.21,4.61-20.42,4.5-22.22-.34-41.8-18.92-45.48-41.03,4.81,8.55,11.22,15.13,19.98,19.4,18.46,9,39.73,9.02,58.45.48,8.69-3.97,16.49-8.67,24.33-14.09l22.25-15.38,5.1,3.51-3.33,2.78,17.27,16.44,6.85-4.09,6.99,5.21c-19.35,12.46-38.61,22.46-60.55,28.51-17.45,4.81-38.44,6.39-55.39.45ZM124.56,87.17l4.48,3.94,11.91-7.3-17.1-16.4-12.02,8.47c.84.4,2.13.97,2.59,1.43l10.14,9.87ZM111.91,99.58l13.01-6.22-14.29-14.22-2.47-1.04-11.55,7.71c1.13.47,2.38.98,3.13,1.73l12.16,12.04ZM107.88,101.23l-12.31-12.46c-.72-.51-2.21-.81-2.9-.37l-9.15,5.79,10.35,11.98,14.01-4.93ZM89.76,107.23l-9.19-11-11.02,6.84c2.11,2.74,4.17,5.25,6.89,7.45l13.32-3.29Z"/>
+      <path d="M225.61,21.52l-5.73-10.75-14.01,6.04,8.35,12.28-3.25,2.55-8.89-12.86-13.27,7.36,11.05,13.92-3.23,2.69-11.78-14.37-12.49,8.2,13.18,14.43c-.64,1.14-1.99,2.14-3.41,2.58l-13.44-14.72-3.72,2.25-6.53-4.73,16.18-9.82c11.1-6.74,22.4-12.41,34.49-17.22,18.89-7.51,40.63-12.26,60.11-7.11l-2.71-.13c-9.8-.47-19.24.39-28.85,3.06l7.29,5.7c6.75-3.37,13.32-5.75,20.82-6.1,22.64-1.06,41.6,19.55,44.5,41.69-3.88-7.38-9.1-13.25-16.25-17.7-18.16-11.33-41.23-11.26-59.97-.89-7.81,4.32-14.81,9.13-21.76,14.72l-21.22,17.04-4.87-3.59,40.62-32.38,14.64-10.73-7.95-6.52-9.1,2.73c.6,4.04,2.51,7.09,4.99,10.69l-3.77,1.69Z"/>
+      <path d="M30.8,87.68c-12.51-3.7-24.56-12.68-29.84-24.46-1.06-2.79-1.23-5.38-.53-8.33C5.13,35.09,22.49,20.62,43.2,20.11c-18.68,7.13-31.33,24.03-27.01,44.18,1.74,9.44,6.9,16.97,14.61,23.38Z"/>
+      <path d="M310.68,54.62c-3.33,19.9-19.7,36.57-39.65,37.89,13.16-6.26,22.17-17.35,24.24-31.44,1.94-13.24-3.11-25.57-13.49-34.04,11.74,4.3,26.32,15.72,28.9,27.59Z"/>
+      <path d="M147.21,173.09c-8.83,4.6-19.5,4.4-28.01-.25-5.71-3.12-8.69-8.74-8.88-15.04-.23-7.5,3.69-13.76,10.61-16.85,7.93-3.53,17.5-3.64,25.3.2,6.95,3.42,10.73,10.04,10.1,17.63-.5,5.99-3.41,11.33-9.12,14.3ZM145.87,166.29c5.18-5.26,4.37-14.64-1.14-19.05-6.49-5.2-16.48-5.04-22.88.17-5.62,4.57-6.01,13.98-.76,19.03,6.61,6.36,18.14,6.59,24.78-.15Z"/>
+      <polygon points="294.3 159.55 270.67 159.58 270.61 170.41 296.41 170.42 296.35 175.66 263.76 175.62 263.76 139.21 296.06 139.16 296.03 144.38 270.66 144.4 270.66 154.5 294.29 154.5 294.3 159.55"/>
+      <polygon points="44.57 159.46 21.03 159.5 20.97 170.28 46.76 170.32 46.83 175.58 14.21 175.55 14.13 139.04 46.43 139.02 46.46 144.31 20.98 144.33 20.98 154.4 44.54 154.4 44.57 159.46"/>
+      <polygon points="242.66 139.3 250.13 139.2 231.18 175.54 223.83 175.57 204.43 139.31 212.02 139.18 227.46 169.02 242.66 139.3"/>
+      <polygon points="95.16 139.11 102.3 139.1 84.09 175.62 77.48 175.52 58.54 139.11 65.9 138.99 80.83 168.58 95.16 139.11"/>
+      <polygon points="201.22 170.83 201.31 175.63 170.95 175.6 170.98 139.23 177.84 139.23 177.79 170.85 201.22 170.83"/>
+    </g>
+  </symbol>
+</svg>
+
+<nav>
+  <div class="nav-logo">
+    <svg viewBox="0 0 310.68 176.43" style="height:28px;width:auto;display:block;" xmlns="http://www.w3.org/2000/svg"><defs><style>.nl{fill:currentColor}</style></defs><g><path class="nl" d="M234.5,90.75c31.18,12.13,62.13,7.59,76.13-24.94-3.43,30.61-31.6,51.49-61.86,46.66-10.45-1.67-20.12-5.33-29.72-10.19-11.69-6.35-22.54-13.35-32.76-21.92l-38.31-32.14C123.28,27.48,99.47,8.93,68.09,0c27.34,3.09,56.16,19.63,78.53,35.24l18.34,12.8,37.66,25.86c10.07,6.91,20.52,12.43,31.88,16.85Z"/><path class="nl" d="M247.04,114.24c-28.1-1.94-52.8-14.73-75.9-30.06l-37.88-27.12c-19.31-13.83-39.17-28.46-61.71-36.35C42.09,10.38,13.38,16.74.06,46.49,3.75,14.99,33.58-5.73,64.32,1.47c7.87,1.84,15.19,4.58,22.57,8.36,38.39,19.85,67.73,51.64,101.87,77.44,13.25,10.02,27.35,18.03,43.08,23.4l15.21,3.56Z"/><path class="nl" d="M42.43,111.4c10.06,1.22,19.79,1.5,29.53-.2l-5.58-6.47c-6.48,2.68-13.21,4.61-20.42,4.5-22.22-.34-41.8-18.92-45.48-41.03,4.81,8.55,11.22,15.13,19.98,19.4,18.46,9,39.73,9.02,58.45.48,8.69-3.97,16.49-8.67,24.33-14.09l22.25-15.38,5.1,3.51-3.33,2.78,17.27,16.44,6.85-4.09,6.99,5.21c-19.35,12.46-38.61,22.46-60.55,28.51-17.45,4.81-38.44,6.39-55.39.45ZM124.56,87.17l4.48,3.94,11.91-7.3-17.1-16.4-12.02,8.47c.84.4,2.13.97,2.59,1.43l10.14,9.87ZM111.91,99.58l13.01-6.22-14.29-14.22-2.47-1.04-11.55,7.71c1.13.47,2.38.98,3.13,1.73l12.16,12.04ZM107.88,101.23l-12.31-12.46c-.72-.51-2.21-.81-2.9-.37l-9.15,5.79,10.35,11.98,14.01-4.93ZM89.76,107.23l-9.19-11-11.02,6.84c2.11,2.74,4.17,5.25,6.89,7.45l13.32-3.29Z"/><path class="nl" d="M225.61,21.52l-5.73-10.75-14.01,6.04,8.35,12.28-3.25,2.55-8.89-12.86-13.27,7.36,11.05,13.92-3.23,2.69-11.78-14.37-12.49,8.2,13.18,14.43c-.64,1.14-1.99,2.14-3.41,2.58l-13.44-14.72-3.72,2.25-6.53-4.73,16.18-9.82c11.1-6.74,22.4-12.41,34.49-17.22,18.89-7.51,40.63-12.26,60.11-7.11l-2.71-.13c-9.8-.47-19.24.39-28.85,3.06l7.29,5.7c6.75-3.37,13.32-5.75,20.82-6.1,22.64-1.06,41.6,19.55,44.5,41.69-3.88-7.38-9.1-13.25-16.25-17.7-18.16-11.33-41.23-11.26-59.97-.89-7.81,4.32-14.81,9.13-21.76,14.72l-21.22,17.04-4.87-3.59,40.62-32.38,14.64-10.73-7.95-6.52-9.1,2.73c.6,4.04,2.51,7.09,4.99,10.69l-3.77,1.69Z"/><path class="nl" d="M30.8,87.68c-12.51-3.7-24.56-12.68-29.84-24.46-1.06-2.79-1.23-5.38-.53-8.33C5.13,35.09,22.49,20.62,43.2,20.11c-18.68,7.13-31.33,24.03-27.01,44.18,1.74,9.44,6.9,16.97,14.61,23.38Z"/><path class="nl" d="M310.68,54.62c-3.33,19.9-19.7,36.57-39.65,37.89,13.16-6.26,22.17-17.35,24.24-31.44,1.94-13.24-3.11-25.57-13.49-34.04,11.74,4.3,26.32,15.72,28.9,27.59Z"/><path class="nl" d="M147.21,173.09c-8.83,4.6-19.5,4.4-28.01-.25-5.71-3.12-8.69-8.74-8.88-15.04-.23-7.5,3.69-13.76,10.61-16.85,7.93-3.53,17.5-3.64,25.3.2,6.95,3.42,10.73,10.04,10.1,17.63-.5,5.99-3.41,11.33-9.12,14.3ZM145.87,166.29c5.18-5.26,4.37-14.64-1.14-19.05-6.49-5.2-16.48-5.04-22.88.17-5.62,4.57-6.01,13.98-.76,19.03,6.61,6.36,18.14,6.59,24.78-.15Z"/><polygon class="nl" points="294.3 159.55 270.67 159.58 270.61 170.41 296.41 170.42 296.35 175.66 263.76 175.62 263.76 139.21 296.06 139.16 296.03 144.38 270.66 144.4 270.66 154.5 294.29 154.5 294.3 159.55"/><polygon class="nl" points="44.57 159.46 21.03 159.5 20.97 170.28 46.76 170.32 46.83 175.58 14.21 175.55 14.13 139.04 46.43 139.02 46.46 144.31 20.98 144.33 20.98 154.4 44.54 154.4 44.57 159.46"/><polygon class="nl" points="242.66 139.3 250.13 139.2 231.18 175.54 223.83 175.57 204.43 139.31 212.02 139.18 227.46 169.02 242.66 139.3"/><polygon class="nl" points="95.16 139.11 102.3 139.1 84.09 175.62 77.48 175.52 58.54 139.11 65.9 138.99 80.83 168.58 95.16 139.11"/><polygon class="nl" points="201.22 170.83 201.31 175.63 170.95 175.6 170.98 139.23 177.84 139.23 177.79 170.85 201.22 170.83"/></g></svg>
+  </div>
+  <div class="nav-links">
+    <a href="#pain">Problem</a>
+    <a href="#evo">Evo</a>
+    <a href="#layers">Capabilities</a>
+    <a href="#integrations">Integrations</a>
+    <a href="#audience">Who it's for</a>
+    <a href="#install">Install</a>
+    <a href="https://github.com/evolve-ops/evolve" class="nav-cta">GitHub →</a>
+    <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle light and dark theme" title="Toggle theme">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</nav>
+
+<div class="hero">
+  <div class="beta-badge">Alpha · macOS · Linux (Ubuntu)</div>
+  <h1>Evolve your <span>OpenClaw</span> pod.</h1>
+  <p class="hero-sub">
+    OpenClaw is powerful but can be unwieldy. Evolve helps manage a group (aka pod) of OpenClaw instances for individuals and SMBs who can install software and care about their data — but don't want to spend weekends managing AI infrastructure.
+  </p>
+  <p class="hero-three-ways">
+    At the center is <strong>evo</strong> — an OpenClaw bot that knows your pod end-to-end and resolves things in conversation. Underneath is a full dashboard with real depth — usage, security, applications, self-improvement suggestions — for when you want to dig in. Chat handles the common path; the dashboard is there when you want detail.
+  </p>
+  <div class="hero-actions">
+    <a href="#early-access" class="btn-primary">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M4 4h16v16H4z"/><polyline points="4 6 12 13 20 6"/></svg>
+      Request early access
+    </a>
+    <a href="#layers" class="btn-secondary">See how it works</a>
+  </div>
+</div>
+
+<div class="hero-screenshot">
+  <img src="screenshots/evo-screen-chat.png" alt="Chat with evo" loading="lazy" onclick="openLightbox('screenshots/evo-screen-chat.png','Chat with evo')">
+</div>
+
+<!-- EARLY ACCESS -->
+<section id="early-access" class="early-access">
+  <div class="section-label">Early access</div>
+  <h2>Get early access to the code</h2>
+  <p class="ea-lead">
+    Evolve is opening up soon. Leave your email and we'll send you access the moment
+    the code goes public — plus a hand with getting your first pod running.
+  </p>
+  <form id="ea-form" class="ea-form" novalidate>
+    <input id="ea-email" class="ea-input" type="email" name="email" required
+           autocomplete="email" placeholder="you@example.com" aria-label="Email address">
+    <button id="ea-submit" class="ea-btn" type="submit">Request access</button>
+  </form>
+  <div id="ea-status" class="ea-status" role="status" aria-live="polite"></div>
+  <div class="ea-fineprint">No spam. Just one email when access opens.</div>
+</section>
+
+<!-- THE PROBLEM -->
+<section id="pain">
+  <div class="section-label">The problem</div>
+  <h2>Running OpenClaw isn't the hard part — running it well is.</h2>
+  <p class="section-sub">
+    These are the issues we hear about most often from people running OpenClaw bots. This is what Evolve is built to solve.
+  </p>
+
+  <div class="pain-grid">
+    <div class="pain-card">
+      <div class="pain-card-title">Silent failure</div>
+      <div class="pain-card-desc">Things stop working with no explanation — an app, an integration, a scheduled job. You only find out when something downstream breaks.</div>
+    </div>
+    <div class="pain-card">
+      <div class="pain-card-title">Phantom success</div>
+      <div class="pain-card-desc">Worse: the bot reports green when nothing actually ran. Trust erodes silently — and you don't know it's gone until something matters.</div>
+    </div>
+    <div class="pain-card">
+      <div class="pain-card-title">Security</div>
+      <div class="pain-card-desc">If you aren't vigilant, bad things can happen.</div>
+    </div>
+    <div class="pain-card">
+      <div class="pain-card-title">Cost</div>
+      <div class="pain-card-desc">Tokens add up fast if nobody's watching.</div>
+    </div>
+    <div class="pain-card">
+      <div class="pain-card-title">Over-autonomy</div>
+      <div class="pain-card-desc">You asked the bot to summarize emails. It also archived three, drafted a reply, and put something on your calendar. AI agents don't know when to stop.</div>
+    </div>
+    <div class="pain-card">
+      <div class="pain-card-title">Privacy</div>
+      <div class="pain-card-desc">Your bot sees email, calendar, files, conversations. Where does that data live? Most assistants pipe it through someone else's cloud.</div>
+    </div>
+    <div class="pain-card">
+      <div class="pain-card-title">Statelessness</div>
+      <div class="pain-card-desc">Bots are prompt/response by nature. They often promise things they won't do.</div>
+    </div>
+    <div class="pain-card">
+      <div class="pain-card-title">Integrations</div>
+      <div class="pain-card-desc">Gmail, Slack, Calendar, GitHub — every one a little tricky to set up and keep working.</div>
+    </div>
+    <div class="pain-card">
+      <div class="pain-card-title">Sysadmin</div>
+      <div class="pain-card-desc">Keeping bots current, rotating keys, watching liveness — a job by itself.</div>
+    </div>
+    <div class="pain-card">
+      <div class="pain-card-title">Applications</div>
+      <div class="pain-card-desc">Making an "app" is easy. Making a good one, improving it over time, coordinating many — much harder.</div>
+    </div>
+    <div class="pain-card">
+      <div class="pain-card-title">Self-improvement</div>
+      <div class="pain-card-desc">A bot can update its own notes. Real adaptation doesn't happen by itself.</div>
+    </div>
+    <div class="pain-card">
+      <div class="pain-card-title">Fleet management</div>
+      <div class="pain-card-desc">The above is plenty for one bot. With several, it's overwhelming.</div>
+    </div>
+  </div>
+</section>
+
+<!-- EVO AT THE CENTER -->
+<section id="evo">
+  <div class="section-label">The shape of the experience</div>
+  <h2>Evo at the center.</h2>
+  <p class="evo-lead">
+    Evo is an OpenClaw bot that knows your pod end-to-end. Talk to evo and it resolves things — finds the suggestion, applies it, verifies, reports. The dashboard is still real and substantial underneath: usage graphs, credentials, applications, security audits, self-improvement suggestions. Chat for the common path; dig into the dashboard when you want detail.
+  </p>
+
+  <div class="evo-three">
+    <div class="evo-three-card">
+      <h4>The chat is the home page</h4>
+      <p>Open the admin UI and the first thing you see is evo's short report on the state of things, plus a conversation thread to address any of it. Say <em>"snooze every team_bot_a alert until tomorrow"</em> or <em>"fix the cron caps issue"</em> — evo finds the matching change, applies it, verifies, and reports done.</p>
+    </div>
+    <div class="evo-three-card">
+      <h4>A panel on every page</h4>
+      <p>Wherever you are in the dashboard, evo is on the right with the context of that page. Open Alerts and ask <em>"why is this firing?"</em> — evo sees the same signals you see. Switch pages and the conversation context switches with you; each page keeps its own thread.</p>
+    </div>
+    <div class="evo-three-card">
+      <h4>Same brain everywhere</h4>
+      <p>Chat in the dashboard, DM evo on Telegram, or use the <code>evo</code> keyword from any bot's thread on Signal, iMessage, Slack, or Discord. One bot, one set of tools, one long-term memory. Improvements to evo's instructions land everywhere at once.</p>
+    </div>
+  </div>
+
+  <div class="evo-tail">
+    <strong>It actually resolves things.</strong> The old workflow was: an engine generates suggestions, they queue up on a Recommendations page, you click through them. The new workflow is: you describe the problem to evo, evo finds the matching suggestion (or stages one), applies it end-to-end, verifies, and reports. The Recommendations page is still there — useful for audit and triage — but most of the time you don't need it.
+  </div>
+</section>
+
+<!-- WHAT EVOLVE DOES -->
+<section id="layers">
+  <div class="section-label">What Evolve does</div>
+  <h2>The Evolve hierarchy.</h2>
+  <p class="section-sub">
+    Evolve helps you run your OpenClaw pod from the ground up.
+  </p>
+
+  <!-- LAYER 1 — BUILD -->
+  <div class="layer">
+    <div class="layer-head">
+      <span class="layer-num">Layer 1</span>
+      <span class="layer-title">Build them</span>
+    </div>
+    <p class="layer-framing">
+      Take a bare Mac — or an Ubuntu VPS — to a running pod in one pass. The setup wizard creates the service user, installs OpenClaw, deploys the plugin, wires the scheduled jobs, and walks you through your first bot.
+    </p>
+    <div class="cap-grid">
+      <div class="cap-card">
+        <img class="cap-thumb" src="screenshots/evo-screen-setupwizard.png" alt="Setup wizard" loading="lazy" onclick="openLightbox('screenshots/evo-screen-setupwizard.png','Setup wizard')">
+        <div class="cap-body">
+          <div class="cap-name">One-command setup</div>
+          <div class="cap-desc"><code>evolve-admin setup --fresh</code> handles everything — service user, OpenClaw install, plugin, channel tokens, launchd jobs. About 30 minutes when you have your keys ready.</div>
+        </div>
+      </div>
+      <div class="cap-card">
+        <img class="cap-thumb" src="screenshots/evo-screen-addbot.png" alt="Add a new bot" loading="lazy" onclick="openLightbox('screenshots/evo-screen-addbot.png','Add a new bot')">
+        <div class="cap-body">
+          <div class="cap-name">Add a new bot</div>
+          <div class="cap-desc">Spin up a fresh bot for a project, a family member, or a client engagement in five minutes. Compartmentalized by default — each bot gets its own OS user account, its own workspace, its own credentials.</div>
+        </div>
+      </div>
+      <div class="cap-card">
+        <img class="cap-thumb" src="screenshots/evo-screen-safeupgrade.png" alt="Safe OC upgrade" loading="lazy" onclick="openLightbox('screenshots/evo-screen-safeupgrade.png','Safe OC upgrade')">
+        <div class="cap-body">
+          <div class="cap-name">Safe OC upgrades</div>
+          <div class="cap-desc">When OpenClaw ships a new release, the safe-upgrade preflight checks compatibility, captures rollback state, and applies the update across the pod — without you having to baby it.</div>
+        </div>
+      </div>
+      <div class="cap-card">
+        <img class="cap-thumb" src="screenshots/evo-screen-users.png" alt="Users &amp; pairing" loading="lazy" onclick="openLightbox('screenshots/evo-screen-users.png','Users &amp; pairing')">
+        <div class="cap-body">
+          <div class="cap-name">Users &amp; pairing</div>
+          <div class="cap-desc">Pod admins, self-claim passphrases, per-bot owners, and paired-user management per channel — all in the admin UI. Approve, reject, or disconnect users with a click. Pod-admin <code>/start</code> requests auto-approve so you skip the code round-trip. Single-user ↔ multi-user toggle per bot.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LAYER 2 — KEEP ALIVE -->
+  <div class="layer">
+    <div class="layer-head">
+      <span class="layer-num">Layer 2</span>
+      <span class="layer-title">Keep them alive</span>
+    </div>
+    <p class="layer-framing">
+      Health monitoring, auto-healing, and version management — so a downed gateway, a stale plugin, or an OpenClaw upgrade doesn't quietly take a bot offline.
+    </p>
+    <div class="cap-grid">
+      <div class="cap-card">
+        <img class="cap-thumb" src="screenshots/evo-screen-maintenancestatus.png" alt="Health monitoring" loading="lazy" onclick="openLightbox('screenshots/evo-screen-maintenancestatus.png','Health monitoring')">
+        <div class="cap-body">
+          <div class="cap-name">Health monitoring</div>
+          <div class="cap-desc">Every gateway, every channel, every API key, every OAuth token — health at a glance. Surface what's running, what's degraded, what needs rotation.</div>
+        </div>
+      </div>
+      <div class="cap-card">
+        <img class="cap-thumb" src="screenshots/evo-screen-maintenance.png" alt="Maintenance" loading="lazy" onclick="openLightbox('screenshots/evo-screen-maintenance.png','Maintenance')">
+        <div class="cap-body">
+          <div class="cap-name">Maintenance</div>
+          <div class="cap-desc">Active alerts, drift detection, the heal daemon's restart history, daemon status. The reactive verb: <em>remediate</em>. Rollback now lives on the Backup page.</div>
+        </div>
+      </div>
+      <div class="cap-card">
+        <img class="cap-thumb" src="screenshots/evo-screen-backup.png" alt="Backup &amp; recovery" loading="lazy" onclick="openLightbox('screenshots/evo-screen-backup.png','Backup &amp; recovery')">
+        <div class="cap-body">
+          <div class="cap-name">Backup &amp; recovery</div>
+          <div class="cap-desc">Cloud (private GitHub per bot — size estimate, classification audit, auto-prune), Local (Time Machine with exclusion sync), Data (per-bot default tier + per-app overrides for what's eligible), Recovery (restore from latest backup or run a host-swap flow). The vault key for stored credentials is pod-wide — admin and evo can both read it after a one-time migration on first read, so a separated-user upgrade doesn't strand secrets.</div>
+        </div>
+      </div>
+      <div class="cap-card">
+        <img class="cap-thumb" src="screenshots/evo-screen-alerts.png" alt="Alerts &amp; Reports" loading="lazy" onclick="openLightbox('screenshots/evo-screen-alerts.png','Alerts &amp; Reports')">
+        <div class="cap-body">
+          <div class="cap-name">Alerts &amp; Reports</div>
+          <div class="cap-desc">System-driven alerts on the Maintenance page; user-configured digests (daily cost, weekly review, integration health) on the Reports page. Proposals get their own top-level subtab under Reports so improvements and incidents don't share a queue. Subscribe to what matters.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LAYER 3 — SAFE & AFFORDABLE -->
+  <div class="layer">
+    <div class="layer-head">
+      <span class="layer-num">Layer 3</span>
+      <span class="layer-title">Keep them safe and affordable</span>
+    </div>
+    <p class="layer-framing">
+      Vigilant by default, friendly by design. Security audits and cost controls run in the background, surface plain-language findings, and gate every behavior change through a signed approval pipeline.
+    </p>
+    <div class="cap-grid">
+      <div class="cap-card">
+        <img class="cap-thumb" src="screenshots/evo-screen-security.png" alt="Security audit" loading="lazy" onclick="openLightbox('screenshots/evo-screen-security.png','Security audit')">
+        <div class="cap-body">
+          <div class="cap-name">Security audit</div>
+          <div class="cap-desc">Every 15 minutes, eight categories of pod drift get checked — config posture, integrity hashes, plugin posture (now with install-provenance scoring), content scans, and more. An <em>Intentional Deviations</em> page lets you mark a setting as deliberate so generators stop fighting your upstream choices. Findings surface as plain-language signals.</div>
+        </div>
+      </div>
+      <div class="cap-card">
+        <img class="cap-thumb" src="screenshots/evo-screen-usage.png" alt="Usage tracking" loading="lazy" onclick="openLightbox('screenshots/evo-screen-usage.png','Usage tracking')">
+        <div class="cap-body">
+          <div class="cap-name">Usage tracking</div>
+          <div class="cap-desc">Daily and monthly spend per bot, per model, per session class. Forecasts, anomaly detection, per-bot drill-downs — so you can see <em>why</em> a number moved.</div>
+        </div>
+      </div>
+      <div class="cap-card">
+        <img class="cap-thumb" src="screenshots/evo-screen-cost.png" alt="Cost Optimization" loading="lazy" onclick="openLightbox('screenshots/evo-screen-cost.png','Cost Optimization')">
+        <div class="cap-body">
+          <div class="cap-name">Cost Optimization</div>
+          <div class="cap-desc">One canonical Cost &amp; Caps matrix per bot — and a Pod tab for defaults. A graduated remediation ladder picks the right response by severity: <code>warn</code> alerts you, <code>downgrade</code> drops the session tier and pauses non-critical crons, <code>hard</code> trips an L1 breaker that refuses gateway calls. Caps roll at midnight in the pod's local timezone. A behavioral Cost Efficiency Score grades the routing choices each bot is making.</div>
+        </div>
+      </div>
+      <div class="cap-card">
+        <img class="cap-thumb" src="screenshots/evo-screen-modeleconomics.png" alt="Model Economics" loading="lazy" onclick="openLightbox('screenshots/evo-screen-modeleconomics.png','Model Economics')">
+        <div class="cap-body">
+          <div class="cap-name">Model Economics</div>
+          <div class="cap-desc">A pod-wide, model-centric cost leaderboard — one bar per model across every bot, sortable by <code>$/turn</code>, effective cost per 1k tokens (cache-aware), spend, or share. Filter by provider, pricing band, bot, or audience. The transpose of per-bot usage — built for tuning model <em>choice</em> by comparing within a band or across providers.</div>
+        </div>
+      </div>
+      <div class="cap-card">
+        <img class="cap-thumb" src="screenshots/evo-screen-aioptimization.png" alt="AI Optimization" loading="lazy" onclick="openLightbox('screenshots/evo-screen-aioptimization.png','AI Optimization')">
+        <div class="cap-body">
+          <div class="cap-name">AI Optimization</div>
+          <div class="cap-desc">Per-bot default-tier picker (<code>fast</code> / <code>standard</code> / <code>power</code>) feeds a hierarchical routing cascade: classifier → operator default → per-user override. Maintenance sessions go to Haiku; productive sessions stay on Sonnet. Users can set their own default per bot via <code>evo tier</code> in any thread — it persists.</div>
+        </div>
+      </div>
+      <div class="cap-card">
+        <img class="cap-thumb" src="screenshots/evo-screen-sessioncharts.png" alt="Session analysis" loading="lazy" onclick="openLightbox('screenshots/evo-screen-sessioncharts.png','Session analysis')">
+        <div class="cap-body">
+          <div class="cap-name">Session analysis</div>
+          <div class="cap-desc">Every turn classified — productive, maintenance, or ambiguous. Daily metrics aggregated per bot. The productive-vs-maintenance ratio feeds the cost-per-useful-turn metric, and maintenance sessions auto-route to cheap models.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LAYER 4 — USEFUL -->
+  <div class="layer">
+    <div class="layer-head">
+      <span class="layer-num">Layer 4</span>
+      <span class="layer-title">Make them useful</span>
+    </div>
+    <p class="layer-framing">
+      A bot that can't reach your calendar, email, or notes is a toy. Evolve gives you the capability surface — installable skills, configurable plugins, and the applications that combine them into something actually useful.
+    </p>
+    <div class="cap-grid">
+      <div class="cap-card">
+        <img class="cap-thumb" src="screenshots/evo-screen-skills.png" alt="Skills catalog" loading="lazy" onclick="openLightbox('screenshots/evo-screen-skills.png','Skills catalog')">
+        <div class="cap-body">
+          <div class="cap-name">Skills catalog</div>
+          <div class="cap-desc">Installable skills spanning messaging, productivity, dev, home, and creative work — Gmail, Calendar, Google Workspace (suite via vetted MCP — read + write), Slack, Discord, Telegram, iMessage, Obsidian, Notion, Linear, Home Assistant, AutoCAD, Runway, Zoom, and more. Install once; any bot can use it. Filesystem-shape skills (iMessage, Obsidian) run entirely on your machine — no cloud roundtrip. New MCP-backed catalog entries land via a bundled-plugin pattern so adding a hosted service stays a single registry file.</div>
+        </div>
+      </div>
+      <div class="cap-card">
+        <img class="cap-thumb" src="screenshots/evo-screen-applications.png" alt="Installed applications" loading="lazy" onclick="openLightbox('screenshots/evo-screen-applications.png','Installed applications')">
+        <div class="cap-body">
+          <div class="cap-name">Installed applications</div>
+          <div class="cap-desc">Each app is a contract: the goal, the skills it depends on, the tests that prove it works, and a satisfaction score. The same app on two bots produces two different implementations — because the contract is the goal, not the code.</div>
+        </div>
+      </div>
+      <div class="cap-card">
+        <img class="cap-thumb" src="screenshots/evo-screen-appcoherence.png" alt="App Coherence &amp; Reconciliation" loading="lazy" onclick="openLightbox('screenshots/evo-screen-appcoherence.png','App Coherence &amp; Reconciliation')">
+        <div class="cap-body">
+          <div class="cap-name">App Coherence &amp; Reconciliation</div>
+          <div class="cap-desc">Manifests are typed and provenance-tracked: each field is either <em>authored</em> (a contract you wrote) or <em>observed</em> (something the scanner found). Three checks run before a manifest deploys — <em>reconciliation</em> (does what's on disk match the contract?), <em>coherence</em> (do the manifest's own claims hang together?), and the existing Tier 3 audit. A pre-deploy gate blocks anything that fails the contract; observational drift updates silently. Ask evo to <code>app-changes</code> or <code>app-scan</code> and it does the rest.</div>
+        </div>
+      </div>
+      <div class="cap-card">
+        <div class="cap-thumb-logo" aria-hidden="true"><svg viewBox="0 0 310.68 176.43"><use href="#evolve-wordmark"/></svg></div>
+        <div class="cap-body">
+          <div class="cap-name">Pod Conduct</div>
+          <div class="cap-desc">A shared behavioral contract — honesty about state, no empty commitments, privacy and data handling, scope awareness — injected into every bot's session context. Universal floor; per-bot personality on top. Amendments go through human approval.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LAYER 5 — MAKE IT BETTER -->
+  <div class="layer">
+    <div class="layer-head">
+      <span class="layer-num">Layer 5</span>
+      <span class="layer-title">Make it better</span>
+    </div>
+    <p class="layer-framing">
+      The self-improvement layer. A portfolio of specialized coaches watches your pod and proposes specific, falsifiable improvements; evo resolves them in chat end-to-end. The Continuity Engine closes the statelessness gap. The Gallery and Forge let you grow the pod's capabilities deliberately. The approval pipeline is what makes all of this safe — RSI applied to applications, not raw prompts, with a human in the loop on every change.
+    </p>
+
+    <div class="be-card">
+      <img src="screenshots/evo-screen-selfimprovement.png" alt="The Better Engine" loading="lazy" onclick="openLightbox('screenshots/evo-screen-selfimprovement.png','The Better Engine')">
+      <div class="be-headline">Resolves things, doesn't just suggest them.</div>
+      <div class="be-body">
+        Coaches watch how your pod is doing — substrate health, cost, security, application quality, voice fit. When something can be better, a coach proposes a specific change with a falsifiable claim (e.g. <em>"this reduces gateway restarts ≥30% over 7 days"</em>) and a revert plan. A verify check grades the outcome at the claim's horizon and adjusts each coach's authority by results. New cross-bot coaches (<em>engagement_amplifier</em>, <em>pod_capability_lift</em>) surface patterns that only show up across the fleet; an anti-domain layer lets you mark a topic <em>out of scope</em> so coaches stop pitching it. The suggestion queue is <em>inventory</em>; evo is the <em>resolver</em>. Describe the problem in chat — evo finds the matching suggestion, applies it, verifies, reports. You approve every change before it ships.
+      </div>
+      <div class="be-modes">
+        <div>
+          <div class="be-mode-label">Chat with evo</div>
+          <div class="be-mode-text"><em>"fix the cron caps issue"</em> → evo finds, applies, verifies, reports.</div>
+        </div>
+        <div>
+          <div class="be-mode-label">Dashboard, when you want to dig in</div>
+          <div class="be-mode-text">The Recommendations page lists every suggestion with full audit trail.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="cap-grid" style="margin-top:1rem;">
+      <div class="cap-card">
+        <img class="cap-thumb" src="screenshots/evo-screen-issues.png" alt="Issues" loading="lazy" onclick="openLightbox('screenshots/evo-screen-issues.png','Issues')">
+        <div class="cap-body">
+          <div class="cap-name">Issues</div>
+          <div class="cap-desc">Say <code>evo improve "this could be better"</code> from any thread; evo captures it, drafts a body, and stages it as a Draft. Promote with one click — it lands as a real GitHub issue on the repo you pick. Inbound issues filed by other people on repos you maintain get LLM-triaged (category, urgency, draft reply) and queued for review; an opt-in auto-response policy with a 24-hour undo handles the obvious cases.</div>
+        </div>
+      </div>
+      <div class="cap-card">
+        <div class="cap-thumb-logo" aria-hidden="true"><svg viewBox="0 0 310.68 176.43"><use href="#evolve-wordmark"/></svg></div>
+        <div class="cap-body">
+          <div class="cap-name">Continuity Engine</div>
+          <div class="cap-desc">Extracts pending commitments from session transcripts and surfaces them at the next session start. Runs pre-approved recurring tasks (weekly review, cost summary, project digest) on a schedule. Approval gates before any task executes.</div>
+        </div>
+      </div>
+      <div class="cap-card">
+        <img class="cap-thumb" src="screenshots/evo-screen-appgallery.png" alt="App Gallery" loading="lazy" onclick="openLightbox('screenshots/evo-screen-appgallery.png','App Gallery')">
+        <div class="cap-body">
+          <div class="cap-name">App Gallery</div>
+          <div class="cap-desc">A growing Gallery of installable applications: Morning Briefing, Email Triage, Note-taker, Calendar Summary, EA Pack, Journal, Task Manager, Contacts, Workspace Backup, GitHub Integration, and more. One-click install with inline OAuth.</div>
+        </div>
+      </div>
+      <div class="cap-card">
+        <img class="cap-thumb" src="screenshots/evo-screen-forge.png" alt="Forge" loading="lazy" onclick="openLightbox('screenshots/evo-screen-forge.png','Forge')">
+        <div class="cap-body">
+          <div class="cap-name">Forge</div>
+          <div class="cap-desc">Generate new applications from a spec. LLM-enriched manifests, test cases written alongside, an interactive feedback loop while you build. For the cases where the Gallery doesn't have what you need.</div>
+        </div>
+      </div>
+      <div class="cap-card">
+        <img class="cap-thumb" src="screenshots/evo-screen-approvalqueue.png" alt="Approval pipeline" loading="lazy" onclick="openLightbox('screenshots/evo-screen-approvalqueue.png','Approval pipeline')">
+        <div class="cap-body">
+          <div class="cap-name">Approval pipeline</div>
+          <div class="cap-desc">What makes RSI safe. Every Better-Engine suggestion travels through a signed pipeline, a security review, and a human approval gate. Eight hard auto-reject rules. The gate exists because self-improvement without it is just self-modification.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LAYER 6 — MAKE IT EASY -->
+  <div class="layer">
+    <div class="layer-head">
+      <span class="layer-num">Layer 6</span>
+      <span class="layer-title">Make it easy</span>
+    </div>
+    <p class="layer-framing">
+      The usage layer. Evo is the front door and the panel that follows you. Coaches do the proactive watching so you don't have to. The Claude Desktop bridge lets you bring pod context into a deep-work session when you want it.
+    </p>
+    <div class="cap-grid">
+      <div class="cap-card">
+        <img class="cap-thumb" src="screenshots/evo-screen-chat.png" alt="Chat with evo, anywhere" loading="lazy" onclick="openLightbox('screenshots/evo-screen-chat.png','Chat with evo, anywhere')">
+        <div class="cap-body">
+          <div class="cap-name">Chat with evo, anywhere</div>
+          <div class="cap-desc">The chat page is your home: evo's report at the top, conversation below. DM evo on Telegram, or use the <code>evo</code> keyword from any bot's thread on Signal, iMessage, Slack, or Discord. All routes hit one OpenClaw bot — same SOUL, same tools, same long-term memory.</div>
+        </div>
+      </div>
+      <div class="cap-card">
+        <img class="cap-thumb" src="screenshots/evo-screen-contextualhelp.png" alt="Evo panel on every page" loading="lazy" onclick="openLightbox('screenshots/evo-screen-contextualhelp.png','Evo panel on every page')">
+        <div class="cap-body">
+          <div class="cap-name">Evo panel on every page</div>
+          <div class="cap-desc">Wherever you are in the dashboard, evo sits on the right with the context of that page. Ask <em>"why is this firing?"</em> on Alerts; evo sees the same signals you see. Each page keeps its own conversation thread; long-term memory is shared across them. Heavy turns stream so you can watch evo work; a per-conversation tier selector (Auto / Fast / Standard / Power) trades cost for depth on the fly. Evo also verifies the capability it's about to use before it promises to take the action.</div>
+        </div>
+      </div>
+      <div class="cap-card">
+        <img class="cap-thumb" src="screenshots/evo-screen-coaches.png" alt="Coaches" loading="lazy" onclick="openLightbox('screenshots/evo-screen-coaches.png','Coaches')">
+        <div class="cap-body">
+          <div class="cap-name">Coaches</div>
+          <div class="cap-desc">A portfolio of specialized coaches watches your pod in the background — substrate health, cost, security, app quality, voice fit. Some flag trouble (Sysadmin Watchdog, Budget Hawk, Security Warden); others suggest improvements. They catch the silent failures and surface them as actionable suggestions, not raw alerts.</div>
+        </div>
+      </div>
+      <div class="cap-card">
+        <div class="cap-thumb-logo" aria-hidden="true"><svg viewBox="0 0 310.68 176.43"><use href="#evolve-wordmark"/></svg></div>
+        <div class="cap-body">
+          <div class="cap-name">Claude Desktop bridge</div>
+          <div class="cap-desc">MCP server connects Claude Desktop to the live pod over Tailscale. Deep-work sessions start with full pod context — workspace memory, pending tasks, active suggestions — without you having to brief the model.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LAYER 7 — MAKE IT FUN -->
+  <div class="layer">
+    <div class="layer-head">
+      <span class="layer-num">Layer 7</span>
+      <span class="layer-title">Make it fun</span>
+    </div>
+    <p class="layer-framing">
+      The most important layer that doesn't show up in a feature matrix. Evolve is built to feel like it was made by people who care about your experience — not by a committee writing a roadmap.
+    </p>
+
+    <div class="fun-callout">
+      <div class="fun-headline">A little personality goes a long way.</div>
+      <div class="fun-body">
+        Running OpenClaw shouldn't feel like a chore. We've threaded a little whimsy throughout — in the voice, the status messages, and a few surprises you'll find as you use it. We won't spoil them.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- INTEGRATIONS — NASCAR -->
+<section id="integrations">
+  <div class="section-label">Works with</div>
+  <h2>The integrations Evolve manages for you.</h2>
+  <p class="section-sub">
+    A growing catalog of installable skills covering messaging, productivity, home, dev, and creative work. OAuth flows, key rotation, health monitoring, and credential handling — all handled.
+  </p>
+
+  <div class="nascar-grid">
+    <img src="https://cdn.simpleicons.org/gmail" alt="Gmail" class="nascar-logo" title="Gmail" loading="lazy">
+    <img src="https://cdn.simpleicons.org/googlecalendar" alt="Google Calendar" class="nascar-logo" title="Google Calendar" loading="lazy">
+    <img src="https://cdn.simpleicons.org/googledocs" alt="Google Docs" class="nascar-logo" title="Google Docs / Workspace" loading="lazy">
+    <svg class="nascar-logo" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Slack"><title>Slack</title><path d="M5.042 15.165a2.528 2.528 0 0 1-2.52 2.523A2.528 2.528 0 0 1 0 15.165a2.527 2.527 0 0 1 2.522-2.52h2.52v2.52zM6.313 15.165a2.527 2.527 0 0 1 2.521-2.52 2.527 2.527 0 0 1 2.521 2.52v6.313A2.528 2.528 0 0 1 8.834 24a2.528 2.528 0 0 1-2.521-2.522v-6.313zM8.834 5.042a2.528 2.528 0 0 1-2.521-2.52A2.528 2.528 0 0 1 8.834 0a2.528 2.528 0 0 1 2.521 2.522v2.52H8.834zM8.834 6.313a2.528 2.528 0 0 1 2.521 2.521 2.528 2.528 0 0 1-2.521 2.521H2.522A2.528 2.528 0 0 1 0 8.834a2.528 2.528 0 0 1 2.522-2.521h6.312zM18.956 8.834a2.528 2.528 0 0 1 2.522-2.521A2.528 2.528 0 0 1 24 8.834a2.528 2.528 0 0 1-2.522 2.521h-2.522V8.834zM17.688 8.834a2.528 2.528 0 0 1-2.523 2.521 2.527 2.527 0 0 1-2.52-2.521V2.522A2.527 2.527 0 0 1 15.165 0a2.528 2.528 0 0 1 2.523 2.522v6.312zM15.165 18.956a2.528 2.528 0 0 1 2.523 2.522A2.528 2.528 0 0 1 15.165 24a2.527 2.527 0 0 1-2.52-2.522v-2.522h2.52zM15.165 17.688a2.527 2.527 0 0 1-2.52-2.523 2.526 2.526 0 0 1 2.52-2.52h6.313A2.527 2.527 0 0 1 24 15.165a2.528 2.528 0 0 1-2.522 2.523h-6.313z"/></svg>
+    <img src="https://cdn.simpleicons.org/discord" alt="Discord" class="nascar-logo" title="Discord" loading="lazy">
+    <img src="https://cdn.simpleicons.org/telegram" alt="Telegram" class="nascar-logo" title="Telegram" loading="lazy">
+    <img src="https://cdn.simpleicons.org/imessage" alt="iMessage" class="nascar-logo" title="iMessage" loading="lazy">
+    <img src="https://cdn.simpleicons.org/notion" alt="Notion" class="nascar-logo" title="Notion" loading="lazy">
+    <img src="https://cdn.simpleicons.org/obsidian" alt="Obsidian" class="nascar-logo" title="Obsidian" loading="lazy">
+    <img src="https://cdn.simpleicons.org/linear" alt="Linear" class="nascar-logo" title="Linear" loading="lazy">
+    <img src="https://cdn.simpleicons.org/homeassistant" alt="Home Assistant" class="nascar-logo" title="Home Assistant" loading="lazy">
+    <img src="https://cdn.simpleicons.org/github" alt="GitHub" class="nascar-logo" title="GitHub" loading="lazy">
+    <img src="https://cdn.simpleicons.org/autodesk" alt="AutoCAD" class="nascar-logo" title="AutoCAD (via Autodesk)" loading="lazy">
+    <img src="https://cdn.simpleicons.org/runwayml" alt="Runway" class="nascar-logo" title="Runway" loading="lazy">
+    <img src="https://cdn.simpleicons.org/zoom" alt="Zoom" class="nascar-logo" title="Zoom" loading="lazy">
+    <img src="https://cdn.simpleicons.org/whatsapp" alt="WhatsApp" class="nascar-logo" title="WhatsApp" loading="lazy">
+    <img src="https://cdn.simpleicons.org/dropbox" alt="Dropbox" class="nascar-logo" title="Dropbox" loading="lazy">
+    <img src="https://cdn.simpleicons.org/anthropic" alt="Anthropic" class="nascar-logo" title="Anthropic (LLM provider)" loading="lazy">
+    <svg class="nascar-logo" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="OpenAI"><title>OpenAI</title><path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.5093-2.6067-1.5093Z"/></svg>
+    <img src="https://cdn.simpleicons.org/ollama" alt="Ollama" class="nascar-logo" title="Ollama (local LLM)" loading="lazy">
+    <img src="https://cdn.simpleicons.org/tailscale" alt="Tailscale" class="nascar-logo" title="Tailscale (remote access)" loading="lazy">
+  </div>
+
+  <p class="nascar-footer">
+    Hover for names. Don't see something you need? <a href="https://github.com/evolve-ops/evolve/issues/new?template=feature_request.md">Open a feature request</a> — adding a new skill is a single new file in the provider registry.
+  </p>
+</section>
+
+<!-- WHO IT'S FOR -->
+<section id="audience">
+  <div class="section-label">Who it's for</div>
+  <h2>Overkill for one bot. Underkill for enterprise. Built for the people in between.</h2>
+  <p class="section-sub">
+    Evolve sits in a specific spot in the market. If you recognize yourself in the cards below, it's probably for you. If you don't, that's useful information too.
+  </p>
+
+  <div class="audience-grid">
+    <div class="audience-card yes">
+      <h4>Households running a pod</h4>
+      <p>One bot per family member, plus a household coordinator. Domain-compartmentalized — health doesn't see ventures, ventures doesn't see giving.</p>
+    </div>
+    <div class="audience-card yes">
+      <h4>Project-driven service businesses</h4>
+      <p>Designers, contractors, planners, real estate agents. A studio bot plus a bot per active client engagement. Existing tools (Studio Designer, QuickBooks, Asana) keep working.</p>
+    </div>
+    <div class="audience-card yes">
+      <h4>Solo professionals taking themselves seriously</h4>
+      <p>Lawyers, accountants, consultants. One or two bots. Client data stays on a Mac in your office. No cloud roundtrip on local-system integrations like iMessage and Obsidian.</p>
+    </div>
+    <div class="audience-card no">
+      <h4>Enterprise platform teams</h4>
+      <p>If you have a dedicated AI ops function, look at Preloop. Evolve doesn't try to be your platform.</p>
+    </div>
+    <div class="audience-card no">
+      <h4>Single-bot solo users</h4>
+      <p>If one OpenClaw instance is all you need, you'll find Evolve heavy. The wins compound when you have several.</p>
+    </div>
+    <div class="audience-card no">
+      <h4>People who want hosted SaaS</h4>
+      <p>Evolve runs on hardware you own, on purpose. There's no cloud control plane to sign up for.</p>
+    </div>
+  </div>
+
+  <p style="font-size:0.95rem;color:var(--muted);line-height:1.65;">
+    Want more detail? The <a href="product-vision.md">product vision doc</a> goes deeper on positioning, architecture, and what's explicitly out of scope.
+  </p>
+</section>
+
+<!-- LIGHTBOX -->
+<div id="lightbox" class="lightbox" onclick="closeLightbox()">
+  <div class="lightbox-inner">
+    <img src="" alt="">
+    <div class="lightbox-label"></div>
+  </div>
+</div>
+
+<!-- ARCH -->
+<section id="architecture">
+  <div class="section-label">Architecture</div>
+  <h2>Three-layer pod design</h2>
+  <p class="section-sub">Bots cannot influence their own management layer. Every production change requires human approval.</p>
+  <div class="arch-layers">
+    <div class="arch-layer arch-layer-3">
+      <div class="arch-layer-num">Layer 3</div>
+      <div class="arch-layer-title" style="color:var(--green)">Admin user — you</div>
+      <div class="arch-layer-sub">The only human in the loop</div>
+      <ul class="arch-layer-points">
+        <li>Has sudo access. Approves proposals, manages keys, deploys updates.</li>
+        <li>Does not run a bot — sysadmin and assistant roles stay separate.</li>
+        <li>Drives Evolve from the admin UI, the CLI, or the <code>evo</code> conversational interface.</li>
+      </ul>
+    </div>
+    <div class="arch-layer arch-layer-2">
+      <div class="arch-layer-num">Layer 2</div>
+      <div class="arch-layer-title" style="color:var(--accent)">evolve user — dedicated OS user account</div>
+      <div class="arch-layer-sub">Manages and improves the pod</div>
+      <ul class="arch-layer-points">
+        <li>Runs the admin server, scheduled jobs, the analyzer, and security audits.</li>
+        <li>Generates and validates improvement suggestions before surfacing them.</li>
+        <li>Cannot be influenced by the bots it manages.</li>
+      </ul>
+    </div>
+    <div class="arch-layer arch-layer-1">
+      <div class="arch-layer-num">Layer 1</div>
+      <div class="arch-layer-title" style="color:var(--muted)">Bot users — your OpenClaw bots</div>
+      <div class="arch-layer-sub">One OS user per bot, fully compartmentalized</div>
+      <ul class="arch-layer-points">
+        <li>Do the actual work. Each runs an OC gateway on its own user account.</li>
+        <li>Each bot's LLM inference runs with that bot's own credentials. No centralized inference service inside Evolve sees user data.</li>
+        <li>Monitored by Evolve. Cannot read each other's workspaces.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- REQUIREMENTS -->
+<section>
+  <div class="section-label">Requirements</div>
+  <h2>What you need before installing</h2>
+  <p class="section-sub">Full checklist: <a href="pre-install-checklist.md">pre-install-checklist.md</a></p>
+
+  <div class="req-grid">
+    <div class="req-card">
+      <h4>Hardware</h4>
+      <ul>
+        <li>Any Mac, macOS 14 (Sonoma) or later — 16GB min, 24GB recommended</li>
+        <li>Mac mini M4 is the recommended always-on box</li>
+        <li>Linux host / Ubuntu 24.04 VPS — supported</li>
+        <li>Admin account with sudo access</li>
+        <li>Wired ethernet recommended (on-prem)</li>
+      </ul>
+    </div>
+    <div class="req-card">
+      <h4>Software</h4>
+      <ul>
+        <li>Python 3.9+</li>
+        <li>Node.js 20+</li>
+        <li>OpenClaw (already installed)</li>
+        <li>Evolve repo cloned</li>
+      </ul>
+    </div>
+    <div class="req-card">
+      <h4>Required accounts</h4>
+      <ul>
+        <li>One LLM provider (Anthropic, OpenAI, Ollama, etc.)</li>
+        <li>One messaging channel (Telegram, Slack, Discord, iMessage)</li>
+      </ul>
+    </div>
+    <div class="req-card">
+      <h4>Strongly recommended</h4>
+      <ul>
+        <li>Brave Search API key</li>
+        <li>Google OAuth credentials</li>
+        <li>Tailscale (remote access + MCP Bridge)</li>
+        <li>Private GitHub repo (security backups)</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- INSTALL -->
+<section id="install">
+  <div class="section-label">Install</div>
+  <h2>From zero to running a pod</h2>
+  <div class="warn-inner" style="margin-bottom:2rem;">
+    <strong>⚠ Alpha software.</strong> Evolve will likely break an existing OpenClaw setup. It may introduce security issues — the security features are not fully audited. Built for macOS 14+ (tested on Mac mini M4); Linux (Ubuntu) is supported. Real API keys required — set spend limits before installing. Don't install on a machine you can't afford to wipe.
+  </div>
+  <p class="section-sub">You can install Evolve on an existing OpenClaw instance or create a new pod from scratch using the Evolve setup wizard.</p>
+
+  <div class="install-steps">
+    <div class="install-step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <div class="step-title">Check prerequisites</div>
+        <div class="step-note">Python 3.9+ and Node.js 20+ must be installed.</div>
+        <pre>python3 --version
+node --version   # brew (macOS) / apt (Linux) install node if needed</pre>
+      </div>
+    </div>
+    <div class="install-step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <div class="step-title">Clone and set up</div>
+        <pre>sudo git clone https://github.com/evolve-ops/evolve /Users/Shared/evolve-repo
+sudo python3 -m venv /Users/Shared/evolve-venv
+sudo /Users/Shared/evolve-venv/bin/pip install -e /Users/Shared/evolve-repo/packages/admin/</pre>
+      </div>
+    </div>
+    <div class="install-step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <div class="step-title">Run the wizard</div>
+        <div class="step-note">The wizard creates the <code>evolve</code> service user, installs OpenClaw, deploys the plugin, and wires the scheduled jobs. Have your API keys, channel tokens, and a private GitHub repo URL ready.</div>
+        <pre>sudo evolve-admin setup --fresh</pre>
+      </div>
+    </div>
+    <div class="install-step">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <div class="step-title">Open the dashboard</div>
+        <div class="step-note">The admin UI runs locally. No cloud.</div>
+        <pre>open http://localhost:5050</pre>
+      </div>
+    </div>
+  </div>
+
+  <p style="color: var(--muted); font-size: 0.9rem;">
+    Ran into something? <a href="https://github.com/evolve-ops/evolve/issues/new?template=bug_report.md">File a bug report</a> or <a href="https://github.com/evolve-ops/evolve/discussions">start a discussion</a>.
+  </p>
+</section>
+
+<footer>
+  Evolve is source-available under the <a href="https://github.com/evolve-ops/evolve/blob/main/LICENSE">Business Source License 1.1</a>. <a href="https://github.com/evolve-ops/evolve">Source on GitHub</a> · <a href="product-vision.md">Product vision</a> · <a href="https://github.com/evolve-ops/evolve/discussions">Discussions</a>
+</footer>
+
+<script>
+  function openLightbox(src, label) {
+    const lb = document.getElementById('lightbox');
+    lb.querySelector('img').src = src;
+    lb.querySelector('.lightbox-label').textContent = label;
+    lb.classList.add('open');
+  }
+
+  function closeLightbox() {
+    document.getElementById('lightbox').classList.remove('open');
+  }
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeLightbox();
+  });
+
+  // Theme toggle — flip the explicit [data-theme] override and persist it.
+  (function () {
+    var btn = document.getElementById('theme-toggle');
+    if (!btn) return;
+    var root = document.documentElement;
+    var media = window.matchMedia('(prefers-color-scheme: light)');
+    function current() {
+      var explicit = root.getAttribute('data-theme');
+      if (explicit === 'light' || explicit === 'dark') return explicit;
+      return media.matches ? 'light' : 'dark';
+    }
+    btn.addEventListener('click', function () {
+      var next = current() === 'light' ? 'dark' : 'light';
+      root.setAttribute('data-theme', next);
+      try { localStorage.setItem('evolve-theme', next); } catch (e) {}
+    });
+  })();
+
+  // ===== Early-access email capture =====
+  //
+  // GitHub Pages is static (no backend), so the form POSTs to a Google Form,
+  // which collects submissions in a Google Sheet you own. TO ACTIVATE:
+  //
+  //   1. Create a Google Form with ONE "Short answer" question for the email.
+  //   2. Click the three-dot menu -> "Get pre-filled link", type any value in
+  //      the email field, "Get link", and copy it. The link contains
+  //      ".../viewform?entry.NNNNNNNNN=..." — the entry.NNNNNNNNN is your field id.
+  //   3. Your POST endpoint is the same form URL with "/viewform" replaced by
+  //      "/formResponse".
+  //   4. Paste both below. That's it — no redeploy logic needed.
+  //
+  // Until it's configured the form fails LOUD (never a fake "thanks!").
+  var EARLY_ACCESS = {
+    action: 'https://docs.google.com/forms/d/e/1FAIpQLSe1HG_zRjqCXMi8qG-SLKPD3mvF0nAoK3ZfdT0PiDw74R73vw/formResponse',
+    emailField: 'entry.1130510980'
+  };
+
+  (function () {
+    var form = document.getElementById('ea-form');
+    if (!form) return;
+    var email = document.getElementById('ea-email');
+    var submit = document.getElementById('ea-submit');
+    var status = document.getElementById('ea-status');
+    var configured =
+      EARLY_ACCESS.action.indexOf('REPLACE_WITH') === -1 &&
+      EARLY_ACCESS.emailField.indexOf('REPLACE_WITH') === -1;
+
+    function setStatus(msg, kind) {
+      status.textContent = msg;
+      status.className = 'ea-status' + (kind ? ' ' + kind : '');
+    }
+
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      if (!email.checkValidity()) {
+        setStatus('Please enter a valid email address.', 'err');
+        email.focus();
+        return;
+      }
+      if (!configured) {
+        // Fail loud rather than pretend — the endpoint isn't set yet.
+        setStatus('Early-access signup isn’t live yet. Please check back shortly.', 'err');
+        return;
+      }
+      submit.disabled = true;
+      setStatus('Sending…');
+      var body = new FormData();
+      body.append(EARLY_ACCESS.emailField, email.value.trim());
+      // Google Forms does not send CORS headers; the response is opaque, so we
+      // submit no-cors and treat completion as success (a 200 is issued for any
+      // well-formed submission).
+      fetch(EARLY_ACCESS.action, { method: 'POST', mode: 'no-cors', body: body })
+        .then(function () {
+          form.reset();
+          setStatus('You’re on the list — we’ll email you when access opens.', 'ok');
+        })
+        .catch(function () {
+          setStatus('Something went wrong. Please try again in a moment.', 'err');
+        })
+        .finally(function () { submit.disabled = false; });
+    });
+  })();
+</script>
+</body>
+</html>
