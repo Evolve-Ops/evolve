@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.evolve.scan-status.team_bot_a</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/Shared/evolve-venv/bin/python3</string>
+        <string>/Users/Shared/evolve-repo/packages/analyzer/scan_status.py</string>
+        <string>--shared-dir</string>
+        <string>/Users/Shared/evolve</string>
+    </array>
+    <key>UserName</key>
+    <string>team_bot_a</string>
+    <key>StartInterval</key>
+    <integer>3600</integer>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/team_bot_a/.openclaw/logs/evolve-scan-status.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/team_bot_a/.openclaw/logs/evolve-scan-status.err.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>PYTHONPATH</key>
+        <string>/Users/Shared/evolve-repo/packages/analyzer</string>
+        <key>EVOLVE_NETWORK</key>
+        <string>/Users/Shared/evolve/network.json</string>
+    </dict>
+</dict>
+</plist>

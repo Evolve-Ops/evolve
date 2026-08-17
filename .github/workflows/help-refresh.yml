@@ -1,0 +1,265 @@
+name: help-refresh
+
+# Weekly knowledge-refresh routine for the public help corpus (docs/help/).
+#
+# Implements docs/help/README.md §"Weekly knowledge-refresh routine" via
+# tools/help-refresh. Every Monday it scans the prior week's merged PRs, finds
+# help docs whose concepts were touched AND are overdue for review (>30 days),
+# bumps their `last_reviewed`, and (re)writes docs/help/REVIEW-QUEUE.md mapping
+# each affected doc to the PRs a human must verify it against. It then opens a
+# HUMAN-GATED review PR — it NEVER auto-merges, and it is a clean no-op when the
+# window has zero candidate PRs (no empty PR is opened).
+#
+# This is meta/dev tooling: it touches only docs/help/ and never ships to pods.
+
+on:
+  schedule:
+    # Mondays at 13:00 UTC. Cron has no timezone; pick a quiet hour.
+    - cron: "0 13 * * 1"
+  workflow_dispatch: {}        # allow an operator to run it on demand
+
+# Least-privilege. `issues: write` is for the failure watcher on the last two
+# steps, which runs on the default GITHUB_TOKEN. Opening the review PR needs
+# MORE than these scopes grant — see the AUTH note on the run steps below.
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  # Never let two refresh runs race on the same branch.
+  group: help-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      # AUTH: tools/help-refresh calls `gh pr list` and the next step calls
+      # `gh pr create`. The gh CLI reads GH_TOKEN. **`gh pr create` needs
+      # secrets.HELP_REFRESH_PAT — the default GITHUB_TOKEN cannot open the PR.**
+      #
+      # HISTORY (do not re-simplify this back to GITHUB_TOKEN): from 2026-06-29
+      # to 2026-08-10 this workflow failed six consecutive weekly runs, silently.
+      # An earlier version of this note claimed GITHUB_TOKEN + the `permissions:`
+      # block above was sufficient. It is not. Every run pushed its branch fine
+      # and then died on the last step with:
+      #   pull request create failed: GraphQL: GitHub Actions is not permitted
+      #   to create or approve pull requests (createPullRequest)
+      # because the repo setting "Allow GitHub Actions to create and approve pull
+      # requests" is off (`can_approve_pull_request_reviews: false`, verified
+      # 2026-08-14). Result: six orphaned help-refresh/* branches and zero PRs in
+      # the repo's entire history. Nothing else in this repo opens PRs from CI,
+      # so there was never a working precedent to match.
+      #
+      # WHY THE PAT AND NOT THE REPO SETTING: flipping that setting would let
+      # GITHUB_TOKEN open the PR, but PRs opened by GITHUB_TOKEN do NOT trigger
+      # other workflows (GitHub's infinite-loop guard) — and `main` requires 10
+      # status checks with enforce_admins ON, so such a PR reports zero checks
+      # and NOBODY, not even the repo owner, can merge it without pushing a
+      # manual commit to wake CI. It would also grant every workflow in the repo
+      # the ability to self-approve PRs. A PAT-opened PR is authored by a user,
+      # so CI fires normally and the PR is genuinely mergeable.
+      #
+      # SETUP (one-time, operator): create a fine-grained PAT scoped to this repo
+      # with Contents: Read and write + Pull requests: Read and write, then store
+      # it as the repo secret HELP_REFRESH_PAT. Verify with a manual
+      # `workflow_dispatch` run. The GITHUB_TOKEN fallback below keeps the
+      # read-only `gh pr list` probing working, and the PR step fails with an
+      # explicit diagnostic (not a bare GraphQL error) when the secret is absent.
+      - name: Run the weekly knowledge refresh
+        env:
+          GH_TOKEN: ${{ secrets.HELP_REFRESH_PAT || secrets.GITHUB_TOKEN }}
+        run: python3 tools/help-refresh
+
+      - name: Open the human-gated review PR (only if anything changed)
+        env:
+          GH_TOKEN: ${{ secrets.HELP_REFRESH_PAT || secrets.GITHUB_TOKEN }}
+          HAS_PAT: ${{ secrets.HELP_REFRESH_PAT != '' && 'yes' || 'no' }}
+        run: |
+          set -euo pipefail
+
+          # Fail BEFORE pushing when the PR can't possibly be opened. The six
+          # 2026 orphan branches exist because the push succeeded and only the
+          # PR step failed; refusing early keeps the branch list clean.
+          if [ "$HAS_PAT" != "yes" ]; then
+            echo "::error::help-refresh: secrets.HELP_REFRESH_PAT is not set, so this run"
+            echo "cannot open the review PR (the default GITHUB_TOKEN is refused by"
+            echo "GitHub with 'not permitted to create or approve pull requests')."
+            echo "See the AUTH note in this workflow for the one-time setup."
+            echo "No branch was pushed — this run is a clean no-op, not a partial write."
+            exit 1
+          fi
+
+          # Zero-candidate / nothing-stale run → the tool wrote no files → clean
+          # tree → no PR. This is the "safe with zero candidate PRs" guarantee.
+          if [ -z "$(git status --porcelain docs/help)" ]; then
+            echo "help-refresh: no candidate-driven changes this week — no PR opened."
+            exit 0
+          fi
+
+          run_date="$(date -u +%F)"
+          branch="help-refresh/${run_date}"
+          title="docs(help): weekly knowledge refresh ${run_date}"
+
+          # Idempotent: if this week's review PR is already open, don't duplicate it.
+          existing="$(gh pr list --head "$branch" --state open --json number --jq 'length')"
+          if [ "$existing" != "0" ]; then
+            echo "help-refresh: a review PR for ${branch} is already open — skipping."
+            exit 0
+          fi
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git checkout -b "$branch"
+          git add docs/help
+          git commit -m "$title"
+          git push --force-with-lease -u origin "$branch"
+
+          # PR body is backtick-free on purpose (an unquoted heredoc would eval
+          # backticks / $(...)); the changelog detail lives in REVIEW-QUEUE.md.
+          cat > /tmp/help-refresh-body.md <<EOF
+          Automated weekly knowledge-refresh PR (tools/help-refresh).
+
+          It bumps last_reviewed on help docs whose concepts were touched by merged
+          PRs in the past week AND were overdue for review (>30 days), and
+          (re)writes docs/help/REVIEW-QUEUE.md mapping each affected doc to the PRs
+          to verify it against.
+
+          HUMAN GATE: this is a proposal, not a verified fact. For each doc listed
+          in docs/help/REVIEW-QUEUE.md, read the linked PRs and confirm the prose
+          still matches what a user sees — edit it in this PR if it drifted — before
+          merging. No auto-merge; this PR is reviewed like any code change.
+
+          See docs/help/README.md, section "Weekly knowledge-refresh routine".
+
+          Window ending ${run_date}.
+          EOF
+
+          # Capture the reason on failure: `set -e` alone would exit with the
+          # GraphQL text buried mid-log and no remediation, which is exactly how
+          # six weekly failures went unnoticed. The branch is already pushed by
+          # this point, so say so and print the by-hand recovery.
+          if ! err="$(gh pr create \
+                --base main \
+                --head "$branch" \
+                --title "$title" \
+                --body-file /tmp/help-refresh-body.md 2>&1)"; then
+            echo "::error::help-refresh: could not open the review PR on ${branch}."
+            echo "$err"
+            case "$err" in
+              *"not permitted to create or approve pull requests"*)
+                echo "::error::CAUSE: this run fell back to the default GITHUB_TOKEN."
+                echo "Check that secrets.HELP_REFRESH_PAT is still valid and not expired."
+                ;;
+            esac
+            echo "The refreshed docs ARE pushed on ${branch} — open the PR by hand to keep them:"
+            echo "  gh pr create --base main --head ${branch} --title \"${title}\" --body-file <file>"
+            echo "Otherwise delete the branch: git push origin --delete ${branch}"
+            exit 1
+          fi
+
+          echo "help-refresh: opened review PR on ${branch}."
+
+      # ---------------------------------------------------------------------
+      # OUTCOME WATCHER (both steps below).
+      #
+      # A scheduled workflow that fails is invisible: nobody opens the Actions
+      # tab for a cron job that has always been fine. That is the whole reason
+      # the 2026-06-29..2026-08-10 outage ran six weeks — the runs went red on
+      # schedule and said so only in a log nobody read. So the failure has to
+      # walk itself over to a surface that IS swept, which here is the issue
+      # tracker (`/triage`).
+      #
+      # Both steps deliberately authenticate with GITHUB_TOKEN, never
+      # HELP_REFRESH_PAT: the single most likely thing being reported is an
+      # expired or revoked PAT, and a watcher that shares the failure mode it
+      # watches reports nothing exactly when it matters. Issue writes are not
+      # gated by the "Actions can create PRs" setting, so the default token is
+      # sufficient here even though it cannot open the PR itself.
+      # ---------------------------------------------------------------------
+      - name: File the failure as an issue (outcome watcher)
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          title="help-refresh: the weekly knowledge-refresh run is failing"
+
+          # Match on the exact title rather than `--search`, whose tokenizer
+          # mangles the colon. One issue per outage, re-pinged on each new
+          # failure — a six-week outage should be one tracker item, not six.
+          existing="$(gh issue list --state open --limit 200 --json number,title \
+                      | jq -r --arg t "$title" 'map(select(.title == $t)) | .[0].number // empty')"
+
+          if [ -n "$existing" ]; then
+            printf 'Still failing.\n\nRun: %s\n' "$RUN_URL" > /tmp/help-refresh-issue.md
+            gh issue comment "$existing" --body-file /tmp/help-refresh-issue.md
+            echo "help-refresh: re-pinged existing failure issue #${existing}."
+            exit 0
+          fi
+
+          cat > /tmp/help-refresh-issue.md <<'EOF'
+          The weekly `help-refresh` workflow failed. It is a cron job, so this
+          issue is the only place the failure is visible — see
+          `.github/workflows/help-refresh.yml` for the auth contract.
+
+          Most likely causes, in order:
+
+          1. `secrets.HELP_REFRESH_PAT` expired or was revoked. Fine-grained PATs
+             cap at 366 days. Mint a new one (repo-scoped; Contents: RW, Pull
+             requests: RW) and re-store it under the same secret name.
+          2. The PAT lost access to this repo (scope edited, repo list changed).
+          3. A genuine breakage in `tools/help-refresh`.
+
+          The run log names the specific cause. If the failing step is the PR
+          step, any refreshed docs are already pushed on the run's
+          `help-refresh/<date>` branch and can be turned into a PR by hand.
+
+          This issue is closed automatically by the next successful run.
+          EOF
+          printf '\nRun: %s\n' "$RUN_URL" >> /tmp/help-refresh-issue.md
+
+          gh issue create --title "$title" --body-file /tmp/help-refresh-issue.md
+          echo "help-refresh: filed a new failure issue."
+
+      - name: Clear the failure issue on a good run
+        if: success()
+        # Housekeeping must never redden a good run. Without this, a transient
+        # `gh issue list` blip would fail the job AFTER the failure-watcher step
+        # had already been skipped — re-creating the exact silent-red hole this
+        # watcher exists to close.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          # Self-clearing, in the same spirit as the signal store's
+          # sweep_resolve: a monitor that only ever fires accumulates stale
+          # tracker noise and stops being believed.
+          title="help-refresh: the weekly knowledge-refresh run is failing"
+
+          existing="$(gh issue list --state open --limit 200 --json number,title \
+                      | jq -r --arg t "$title" 'map(select(.title == $t)) | .[0].number // empty')"
+
+          if [ -n "$existing" ]; then
+            printf 'Recovered — this run succeeded.\n\nRun: %s\n' "$RUN_URL" > /tmp/help-refresh-ok.md
+            gh issue close "$existing" --comment "$(cat /tmp/help-refresh-ok.md)"
+            echo "help-refresh: closed failure issue #${existing}."
+          fi

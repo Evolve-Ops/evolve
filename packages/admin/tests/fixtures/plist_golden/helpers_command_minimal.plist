@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.team_bot_b.evolve.fetch</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>echo &apos;a &amp; b&apos; &gt; /tmp/out</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>300</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/team_bot_b/.openclaw/logs/fetch.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/team_bot_b/.openclaw/logs/fetch.err.log</string>
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>

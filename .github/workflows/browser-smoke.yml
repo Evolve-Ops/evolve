@@ -1,0 +1,94 @@
+name: browser-smoke
+
+# Phase 0 §4.4 baseline — cross-engine smoke for the Evolve admin UI.
+# Spec: docs/spec-pwa-2026-05-18.md, tests at tests/browser/.
+#
+# Runs Playwright across Chromium + WebKit + Firefox against the admin
+# server spun up via subprocess. The point is to catch the obvious class
+# of regression where a feature works in Chrome and breaks in Safari or
+# Firefox.
+
+on:
+  pull_request:
+    # Only fire on changes that can plausibly reach the rendered UI: the
+    # SPA shell + Flask route handlers under web/, the smoke tests, and
+    # this workflow. Pure-Python changes elsewhere in admin/ or analyzer/
+    # (CLI, deploy, generators, signal store, etc.) reach the browser
+    # only via web/ route handlers, which are already covered.
+    paths:
+      - 'packages/admin/evolve_admin/web/**'
+      - 'tests/browser/**'
+      - '.github/workflows/browser-smoke.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'packages/admin/evolve_admin/web/**'
+      - 'tests/browser/**'
+      - '.github/workflows/browser-smoke.yml'
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # One job per browser engine. Each gets its own admin-server subprocess
+    # via the session-scoped `admin_server` fixture in tests/browser/conftest.py.
+    # When all three engines shared a single session (one pytest invocation
+    # with three --browser flags), the firefox-variant tests — which run
+    # last — consistently hit 30s timeouts on every API request, suggesting
+    # the long-running server subprocess wedges by the time firefox starts.
+    # Matrix-ing also cuts wall-clock by running the three engines in parallel.
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, webkit, firefox]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+          cache: pip
+
+      - name: Install admin + analyzer deps
+        # Phase 6.4: reproducible install from uv.lock — both workspace
+        # packages plus the 'browser' dependency group (pytest-playwright).
+        run: |
+          python -m pip install uv
+          uv sync --locked --group browser
+
+      - name: Resolve playwright version (for the browser-binary cache key)
+        id: playwright-version
+        run: |
+          PW_VERSION=$(uv run --no-sync python -c "from importlib.metadata import version; print(version('playwright'))")
+          echo "version=${PW_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Resolved playwright version: ${PW_VERSION}"
+
+      # Cache the Playwright browser binaries. The download is ~30s
+      # per matrix job and the binaries are pinned to the playwright
+      # version, so a hit covers every run until the version bumps.
+      # apt-level system libs (font, GTK, WebKit GStreamer, etc.) are
+      # installed every run via `playwright install-deps`, which is
+      # cheap and avoids stale-library failures on cache hits.
+      - name: Cache Playwright browser binaries
+        id: playwright-cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ matrix.browser }}-${{ steps.playwright-version.outputs.version }}
+
+      - name: Install Playwright browser
+        run: |
+          if [ "${{ steps.playwright-cache.outputs.cache-hit }}" = "true" ]; then
+            uv run --no-sync python -m playwright install-deps ${{ matrix.browser }}
+          else
+            uv run --no-sync python -m playwright install --with-deps ${{ matrix.browser }}
+          fi
+
+      - name: Run smoke suite (${{ matrix.browser }})
+        run: |
+          uv run --no-sync python -m pytest tests/browser/ \
+            --browser ${{ matrix.browser }} \
+            -v

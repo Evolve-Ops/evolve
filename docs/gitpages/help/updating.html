@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Keeping Evolve Up to Date · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">updating</span><span class="chip">releases</span><span class="chip">rollback</span></div><div class="reviewed">Last reviewed 2026-07-28</div></div><h1 id="keeping-evolve-up-to-date">Keeping Evolve Up to Date</h1>
+<p>Updates are hands-off by default. A background job pulls new code every 15
+minutes, and the pieces that changed — the admin server, background jobs, the
+bot plugin — are rebuilt and restarted for you. You only need the commands on
+this page when you want an update <em>right now</em>, or when you opt in to the more
+cautious canary release channel.</p>
+<hr>
+<h2 id="how-a-pod-stays-current">How a pod stays current</h2>
+<p>The <code>repo-puller</code> daemon (<code>ai.evolve.evolve.repo-puller</code>) runs every 15 minutes
+as the <code>evolve</code> service user. It does a <code>git pull --ff-only</code> of the deploy
+checkout (<code>/Users/Shared/evolve-repo</code> on macOS, <code>/var/lib/evolve/repo</code> on
+Linux) — the source of truth every running daemon loads code from — and then
+runs post-advance hooks that rebuild whatever the new commits touched. It logs
+only when something changed or failed, so a quiet log is a healthy log.</p>
+<p><code>--ff-only</code> means the pull never overwrites local changes; if the checkout has
+drifted, the pull refuses rather than guessing.</p>
+<h2 id="update-right-now">Update right now</h2>
+<pre><code class="language-bash">sudo evolve-admin upgrade
+</code></pre>
+<p>This is the everything-at-once version of what the puller does incrementally:
+pull the repo, reinstall the admin package, rebuild the TypeScript plugin (and
+sync it to the canonical install path bots load from), redeploy scripts and
+jobs to every bot, and verify the admin server and gateways actually restarted
+onto the new code. It is version-aware — same version runs in repair/redeploy
+mode, and a downgrade warns before proceeding. Useful flags: <code>--dry-run</code>,
+<code>--skip-plugin</code>, <code>--skip-deploy</code>.</p>
+<h2 id="never-git-pull-the-deploy-checkout-by-hand">Never <code>git pull</code> the deploy checkout by hand</h2>
+<p>Two reasons:</p>
+<ul>
+<li><strong>Untracked-file wedge.</strong> Any stray file created in the deploy checkout
+  (an editor session, a script you saved there) blocks the next <code>--ff-only</code>
+  pull with "untracked working tree files would be overwritten by merge". The
+  puller can quarantine and recover from some of these, but that is accident
+  recovery, not a workflow. Treat the deploy checkout as read-only.</li>
+<li><strong>Canary pointer repair.</strong> On a canary-mode pod the checkout follows the
+  release pointer, not origin tip. Out-of-band <code>git pull</code> or <code>git reset</code> gets
+  detected and repaired back to the pointer automatically. Use
+  <code>release pin</code> / <code>release rollback</code> instead of fighting it.</li>
+</ul>
+<p>Even <code>sudo evolve-admin repo-pull</code> refuses an ungated direct pull when release
+state exists, for the same reason.</p>
+<hr>
+<h2 id="release-channels">Release channels</h2>
+<p><strong>Direct (the default).</strong> The pod tracks origin tip: every merged change
+reaches the fleet on the next 15-minute pull. Right for a single, supervised
+pod.</p>
+<p><strong>Canary (opt-in).</strong> Set <code>pod.release.mode</code> to <code>"canary"</code> in <code>network.json</code>.
+New commits become <em>candidates</em> that are gated before the fleet moves:</p>
+<ul>
+<li>each candidate is checked out into a staging worktree under
+  <code>/Users/Shared/evolve-staging/&lt;short-sha&gt;/</code>;</li>
+<li>Gate 1 runs static checks (compile + import smoke, plus a staging venv or
+  plugin build when the candidate touches those);</li>
+<li>Gate 2 deploys the configured canary bot onto the staging code and lets it
+  soak; new firing Signals scoped to the canary fail the soak;</li>
+<li>on pass, the release pointer (<code>{shared_dir}/release.json</code>, mirrored by the
+  local <code>evolve-stable</code> git tag) is promoted and the fleet moves.</li>
+</ul>
+<p>Operator surface (canary mode — these commands need release state to exist):</p>
+<pre><code class="language-bash">sudo evolve-admin release status     # pointer, candidate state, soak countdown
+sudo evolve-admin release rollback   # one-command undo: fleet -&gt; previous
+                                     # stable, pins, skip-lists the bad sha
+sudo evolve-admin release pin        # freeze auto-promotion where it is
+                                     # (a freeze, not a move)
+sudo evolve-admin release promote    # promote the current candidate now,
+                                     # skipping the remaining soak
+</code></pre>
+<p><code>release rollback</code> is the one-command undo: it cancels any in-flight soak,
+resets the fleet to the previous stable, reruns the rebuild hooks, pins, and
+skip-lists the sha you fled so it cannot silently re-promote. <code>release unpin</code>
+resumes auto-promotion afterwards. (This is separate from <code>evolve-admin
+rollback &lt;bot&gt; &lt;target&gt;</code>, which reverts one bot's configuration, not a
+release.)</p>
+<hr>
+<h2 id="what-version-is-my-pod-on">What version is my pod on?</h2>
+<ul>
+<li><code>evolve-admin status</code> — the header shows the pod's Evolve version, and the
+  per-bot table shows each bot's deployed version, with a warning and the fix
+  command if any bot is out of sync.</li>
+<li><code>evolve-admin version</code> — just the installed version string.</li>
+<li><strong>Overview page</strong> in the dashboard — the release drawer shows an update
+  banner when bots are waiting on a newer version. Banners are tiered from
+  <code>RELEASES.yaml</code> in the repo (security / feature / maintenance): security
+  notices cannot be snoozed, the others can. On canary pods the same drawer
+  shows the pointer, candidate, and soak countdown.</li>
+<li><code>sudo evolve-admin release status</code> — the commit-level view (canary mode).</li>
+</ul>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/updating.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>

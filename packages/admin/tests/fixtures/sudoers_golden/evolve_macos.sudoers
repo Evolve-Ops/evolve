@@ -1,0 +1,1022 @@
+# /etc/sudoers.d/evolve
+# Evolve infrastructure bot — narrow sudo grants
+# Managed by: docs/archive/specs/spec-sudoers.md
+# Written by: evolve-admin setup wizard
+
+Defaults:evolve !requiretty
+
+# secure_path provides PATH to every sudo-spawned process. Without
+# this, sudo clears PATH and Node.js binaries (`openclaw` has a
+# `#!/usr/bin/env node` shebang) fail to find `node`. Previously
+# deploy.py worked around this with `sudo -u <bot> env HOME=... PATH=...
+# openclaw ...` wrappers, but those invocations don't match the
+# `evolve ALL=(ALL) NOPASSWD: <oc_path>` grant below (sudo sees the
+# command as `env`, not `openclaw`), so the fallback was a password
+# prompt and guaranteed deploy failure. Putting PATH in secure_path
+# lets the python code drop the env wrapper entirely.
+#
+# Two scopes are needed because `evolve-admin deploy --all` is invoked
+# under outer `sudo` (admin → root). The inner `sudo -u <bot> openclaw
+# config validate ...` from ensure_plugin_config has root as the
+# invoking user, so `Defaults:evolve secure_path` doesn't apply and
+# the openclaw shebang's `env node` lookup fails. The unqualified
+# `Defaults secure_path` covers root (and any other invoker) so the
+# deploy path works end-to-end. The narrow `Defaults:evolve` line is
+# kept as belt-and-suspenders for the admin-ui daemon's runtime path.
+Defaults secure_path = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+Defaults:evolve secure_path = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+
+# ── 1. Read bot openclaw.json files ──────────────────────────────────────────
+# Belt-and-suspenders fallback; ACL inheritance (set_evolve_read_acl) is primary.
+evolve ALL=(root) NOPASSWD: /bin/cat /Users/*/.openclaw/openclaw.json
+
+# ── 2. Read bot auth-profiles.json files ─────────────────────────────────────
+evolve ALL=(root) NOPASSWD: /bin/cat /Users/*/.openclaw/agents/main/agent/auth-profiles.json
+
+# ── 2a. Read the per-agent OpenClaw auth store (sqlite) ──────────────────────
+# OpenClaw 2026.6 migrated auth-profiles.json into a per-agent sqlite store
+# (openclaw-agent.sqlite). oc_store.read_auth_store opens it read-only as the
+# evolve user via the read ACL; this grant is the pre-ACL fallback. The
+# `-readonly` flag forces a read-only open at the binary level, so no SQL
+# argument can mutate the DB — the trailing `*` only carries the fixed
+# SELECT statement. Belt-and-suspenders, like the §2 cat grant above.
+evolve ALL=(root) NOPASSWD: /usr/bin/sqlite3 -readonly /Users/*/.openclaw/agents/main/agent/openclaw-agent.sqlite *
+
+# ── 3. Read bot gateway logs ─────────────────────────────────────────────────
+evolve ALL=(root) NOPASSWD: /bin/cat /Users/*/.openclaw/logs/gateway.log
+evolve ALL=(root) NOPASSWD: /bin/cat /Users/*/.openclaw/logs/gateway.err.log
+
+# ── 3.1. Truncate launchd-captured gateway logs (ai.evolve.evolve.oc-log-rotate) ─
+# OC's own logger writes to logging.file (bounded via maxFileBytes); these
+# two files are populated by the gateway plist's StandardOut/ErrorPath
+# capture and launchd has no rotation for them. The daily oc-log-rotate
+# cron truncates each to zero when it crosses 10MB. Pinned to the exact
+# filenames so the grant can't be used to clobber other bot files.
+evolve ALL=(root) NOPASSWD: /usr/bin/truncate -s 0 /Users/*/.openclaw/logs/gateway.log
+evolve ALL=(root) NOPASSWD: /usr/bin/truncate -s 0 /Users/*/.openclaw/logs/gateway.err.log
+
+# ── 3.2. One-click disk reclaim (disk_reclaim_apply, POST /api/host-health/reclaim) ─
+# The 'Reclaim space' remediation on the disk_low alert frees the
+# regenerable npm caches disk_reclaim.scan_reclaimable reports (rm the
+# whole _cacache/_npx dir). Logs are intentionally NOT one-click
+# reclaimable: they are the smaller win and already bounded at source
+# (mcp-bridge rotation + the daily log_cap job), and a truncate grant
+# follows symlinks in BOTH intermediate and final components — a root
+# arbitrary-file-zero primitive — so it is omitted entirely (PR2 audit,
+# Option B).
+#
+# These grants are the policy FLOOR, not the safety boundary. `rm -rf`
+# re-resolves its operand at root's exec time and follows a symlink in
+# any INTERMEDIATE component (e.g. a `.npm` swapped to a symlink mid-
+# window) — so an ABSOLUTE path grant could not be made race-safe. The
+# operand is therefore a BARE LEAF NAME (no path): disk_reclaim_apply
+# walks bot-home → .npm with openat/O_NOFOLLOW, rejecting any symlink
+# component, then runs rm with the child's cwd pinned (via fchdir on the
+# verified .npm dirfd) so `rm -rf -- _cacache` resolves the leaf inside
+# that exact verified inode — never a re-resolvable absolute string. A
+# rename of `.npm` to a symlink after the walk cannot redirect the held
+# fd. The grant pins binary + flags + the exact leaf name as a second
+# floor; because the operand carries no directory, these grants cannot
+# name a path at all.
+evolve ALL=(root) NOPASSWD: /bin/rm -rf -- _cacache
+evolve ALL=(root) NOPASSWD: /bin/rm -rf -- _npx
+
+# ── 3a. Read legacy oc-gws credentials (.config/gws/) ──────────────────────
+# Bots Google-connected via the pre-wizard `oc gws --reauth` CLI store
+# tokens here; admin keys API probes these to surface a legacy 'oc_only'
+# row so the operator can migrate via the dashboard wizard.
+evolve ALL=(root) NOPASSWD: /bin/cat /Users/*/.config/gws/client_secret.json
+evolve ALL=(root) NOPASSWD: /bin/cat /Users/*/.config/gws/credentials.enc
+evolve ALL=(root) NOPASSWD: /bin/cat /Users/*/.config/gws/token_cache.json
+
+# ── 3b. Read Dropbox desktop client metadata (~/.dropbox/info.json) ────────
+# Dropbox in this pod is the macOS desktop sync app, not an OAuth/API
+# integration. The Dropbox app on the bot's user account writes a tiny
+# JSON file with the sync-folder path and subscription type; the admin
+# keys API reads it to surface the row as connected.
+evolve ALL=(root) NOPASSWD: /bin/cat /Users/*/.dropbox/info.json
+
+# ── 3c. Phase 2 integration discovery: workspace credentials ───────────────
+# Plugin-managed credentials (storage shape S3): team_bot_c's ranch plugin and
+# similar custom integrations bundle OAuth client secrets, OAuth token
+# caches, and service-account JSONs under the bot's workspace. The
+# admin keys API enumerates the directory and classifies each file by
+# content shape so plugin-managed Workspace integrations show as
+# connected on the dashboard. Without these grants the v2 probes
+# silently return NO_EVIDENCE in production.
+evolve ALL=(root) NOPASSWD: /bin/ls /Users/*/.openclaw/workspace/credentials
+evolve ALL=(root) NOPASSWD: /bin/cat /Users/*/.openclaw/workspace/credentials/*.json
+
+# ── 3d. Phase 2 integration discovery: workspace dotenv ────────────────────
+# Storage shape S5: team_bot_a-style pattern where Slack/Telegram tokens live
+# only in a workspace .env file (no auth-profiles entry). The probe
+# greps for provider-specific env-var names with non-empty values; the
+# values themselves never leave the helper (privacy — .env can hold
+# unrelated secrets like database passwords).
+evolve ALL=(root) NOPASSWD: /bin/cat /Users/*/.openclaw/workspace/.env
+# Dotenv rotation (storage="dotenv" on /api/admin/keys/<bot>/<provider>/rotate):
+# rewrites the matching <NAME>=<value> line via /tmp staging; the rewriter
+# preserves every other line (including unrelated secrets).
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-*.env /Users/*/.openclaw/workspace/.env
+
+# ── 3e. Phase 2 integration discovery: workspace manifests ─────────────────
+# Storage shape S4: bot-authored declarative descriptions of integrations
+# the bot uses at runtime (google_integration.json, gmail_fetcher.json).
+# Manifests don't carry credentials but evidence the bot's runtime
+# expects the integration to work — surfaced as a chip on rows that
+# already MATCH some other probe.
+evolve ALL=(root) NOPASSWD: /bin/ls /Users/*/.openclaw/workspace/manifests
+
+# ── 3f. Phase 2 integration discovery: system-level GitHub auth ────────────
+# Storage shape S8: gh CLI hosts.yml (OAuth tokens stored in keychain,
+# referenced from this file) and user SSH private keys. Both are
+# evidence-only — the dashboard surfaces them as chips alongside the
+# integration_token row, never as the primary status driver.
+evolve ALL=(root) NOPASSWD: /bin/cat /Users/*/.config/gh/hosts.yml
+evolve ALL=(root) NOPASSWD: /bin/ls /Users/*/.ssh
+
+# ── 3g. Quarantine DB copy (home_artifacts_monitor) ────────────────────────
+# detect_quarantine_downloads snapshots each bot's LaunchServices DB
+# (mode 0644 under mode-0700 ~/Library/Preferences/, so unreadable by
+# the evolve user directly) to a mkstemp'd /tmp path, reads the copy,
+# then unlinks it. sudo arg wildcards can cross '/'; what keeps this
+# narrow is the literal anchors — the source must end in the exact
+# LaunchServices filename (no bare-* source, roadmap 2.10) and the
+# destination in /tmp/evolve-quarantine-…sqlite, so it can't stage
+# arbitrary content the way a wildcard-source cp could. Without this
+# grant the hourly check fails sudo -n and fires a
+# quarantine_check_failed Signal per bot.
+evolve ALL=(root) NOPASSWD: /bin/cp /Users/*/Library/Preferences/com.apple.LaunchServices.QuarantineEventsV2 /tmp/evolve-quarantine-*.sqlite
+
+# ── 3h. Read content-scan workspace identity/setup docs ────────────────────
+# The content scanner (packages/analyzer/content_scan) reads these per-bot
+# identity/setup docs from ~/.openclaw/workspace and fires
+# content_scan_file_disappeared (alert severity) when one is missing or
+# unreadable. The direct read via the evolve read ACL is primary; on Linux a
+# transient ACL-mask clamp makes that read raise PermissionError, so
+# scanner._read_text falls back to `sudo cat <abs>`. Without these grants the
+# fallback hits 'sudo: a password is required' (recorded as read_error
+# sudo_rc=1) and the alert can NEVER clear during the clamp window — the
+# 2026-06-29 evo-vps flurry (70 archived content_scan_file_disappeared, all
+# sudo_rc=1) while the docs existed the whole time. Non-secret docs,
+# enumerated per file (NOT a workspace/* wildcard) so cred/token files under
+# workspace/ (credentials/*, .env) stay unreadable. The set is kept in
+# lockstep with the catalog's scanned_files_per_bot by
+# test_sudoers_workspace_doc_cat_grants.py. (AGENTS.md also has the §12 heal
+# read-fallback grant; the duplicate is harmless and keeps this block a
+# complete, self-contained mirror of the scanned set.)
+evolve ALL=(root) NOPASSWD: /bin/cat /Users/*/.openclaw/workspace/AGENTS.md
+evolve ALL=(root) NOPASSWD: /bin/cat /Users/*/.openclaw/workspace/HEARTBEAT.md
+evolve ALL=(root) NOPASSWD: /bin/cat /Users/*/.openclaw/workspace/IDENTITY.md
+evolve ALL=(root) NOPASSWD: /bin/cat /Users/*/.openclaw/workspace/MEMORY.md
+evolve ALL=(root) NOPASSWD: /bin/cat /Users/*/.openclaw/workspace/README.md
+evolve ALL=(root) NOPASSWD: /bin/cat /Users/*/.openclaw/workspace/SOUL.md
+evolve ALL=(root) NOPASSWD: /bin/cat /Users/*/.openclaw/workspace/TOOLS.md
+evolve ALL=(root) NOPASSWD: /bin/cat /Users/*/.openclaw/workspace/USER.md
+
+# ── 3i. Producer sudo-cat fallbacks: tiers / cron jobs / OC app log ─────────
+# Three more direct-read-first producers whose `sudo /bin/cat` fallback had
+# NO grant on either platform (2026-07-29 VPS denial audit — same class as
+# the §3h content-scan gap): audit_tier_drift (evolve-tiers.json),
+# audit_cron_health (cron/jobs.json), and the cost-watchdog /
+# embedding-monitor OC log-tail readers (logs/openclaw.log). On macOS the
+# ACL read always works so the fallback never fired; on Linux the OC
+# gateway mints these 0600 (the create-mode group bits become the POSIX-ACL
+# mask, capping evolve's inherited read ACE), so the fallback is load-
+# bearing until the hourly mask reassert catches up. Non-secret files:
+# tiers is model-routing config (0644 by contract), jobs.json is cron
+# schedule metadata, openclaw.log is the gateway's own app log.
+evolve ALL=(root) NOPASSWD: /bin/cat /Users/*/.openclaw/evolve-tiers.json
+evolve ALL=(root) NOPASSWD: /bin/cat /Users/*/.openclaw/cron/jobs.json
+evolve ALL=(root) NOPASSWD: /bin/cat /Users/*/.openclaw/logs/openclaw.log
+
+# ── 4. Write bot openclaw.json files (via /tmp staging only) ─────────────────
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-*.json /Users/*/.openclaw/openclaw.json
+# openclaw.json carries the gateway token + every messaging-channel bot
+# token, so it must be 0600. A bare `cp` (no -p) creates the dest at root's
+# umask → 0644 (world-readable); the config-write paths (write_oc_config,
+# safe_write_bot_config, the deploy repairs) chmod it back to 0600. Without
+# this grant that chmod is silently denied and every freshly channel-
+# connected bot's token sits world-readable until a later deploy. chmod
+# preserves the evolve read ACL, so the admin read path is unaffected.
+evolve ALL=(root) NOPASSWD: /bin/chmod 600 /Users/*/.openclaw/openclaw.json
+
+# ── 4a. Plant Spotlight-exclusion marker (.metadata_never_index) ─────────────
+# deploy._plant_never_index_marker drops an empty .metadata_never_index in
+# each bot's .openclaw/ so macOS Spotlight (mds/mdworker) stops INDEXING the
+# churny state trees (sessions.json, the per-agent sqlite, logs) — indexing
+# them is pure waste and every recursive deploy perm-pass triggers an mds
+# reindex storm (the 2026-06-24 starved-mini incident: mds_stores at 582 MB).
+# The .openclaw/ root is bot-owned and only r-x to evolve (the #3198 read
+# clamp), so the marker is planted via sudo touch. Empty + non-secret +
+# additive: it does NOT disturb the read ACL or the group/other clamp.
+# macOS-only — Spotlight doesn't exist on Linux, so the code never touches
+# there and the grant is rendered only on the macOS profile.
+evolve ALL=(root) NOPASSWD: /usr/bin/touch /Users/*/.openclaw/.metadata_never_index
+
+# ── 4b. Write bot evolve-tiers.json (via /tmp staging only) ──────────────────
+# The AI-Optimization page's reconcile / tiers-save / cascade / user-tier-
+# override writes all land in the bot-owned ~/.openclaw/evolve-tiers.json.
+# oc_model._save_tiers_file / migrate_model_roles._write_bot_owned_json stage
+# in /tmp and copy with sudo when the admin server (evolve user) can't write
+# the bot's home directly — the only sanctioned path (evolve has no
+# `sudo -u <bot>` grant). Without the cp line, 'Reconcile catalog' dies with
+# [Errno 13] Permission denied on the bot's evolve-tiers.json.
+#
+# The chown + chmod-644 grants are load-bearing. A bare `cp` (no -p) to a
+# *fresh* dest creates it root:wheel 0600 (cp runs as root). The BOT user —
+# which runs oc_model.py to read/rewrite its OWN tier config — then can't
+# read its own file, so every tier read/write 500s with [Errno 13] on
+# evolve-tiers.json until repaired (the 2026-06-16 fleet-wide repo-puller
+# heal failure: all 10 bots looping the EACCES every deploy). The writers and
+# the ensure_pod_perms self-heal (secret_config_perms.check_bot_tiers_owner-
+# ship) chown it back to the bot and chmod 644 — it is model-routing config,
+# NOT a secret, so 0644 (world-readable) is correct, unlike openclaw.json/
+# auth-profiles.json which stay 0600. Distinct dest from the openclaw.json
+# grant above.
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-tiers-*.json /Users/*/.openclaw/evolve-tiers.json
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/*/.openclaw/evolve-tiers.json
+evolve ALL=(root) NOPASSWD: /bin/chmod 644 /Users/*/.openclaw/evolve-tiers.json
+
+# ── 5. Write bot auth-profiles.json (via /tmp staging only) ──────────────────
+# Five sudo steps; the chown of the parent dir is load-bearing.
+# Without it, OC's token-refresh atomic write fails EACCES because the
+# bot user can't create tmp files in a root-owned parent dir. Symptom:
+# every Telegram message dies with 'Embedded agent failed: EACCES
+# auth-profiles.json.<uuid>.tmp' and the operator sees 'Something went
+# wrong while processing your request' in their DM. mode 600 (not 644)
+# because auth-profiles.json carries API keys; the file is bot-owned
+# after the chown so the bot still has read access.
+evolve ALL=(root) NOPASSWD: /bin/mkdir -p /Users/*/.openclaw/agents/main/agent
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/*/.openclaw/agents/main/agent
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-*.json /Users/*/.openclaw/agents/main/agent/auth-profiles.json
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/*/.openclaw/agents/main/agent/auth-profiles.json
+evolve ALL=(root) NOPASSWD: /bin/chmod 600 /Users/*/.openclaw/agents/main/agent/auth-profiles.json
+
+# ── 5a. Per-bot pairing-credentials writes (Users page) ──────────────────────
+# Spec: docs/spec-per-bot-users-management-2026-05-29.md. The admin UI's
+# Users page reads OC's per-bot pairing state from
+# /Users/<bot>/.openclaw/credentials/<provider>-{pairing,default-allowFrom}.json
+# and writes them on approve/revoke/reject (routes_bot_users.py). Reads
+# use the ACL granted by set_evolve_read_acl; writes need /tmp staging
+# + sudo /bin/cp because the files are bot-owned (mode 600 to match OC).
+# Fallback /bin/cat read covers pre-ACL bot deploys.
+evolve ALL=(root) NOPASSWD: /bin/cat /Users/*/.openclaw/credentials/*-pairing.json
+evolve ALL=(root) NOPASSWD: /bin/cat /Users/*/.openclaw/credentials/*-default-allowFrom.json
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-pairing-*.json /Users/*/.openclaw/credentials/*-pairing.json
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-pairing-*.json /Users/*/.openclaw/credentials/*-default-allowFrom.json
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/*/.openclaw/credentials/*-pairing.json
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/*/.openclaw/credentials/*-default-allowFrom.json
+evolve ALL=(root) NOPASSWD: /bin/chmod 600 /Users/*/.openclaw/credentials/*-pairing.json
+evolve ALL=(root) NOPASSWD: /bin/chmod 600 /Users/*/.openclaw/credentials/*-default-allowFrom.json
+
+# ── 5b. Google Workspace MCP credentials writes (skill install) ─────────────
+# Spec: docs/spec-google-workspace-suite-2026-06-04.md §8.
+# The taylorwilsdon/google_workspace_mcp server reads OAuth credentials
+# from <email>.json files under WORKSPACE_MCP_CREDENTIALS_DIR. The
+# Evolve token shim (skills/google_workspace_token_shim.py) translates
+# auth-profiles.json into that shape at install time and on each deploy.
+# Files are bot-owned (mode 600) so /tmp staging + sudo /bin/cp is needed;
+# the dir tree lives under .openclaw/ so a single grant covers the whole
+# tree without intersecting other skills' sudoers rules.
+evolve ALL=(root) NOPASSWD: /bin/mkdir -p /Users/*/.openclaw/google_workspace_mcp/credentials
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/*/.openclaw/google_workspace_mcp
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown -R * /Users/*/.openclaw/google_workspace_mcp
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-gws-*.json /Users/*/.openclaw/google_workspace_mcp/credentials/*.json
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/*/.openclaw/google_workspace_mcp/credentials/*.json
+evolve ALL=(root) NOPASSWD: /bin/chmod 600 /Users/*/.openclaw/google_workspace_mcp/credentials/*.json
+evolve ALL=(root) NOPASSWD: /bin/cat /Users/*/.openclaw/google_workspace_mcp/credentials/*.json
+evolve ALL=(root) NOPASSWD: /bin/rm /Users/*/.openclaw/google_workspace_mcp/credentials/*.json
+evolve ALL=(root) NOPASSWD: /bin/rm -rf /Users/*/.openclaw/google_workspace_mcp
+
+# ── 5c. CLI device-scope invariant (oc_cli_device.py) ───────────────────────
+# The OC 2026.6 upgrade narrowed every bot's own CLI device to
+# operator.read in ~/.openclaw/devices/paired.json — `openclaw message
+# send` and defer fires died pod-wide with 'scope upgrade pending
+# approval', and the approval flow can't self-serve (each CLI attempt
+# supersedes the previous request). ensure_pod_perms widens the scope
+# lists back (and pre-seeds a day-1 entry from/with the CLI identity);
+# the files are bot-owned mode 600, so the evolve-user daemon path needs
+# cat fallback reads + the /tmp staging write ritual. Staging prefix is
+# pinned to evolve-device-*.json; dirs get 700 to match what the OC CLI
+# itself creates.
+evolve ALL=(root) NOPASSWD: /bin/cat /Users/*/.openclaw/devices/paired.json
+evolve ALL=(root) NOPASSWD: /bin/cat /Users/*/.openclaw/identity/device.json
+evolve ALL=(root) NOPASSWD: /bin/mkdir -p /Users/*/.openclaw/devices
+evolve ALL=(root) NOPASSWD: /bin/mkdir -p /Users/*/.openclaw/identity
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/*/.openclaw/devices
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/*/.openclaw/identity
+evolve ALL=(root) NOPASSWD: /bin/chmod 700 /Users/*/.openclaw/devices
+evolve ALL=(root) NOPASSWD: /bin/chmod 700 /Users/*/.openclaw/identity
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-device-*.json /Users/*/.openclaw/devices/paired.json
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-device-*.json /Users/*/.openclaw/identity/device.json
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/*/.openclaw/devices/paired.json
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/*/.openclaw/identity/device.json
+evolve ALL=(root) NOPASSWD: /bin/chmod 600 /Users/*/.openclaw/devices/paired.json
+evolve ALL=(root) NOPASSWD: /bin/chmod 600 /Users/*/.openclaw/identity/device.json
+
+# ── 6. Run openclaw CLI as bot users (cron, status, gateway queries) ────────
+# Needed for: openclaw cron list, openclaw status, openclaw models list,
+# deploy.py's plugins install / doctor --fix / config validate / gateway
+# restart subprocess calls, etc. The CLI must run as the bot user to
+# connect to the bot's gateway socket.
+#
+# SETENV tag allows the caller to pass OPENCLAW_CONFIG_PATH via
+# `sudo --preserve-env=OPENCLAW_CONFIG_PATH`. deploy.py uses this when
+# validating a STAGED temp config before touching the live one
+# (_write_bot_config_safely). Without SETENV, sudo strips the env var
+# and validation targets the live config — which would defeat the
+# pre-write safety check.
+evolve ALL=(ALL) NOPASSWD: SETENV: /opt/homebrew/lib/node_modules/openclaw/bin/openclaw
+
+# ── 7. Run oc_model.py and oc_keys.py as bot users ────────────────────────
+# Needed for: model catalog reads/writes, API key presence checks.
+evolve ALL=(ALL) NOPASSWD: /usr/bin/python3 /Users/Shared/evolve-repo/packages/analyzer/oc_model.py *
+evolve ALL=(ALL) NOPASSWD: /usr/bin/python3 /Users/Shared/evolve-repo/packages/analyzer/oc_keys.py *
+
+# ── 7b. Refresh the heal drift baseline as the bot user ────────────────────
+# Admin UI 'Accept as baseline' (api_security_accept_drift) shells out to
+# backup.py --commit-baseline-local under sudo -H -u <bot_user>. The bot's
+# workspace .git/ dir is bot-owned with only a read ACL for evolve — the
+# previous in-process call from the admin daemon failed with EACCES on
+# .git/index.lock. Same CLI as deploy.py's _baseline_refresh_as_bot_user
+# (which runs as root and doesn't need this grant).
+evolve ALL=(ALL) NOPASSWD: /usr/bin/python3 /Users/Shared/evolve-repo/packages/analyzer/backup.py --commit-baseline-local *
+
+# ── 7a. Run application_scanner.py as bot users ────────────────────────────
+# Needed for: workspace scan triggered by admin UI (Files & Resources tab).
+# The scanner must run as the bot user to read its workspace and write manifests.
+# The plugin API path (delegating back to this server) creates a deadlock;
+# admin server always uses this subprocess grant directly.
+# Interpreter is the VENV python, not {python3}: the scanner imports the
+# packaged evolve_admin, absent from macOS system python 3.9. web/server.py
+# renders the same path via config.scanner_python() — the argv must match
+# this grant exactly or sudo demands a password and every scan dies.
+evolve ALL=(ALL) NOPASSWD: SETENV: /Users/Shared/evolve-venv/bin/python3 /Users/Shared/evolve-repo/packages/analyzer/application_scanner.py *
+
+# ── 7c. Apply an OpenClaw upgrade from the admin UI ─────────────────────────
+# Spec: docs/spec-oc-upgrade-from-ui-2026-07-28.md §4. The banner's 'Run
+# upgrade now' button posts to /api/oc/upgrade/apply, which shells out to
+# this helper as root because the global node_modules dir is owned by the
+# host's admin user and `evolve` (staff/wheel, not admin) genuinely cannot
+# write it.
+#
+# The obvious grant — `<npm> install -g --prefix=<prefix> openclaw@*` — is
+# NOT what this is, deliberately. sudo's `*` is fnmatch-style: it doesn't
+# cross a '/', which rules out `openclaw@file:///…`, but it DOES match npm's
+# alias syntax. `openclaw@npm:some-other-package` satisfies that grant and
+# runs an arbitrary package's postinstall AS ROOT — the version field is a
+# package-spec field, so the grant's apparent narrowness is an illusion.
+# Same failure class as the 2026-04-24 outage the preflight was built to
+# prevent, elevated to root and reachable from an HTTP endpoint.
+#
+# Instead: one interpreter running one script (the §11h marker_embed_helper
+# shape). The helper takes ONLY a report id, re-validates its shape before
+# touching the filesystem, re-runs the gates, and resolves the version to
+# install FROM the persisted report — so the web layer never names a package
+# spec and there is nothing to inject. The npm temp-dir cleanup and the
+# macOS user-LaunchAgent sweep run inside the helper (already root, already
+# knows the npm prefix) rather than as two more `rm` grants.
+# Interpreter is the VENV python (it imports evolve_admin), matching §7a;
+# oc_upgrade_apply.helper_script_path() renders the identical path from the
+# same platform_profile deploy checkout, so the argv cannot drift.
+evolve ALL=(root) NOPASSWD: /Users/Shared/evolve-venv/bin/python3 /Users/Shared/evolve-repo/packages/admin/evolve_admin/oc_upgrade_apply.py --report-id *
+
+# ── 8. Check and restart bot gateways ────────────────────────────────────────
+evolve ALL=(root) NOPASSWD: /bin/launchctl list *
+evolve ALL=(root) NOPASSWD: /bin/launchctl kickstart -k system/ai.openclaw.*
+evolve ALL=(root) NOPASSWD: /bin/launchctl bootstrap system /Library/LaunchDaemons/ai.openclaw.*.plist
+evolve ALL=(root) NOPASSWD: /bin/launchctl bootout system/ai.openclaw.*
+evolve ALL=(root) NOPASSWD: /bin/launchctl kickstart -k gui/*/ai.openclaw.*
+evolve ALL=(root) NOPASSWD: /bin/launchctl bootstrap gui/* /Library/LaunchAgents/ai.openclaw.*.plist
+evolve ALL=(root) NOPASSWD: /bin/launchctl bootstrap gui/* /Users/*/Library/LaunchAgents/ai.openclaw.*.plist
+evolve ALL=(root) NOPASSWD: /bin/launchctl bootout gui/*/ai.openclaw.*
+evolve ALL=(root) NOPASSWD: /bin/launchctl kickstart -k system/ai.evolve.*
+
+# ── 8b. Bot provisioning pipeline (wizard /api/wizard/provision endpoint
+# + the conversational `evo add-bot` chain) ─────────────────────────────────
+# The provision pipeline (packages/admin/evolve_admin/provisioning.py)
+# executes inside the admin-ui daemon as the `evolve` user — both for
+# the wizard endpoint and for the conversational `evo add-bot` chain.
+# The CLI path (`sudo evolve-admin provision-bot ...`) runs under the
+# operator's unrestricted sudo, so these commands work silently there —
+# but the daemon path hits the `evolve` sudoers, which without these
+# grants dies at stage 2 (create_macos_user) with `sudo: a terminal is
+# required to read the password`. Surfaced 2026-05-31 mid-onboarding
+# for the test pod's 9th bot; grants shipped in #1892, were dropped by
+# an unrelated renderer edit in #1956 (the pin tests in
+# test_provision_pipeline_sudoers.py were quarantined instead of
+# treated as the regression they flagged), restored for add-bot M2.
+#
+# Stage 2 (create_macos_user) — dscl + createhomedir + rollback.
+evolve ALL=(root) NOPASSWD: /usr/bin/dscl . -create /Users/*
+evolve ALL=(root) NOPASSWD: /usr/sbin/createhomedir -c -u *
+evolve ALL=(root) NOPASSWD: /usr/bin/dscl . -delete /Users/*
+evolve ALL=(root) NOPASSWD: /bin/rm -rf /Users/*
+#
+# Stage 3 (create_openclaw_dir) — parent .openclaw/ dir creation,
+# ownership, and permissions (plus the wrong-owner repair path's -R
+# form and the rollback rm). The two chown forms also serve the
+# wizard verify gauntlet's Check-1 Fix button (ownership repair of
+# a flagged path back to bot:staff — wizard_verify.repair_ownership;
+# spec docs/spec-wizard-verification-gauntlet-2026-05-30.md §5).
+# Pinned by test_wizard_verify_sudoers.py — formerly a standalone
+# §5c block; merged here when #2664 and the M2 restoration of this
+# section each re-added the same lines after #1956 dropped them.
+evolve ALL=(root) NOPASSWD: /bin/mkdir -p /Users/*/.openclaw
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/*/.openclaw
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown -R * /Users/*/.openclaw
+evolve ALL=(root) NOPASSWD: /bin/chmod 700 /Users/*/.openclaw
+evolve ALL=(root) NOPASSWD: /bin/rm -rf /Users/*/.openclaw
+#
+# Stage 4 (openclaw onboard) is covered by the existing
+# `evolve ALL=(ALL) NOPASSWD: SETENV: <oc_path>` grant below; the
+# pipeline invokes `sudo -u <bot> -H <oc_path> ...` so sudo matches
+# that grant directly. No new grant needed here.
+#
+# Stage 6 (deploy_bot → install_bot_gateway_plist) — write the
+# per-bot OpenClaw gateway LaunchDaemon. The launchctl
+# bootstrap/bootout verbs are already granted in section 8; these
+# cover the log-dir creation and the Scheduler seam's plist write
+# ritual (/tmp staging + cp + chown root:wheel + chmod 644). The
+# /tmp/*.plist source pattern matches the seam's unprefixed
+# tempfile staging — same shape as the ai.evolve.* plist grants
+# in section 12. chown grants use bare `*` for the user:group arg:
+# macOS visudo rejects `:` inside the literal argument pattern
+# (PR #1906 shipped `root:wheel` and bricked refresh-sudoers).
+evolve ALL=(root) NOPASSWD: /bin/mkdir -p /Users/*/.openclaw/logs
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/*/.openclaw/logs
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/*.plist /Library/LaunchDaemons/ai.openclaw.*-gateway.plist
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Library/LaunchDaemons/ai.openclaw.*-gateway.plist
+evolve ALL=(root) NOPASSWD: /bin/chmod 644 /Library/LaunchDaemons/ai.openclaw.*-gateway.plist
+#
+# Stage 6 (deploy_bot → set_evolve_read_acl) — the ACL ritual that
+# makes every later evolve-side read of the bot's .openclaw/ work
+# without per-path sudo (CLAUDE.md §File Access Pattern). All of
+# these run check=False in deploy.py, so without the grants they
+# fail SILENTLY and the bot comes up unreadable to the admin
+# daemon — the add-bot M2 pod proof surfaced exactly that (smoke
+# check reported openclaw.json 'not found' on a healthy bot).
+# Same multi-word-ACE wildcard shape as the workspace/manifests
+# grants above.
+evolve ALL=(root) NOPASSWD: /bin/chmod +a * /Users/*/.openclaw
+evolve ALL=(root) NOPASSWD: /bin/chmod -R +a * /Users/*/.openclaw
+evolve ALL=(root) NOPASSWD: /bin/chmod -N /Users/*/.openclaw/credentials
+evolve ALL=(root) NOPASSWD: /bin/chmod 700 /Users/*/.openclaw/credentials
+evolve ALL=(root) NOPASSWD: /bin/chmod -N /Users/*/.openclaw/profiles/*.md
+evolve ALL=(root) NOPASSWD: /bin/chmod -N /Users/*/.openclaw/pm-inbox-github-tokens.json
+evolve ALL=(root) NOPASSWD: /bin/chmod 600 /Users/*/.openclaw/pm-inbox-github-tokens.json
+evolve ALL=(root) NOPASSWD: /bin/chmod +a * /Users/*/.openclaw/workspace/evolve
+evolve ALL=(root) NOPASSWD: /bin/chmod -R +a * /Users/*/.openclaw/workspace/evolve
+
+# ── 8c. retire-bot archive sudo-cp fallback ─────────────────────────────────
+# When the API path (admin-ui as evolve) runs `retire_bot`, the archive
+# step shutil.copytree's the bot's /Users/<bot>/.openclaw/ tree into the
+# shared archive dir. Plugin runtimes (e.g. browser-automation) sometimes
+# create subdirs under .openclaw/ with restrictive modes that don't
+# inherit the evolve-user read ACL — shutil hits EACCES on the subdir
+# and the archive fails. retire._sudo_cp_tree_fallback retries the copy
+# as root + chowns the result to evolve so the post-copy audit walks
+# the tree cleanly. These grants are what makes that fallback work in
+# the API path; the CLI deploy/retire path runs as root and bypasses
+# the fallback entirely. Surfaced 2026-06-01 when a wizard-Delete
+# failed in the API path but the same retire-bot CLI invocation
+# succeeded.
+evolve ALL=(root) NOPASSWD: /bin/rm -rf /Users/Shared/evolve/archived-bots/*
+evolve ALL=(root) NOPASSWD: /bin/cp -R /Users/*/.openclaw /Users/Shared/evolve/archived-bots/*/openclaw
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown -R * /Users/Shared/evolve/archived-bots/*
+
+# ── 9. Manage evolve's own launchd jobs ──────────────────────────────────────
+evolve ALL=(root) NOPASSWD: /bin/launchctl bootout system/ai.evolve.*
+evolve ALL=(root) NOPASSWD: /bin/launchctl bootstrap system /Library/LaunchDaemons/ai.evolve.*.plist
+evolve ALL=(root) NOPASSWD: /bin/launchctl bootout system/ai.openclaw.evolve.*
+evolve ALL=(root) NOPASSWD: /bin/launchctl bootstrap system /Library/LaunchDaemons/ai.openclaw.evolve.*.plist
+evolve ALL=(root) NOPASSWD: /bin/launchctl disable system/ai.evolve.*
+evolve ALL=(root) NOPASSWD: /bin/launchctl enable system/ai.evolve.*
+evolve ALL=(root) NOPASSWD: /bin/rm /Library/LaunchDaemons/ai.evolve.*.plist
+evolve ALL=(root) NOPASSWD: /bin/rm /Library/LaunchDaemons/ai.openclaw.evolve.*.plist
+
+# ── 9a. Repair permissions on shared dirs after a+rX pass ──────────────────
+evolve ALL=(root) NOPASSWD: /bin/chmod 1777 /Users/Shared/evolve
+evolve ALL=(root) NOPASSWD: /bin/chmod 1777 /Users/Shared/evolve/*/turns
+evolve ALL=(root) NOPASSWD: /bin/chmod 777 /Users/Shared/evolve/proposals/pending
+evolve ALL=(root) NOPASSWD: /bin/chmod 777 /Users/Shared/evolve/proposals/approved
+evolve ALL=(root) NOPASSWD: /bin/chmod 777 /Users/Shared/evolve/proposals/rejected
+evolve ALL=(root) NOPASSWD: /bin/chmod 777 /Users/Shared/evolve/proposals/deployed
+evolve ALL=(root) NOPASSWD: /bin/chmod 777 /Users/Shared/evolve/proposals/validation-results
+evolve ALL=(root) NOPASSWD: /bin/chmod 777 /Users/Shared/evolve/feedback
+evolve ALL=(root) NOPASSWD: /bin/chmod 777 /Users/Shared/evolve/tests
+# 2026-07-29 VPS denial-audit wave 2 — shared-store heal shapes that had
+# NO grant on either platform; each fired per deploy/heal and died
+# 'command not allowed', silently (check=False).
+# (a) Proposal lifecycle subdir ownership normalization. Non-recursive
+# chown — the §9b `chown -R` grants don't match a plain chown argv.
+# The caller stat-gates on current ownership now, so this fires only
+# on genuine drift.
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/Shared/evolve/proposals/pending
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/Shared/evolve/proposals/snoozed
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/Shared/evolve/proposals/applied
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/Shared/evolve/proposals/archived
+# (b) Per-bot shared-store subdirs (deploy._create_bot_subdir): the
+# mkdir/chmod/chown trio falls to sudo when the bot's gateway won the
+# creation race and the dir landed bot-owned. One wildcard component
+# per shape — visudo globs don't cross '/', so each pattern pins
+# exactly the per-bot level it names. (chmod 1777 */turns is already
+# granted above.)
+evolve ALL=(root) NOPASSWD: /bin/mkdir -p /Users/Shared/evolve/metrics/*
+evolve ALL=(root) NOPASSWD: /bin/mkdir -p /Users/Shared/evolve/annotations/*
+evolve ALL=(root) NOPASSWD: /bin/mkdir -p /Users/Shared/evolve/*/turns
+evolve ALL=(root) NOPASSWD: /bin/mkdir -p /Users/Shared/evolve/*/spans
+evolve ALL=(root) NOPASSWD: /bin/mkdir -p /Users/Shared/evolve/*/cascade
+evolve ALL=(root) NOPASSWD: /bin/mkdir -p /Users/Shared/evolve/*/recommendations
+evolve ALL=(root) NOPASSWD: /bin/chmod 1777 /Users/Shared/evolve/metrics/*
+evolve ALL=(root) NOPASSWD: /bin/chmod 1777 /Users/Shared/evolve/*/recommendations
+evolve ALL=(root) NOPASSWD: /bin/chmod 755 /Users/Shared/evolve/annotations/*
+evolve ALL=(root) NOPASSWD: /bin/chmod 755 /Users/Shared/evolve/*/spans
+evolve ALL=(root) NOPASSWD: /bin/chmod 755 /Users/Shared/evolve/*/cascade
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/Shared/evolve/metrics/*
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/Shared/evolve/annotations/*
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/Shared/evolve/*/turns
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/Shared/evolve/*/spans
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/Shared/evolve/*/cascade
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/Shared/evolve/*/recommendations
+
+# ── 9b. Grant evo user write ACL on proposal / signal stores ───────────────
+# Phase E.2.b of docs/spec-evo-account-separation-2026-05-25.md split evo
+# off the privileged `evolve` account onto its own `evo` macOS user. Evo's
+# MCP tools still need to rename/delete files in {sharedDir}/proposals/ and
+# /signals/ (state transitions via arbiter.store / signals.store). The dirs
+# stay owned by evolve:wheel; an inherited ACL grants evo the write/delete
+# it needs. ensure_pod_perms applies + re-asserts these on every pass; the
+# sudoers grants here are the admin-daemon code path (no operator at the
+# keyboard). Wildcards stand in for the multi-word `user:evo allow …` ACL
+# string (visudo rejects bare colons) and for the `evolve:wheel` owner spec
+# (same colon-rejection reason — matches the §12 chown grants pattern).
+evolve ALL=(root) NOPASSWD: /bin/chmod +a * /Users/Shared/evolve/proposals
+evolve ALL=(root) NOPASSWD: /bin/chmod -R +a * /Users/Shared/evolve/proposals
+evolve ALL=(root) NOPASSWD: /bin/chmod +a * /Users/Shared/evolve/signals
+evolve ALL=(root) NOPASSWD: /bin/chmod -R +a * /Users/Shared/evolve/signals
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown -R * /Users/Shared/evolve/proposals
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown -R * /Users/Shared/evolve/signals
+# keystore/ + config_intents/ joined EVO_WRITE_SHARED_SUBDIRS after
+# these grants were first written (2026-06-06 config_intents PR) —
+# _ensure_evo_write_acl fired for them on every pass and died
+# silently (2026-07-29 VPS denial-audit wave 2).
+evolve ALL=(root) NOPASSWD: /bin/chmod +a * /Users/Shared/evolve/keystore
+evolve ALL=(root) NOPASSWD: /bin/chmod -R +a * /Users/Shared/evolve/keystore
+evolve ALL=(root) NOPASSWD: /bin/chmod +a * /Users/Shared/evolve/config_intents
+evolve ALL=(root) NOPASSWD: /bin/chmod -R +a * /Users/Shared/evolve/config_intents
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown -R * /Users/Shared/evolve/keystore
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown -R * /Users/Shared/evolve/config_intents
+# Per-bot shared-store subdir read ACEs (_create_bot_subdir's
+# acl_perms leg — pairs with the §9a mkdir/chmod/chown trio) and
+# the deploy-checkout packages/ read ACL (cost_ledger imports).
+evolve ALL=(root) NOPASSWD: /bin/chmod +a * /Users/Shared/evolve/metrics/*
+evolve ALL=(root) NOPASSWD: /bin/chmod +a * /Users/Shared/evolve/annotations/*
+evolve ALL=(root) NOPASSWD: /bin/chmod +a * /Users/Shared/evolve/*/turns
+evolve ALL=(root) NOPASSWD: /bin/chmod +a * /Users/Shared/evolve/*/spans
+evolve ALL=(root) NOPASSWD: /bin/chmod +a * /Users/Shared/evolve/*/cascade
+evolve ALL=(root) NOPASSWD: /bin/chmod -R +a * /Users/Shared/evolve-repo/packages
+
+# ── 9c. Delivery-monitor heal: probe + one-shot restart of app jobs ─────────
+# Spec: docs/spec-proactive-delivery-monitor-2026-06-10.md §8 (U2.2 heal).
+# The delivery monitor heals a missed user-facing scheduled action (plist
+# labels ai.evolve.<bot>.<app>) with a one-shot kickstart — deliberately
+# WITHOUT -k: these are run-once calendar jobs, and -k would also kill a
+# possibly-in-flight run. (sudoers matches the full argv, so the §8
+# `kickstart -k system/ai.evolve.*` grant does not cover this form.)
+# `print` is the heal-path load probe and doubles as the sudo -n grant
+# probe — a denial is reported as "couldn't attempt the restart", never
+# silence. The plist-exists-not-loaded case re-bootstraps via the §9
+# grant above (bootstrap system /Library/LaunchDaemons/ai.evolve.*.plist)
+# after a plutil -lint gate (plutil needs no grant — LaunchDaemon plists
+# are world-readable).
+evolve ALL=(root) NOPASSWD: /bin/launchctl print system/ai.evolve.*
+evolve ALL=(root) NOPASSWD: /bin/launchctl kickstart system/ai.evolve.*
+
+# ── 9d. Retire-bot orphan sweep: per-bot {sharedDir}/<bot>/ dir ─────────────
+# retire_orphans.sweep_orphan_state deletes {sharedDir}/<bot>/ on retire.
+# Its leaf files (e.g. <bot>/cascade/tier1_active.json) are written by the
+# bot's own gateway process and owned by the bot's macOS UID at mode 600,
+# so the evolve admin can't unlink them and shutil.rmtree hits EACCES; it
+# retries via `sudo /bin/rm -rf`. Under `sudo evolve-admin retire-bot` the
+# CLI already runs as root, but the admin-daemon (web UI) retire path runs
+# as evolve and needs this grant. macOS visudo globs don't cross '/', so
+# the wildcard matches exactly one path component — a direct child of the
+# shared dir (the <bot> dir) — and can neither match the shared dir itself
+# nor escape it. evolve already owns + manages this tree, so this adds no
+# destructive reach it doesn't already have on its own children.
+evolve ALL=(root) NOPASSWD: /bin/rm -rf /Users/Shared/evolve/*
+
+# ── 10. Write network.json (via /tmp staging only) ──────────────────────────
+# network.json may be root-owned if setup wizard ran as root.
+# Admin UI routes write it via this grant when direct write fails.
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-network-*.json /Users/Shared/evolve/network.json
+evolve ALL=(root) NOPASSWD: /bin/chmod 644 /Users/Shared/evolve/network.json
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/Shared/evolve/network.json
+
+# ── 10a. Write install.json (via /tmp staging only) ─────────────────────────
+# deploy.write_install_json / record_bot_deploy write the version record after
+# every upgrade. The fast path is a direct write_text (evolve owns {shared} on
+# macOS), but at bootstrap install.json can be root-owned (the CLI/root install
+# path created it) — then the daemon (evolve, e.g. the web Upgrade route) falls
+# back to /tmp staging + sudo cp. Without these grants that fallback prompts for
+# a password and the per-bot deploy aborts. The chown lands it evolve-owned so
+# the fast path wins thereafter (parity with macOS). Source prefix = _secure_stage
+# (`/tmp/evolve-stage-*.json`). Mirrors the network.json trio above.
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-stage-*.json /Users/Shared/evolve/install.json
+evolve ALL=(root) NOPASSWD: /bin/chmod 644 /Users/Shared/evolve/install.json
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/Shared/evolve/install.json
+
+# ── 11. Write LaunchDaemon plists (via /tmp staging only) ───────────────────
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/*.plist /Library/LaunchDaemons/ai.evolve.*.plist
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/*.plist /Library/LaunchDaemons/ai.openclaw.evolve.*.plist
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Library/LaunchDaemons/ai.evolve.*.plist
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Library/LaunchDaemons/ai.openclaw.evolve.*.plist
+evolve ALL=(root) NOPASSWD: /bin/chmod 644 /Library/LaunchDaemons/ai.evolve.*.plist
+evolve ALL=(root) NOPASSWD: /bin/chmod 644 /Library/LaunchDaemons/ai.openclaw.evolve.*.plist
+
+# ── 11b. Write per-bot app manifests ────────────────────────────────────────
+# Manifests live with the bot at /Users/<bot>/.openclaw/workspace/manifests/.
+# Scanner grants evolve a write ACL on this dir when it runs as the bot;
+# these sudoers grants are the bootstrap path for the first save (before any
+# scan has run) and the fallback for cases where the ACL gets stripped.
+#
+# The mkdir+chown+chmod set mirrors what set_evolve_read_acl(bot_id) in
+# deploy.py runs on every deploy. Without these grants, the dir-creation
+# block in that function silently no-ops when invoked from the evolve-user
+# admin daemon (e.g. UI 'Deploy' button) and the bot ends up without
+# workspace/manifests/. The first forge install onto that bot then fails
+# at Step 10 with 'manifest not found' because the seed save can't create
+# the dir. See 2026-06-01 task-manager install regression.
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-manifest-*.json /Users/*/.openclaw/workspace/manifests/*.json
+evolve ALL=(root) NOPASSWD: /bin/mkdir -p /Users/*/.openclaw/workspace/manifests
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/*/.openclaw/workspace/manifests
+evolve ALL=(root) NOPASSWD: /bin/chmod +a * /Users/*/.openclaw/workspace/manifests
+evolve ALL=(root) NOPASSWD: /bin/chmod -R +a * /Users/*/.openclaw/workspace/manifests
+
+# ── 11c. Write per-bot INSTALLED_APPS.md ────────────────────────────────────
+# Generated from manifest state by app_registry.regenerate_installed_apps_md.
+# Direct write usually succeeds (workspace root has the evolve ACL); this
+# grant is the /tmp staging fallback for fresh bots before set_evolve_read_acl
+# has run.
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-*.md /Users/*/.openclaw/workspace/INSTALLED_APPS.md
+
+# ── 11d. Write per-bot audit pod_config.json ────────────────────────────────
+# Synced slice of network.json the audit_runner reads at each tick.
+# See packages/admin/evolve_admin/applications/audit_pod_config.py.
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-pod-config-*.json /Users/*/.openclaw/workspace/evolve/pod_config.json
+evolve ALL=(root) NOPASSWD: /bin/chmod 644 /Users/*/.openclaw/workspace/evolve/pod_config.json
+evolve ALL=(root) NOPASSWD: /bin/mkdir -p /Users/*/.openclaw/workspace/evolve
+
+# ── 11f. Write per-bot workspace .git/config (backup remote management) ──────
+# Both the github onboarding flow (_ensure_github_remote) and the github
+# token rotation flow (api_admin_rotate_github_integration_token) write the
+# bot's workspace .git/config via /tmp staging. The file is bot-owned and
+# the `workspace` root has no inherited write ACL for evolve (only
+# workspace/evolve/ does), so sudo cp is the only path. Missing this grant
+# was the root cause of the 'sudo: a password is required' failure seen
+# from the Backup → Cloud wizard's Set Up button.
+# chmod 600, not 644: under https_pat auth the remote URL embeds a GitHub
+# PAT, making this a token-bearing file (BOT_SECRET_CONFIG_RELPATHS) — 644
+# left the token world-readable on a multi-user box. Bot keeps owner rw;
+# evolve reads via the inherited ACL (+ the sudo cat above).
+evolve ALL=(root) NOPASSWD: /bin/cat /Users/*/.openclaw/workspace/.git/config
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-*.gitconfig /Users/*/.openclaw/workspace/.git/config
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/*/.openclaw/workspace/.git/config
+evolve ALL=(root) NOPASSWD: /bin/chmod 600 /Users/*/.openclaw/workspace/.git/config
+
+# ── 11e. Kick the per-bot audit_runner for on-demand requests ────────────────
+# When UI / CLI / evo audit triggers an audit, the admin writes an inbox file
+# then invokes the runner via this sudo grant so the bot acts immediately
+# rather than waiting for its next hourly tick. See spec §7.3.
+#
+# Note: the runas spec MUST be (ALL), not (*). macOS sudo's parser accepts
+# (*) syntactically and `sudo -l` displays it, but at match time it doesn't
+# match any actual user — every kick silently failed with "user evolve is
+# not allowed to execute ... as <bot>". The Popen(stderr=DEVNULL) in
+# audit_dispatch._kick_runner swallowed the error and the dispatch returned
+# ok=true, so the failure was invisible until 2026-05-26 diagnosis.
+evolve ALL=(ALL) NOPASSWD: /opt/homebrew/bin/python3 /Users/Shared/evolve-repo/packages/analyzer/app_audit_runner.py *
+
+# ── 11g. First-party app install (install_evolve_app) — shared manifest ──────
+# install_evolve_infra_jobs loops FIRST_PARTY_EVOLVE_APPS → install_evolve_app,
+# which stages each app's manifest.json to /tmp and sudo-cp's it into the shared
+# applications dir. The manual `install-infra-jobs` CLI runs as root so the cp
+# lands; the repo-puller LaunchDaemon re-runs the same function as the `evolve`
+# user on every infra-touching pull (repo_puller.py), where only granted commands
+# land. Without these two grants the manifest step password-prompts and returns
+# early (install_evolve_app `if not result.success: return result`) — flipping
+# DeployResult.success=False on every post-pull app refresh (#2922 follow-up,
+# same root cause as the doc-seeding grants in §12). On post-evo-separation pods
+# /Users/Shared/evolve/applications/evolve is owned by the `evo` user, so evolve needs root
+# here. Source pinned to install_evolve_app's /tmp/evolve-app-* prefix; dst pinned
+# to the evolve applications dir (the `*` is the app_id — sudoers globs never
+# cross a '/') so a compromised evolve account can only overwrite a first-party
+# manifest with a /tmp-staged file — the same blast-radius limit as the §11b
+# per-bot manifest grant.
+evolve ALL=(root) NOPASSWD: /bin/mkdir -p /Users/Shared/evolve/applications/evolve
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-app-*.json /Users/Shared/evolve/applications/evolve/*.json
+
+# ── 11h. Stamp provenance markers on bot-owned workspace files (Sync 'Fix') ──
+# The Sync Applications modal's 'Fix' on a missing-marker row stamps a
+# provenance marker onto a bot-owned script (workspace/scripts/*.py,
+# *-cron.sh, …). evolve has ACL READ but not write on those paths, so the
+# admin server computes the marked content as evolve (read is enough) and
+# this single fixed-path helper, run as root, applies it. The helper is the
+# security boundary — NOT a broad cp wildcard: it re-validates that the
+# destination is an existing regular file (never a symlink), resolves under
+# {home}/<bot>/.openclaw/workspace/, and is can_app_own-eligible (no secret /
+# telemetry / OpenClaw-standard path), then writes preserving the prior mode
+# and chowning to the bot. A per-path cp grant can't express the arbitrary
+# depth + extensions of workspace scripts (a sudoers '*' never crosses '/'),
+# which is exactly why a fixed-path helper that validates its own args is the
+# right shape. Interpreter is the VENV python (it imports evolve_admin's
+# ownership policy), matching §7a. Mirrors marker_embed_helper.helper_script_path().
+evolve ALL=(root) NOPASSWD: /Users/Shared/evolve-venv/bin/python3 /Users/Shared/evolve-repo/packages/admin/evolve_admin/applications/marker_embed_helper.py *
+
+# ── 12. Write bot AGENTS.md and workspace files ─────────────────────────────
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown -R * /Users/*/.openclaw/workspace/evolve
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-*.md /Users/*/.openclaw/workspace/evolve/*.md
+# workspace/{AGENTS,SOUL,MEMORY,README}.md — the primary bot's identity docs,
+# fallback when the ACL write isn't yet set by set_evolve_read_acl.
+# bot_doc_seeding.write_doc stages each to /tmp and sudo-cp's it into the
+# bot-owned workspace (deploy.install_bot_docs / install_evolve_bot_docs,
+# role="primary"). The manual `install-infra-jobs` path runs as root so every
+# cp lands; the repo-puller LaunchDaemon re-runs install_evolve_infra_jobs as
+# the `evolve` user after an infra-touching pull, where only granted filenames
+# land — without the SOUL/MEMORY/README cp + the chmod 644 below, those docs
+# don't fully land and write_doc's final chmod password-prompts, flipping
+# DeployResult.success=False (a spurious infra-install failure; PR #2921
+# reviewer follow-up). dst is pinned per-filename (not a `*.md` wildcard) so
+# the /tmp-staged source can only overwrite these four Evolve-owned identity
+# docs — the same blast-radius limit as the long-standing AGENTS.md grant.
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-*.md /Users/*/.openclaw/workspace/AGENTS.md
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-*.md /Users/*/.openclaw/workspace/SOUL.md
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-*.md /Users/*/.openclaw/workspace/MEMORY.md
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-*.md /Users/*/.openclaw/workspace/README.md
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/*/.openclaw/workspace/AGENTS.md
+# write_doc runs `mkdir -p <workspace>` before each cp; the §11b grant covers
+# only the /manifests child, not the workspace root. Almost always a no-op,
+# but sudo needs the grant or it password-prompts on the evolve-user path.
+evolve ALL=(root) NOPASSWD: /bin/mkdir -p /Users/*/.openclaw/workspace
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/*/.openclaw/workspace/*.md
+evolve ALL=(root) NOPASSWD: /bin/chmod 644 /Users/*/.openclaw/workspace/*.md
+# workspace/procedures/ — install_evolve_bot_docs creates this dir for the
+# primary bot and chowns it to the bot user (mkdir + chown the DIR). Same
+# evolve-user repo-puller rationale as the docs above.
+evolve ALL=(root) NOPASSWD: /bin/mkdir -p /Users/*/.openclaw/workspace/procedures
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/*/.openclaw/workspace/procedures
+# Per-app procedure FILES — install_evolve_app (the §11g manifest's sibling step)
+# stages each app's procedure.md to /tmp and sudo-cp's it to
+# <bot>/.openclaw/workspace/procedures/<app>.md, then chowns it to the bot user.
+# The dir grants above cover only the DIR; a sudoers `*` never crosses a '/', so
+# the per-file cp + chown need their own grants or the evolve-user repo-puller
+# path password-prompts on every app refresh. Source pinned to the evolve-proc
+# /tmp prefix; dst is the per-app *.md under any bot's procedures dir.
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-proc-*.md /Users/*/.openclaw/workspace/procedures/*.md
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/*/.openclaw/workspace/procedures/*.md
+# Primary-bot reference library (B6 AGENTS.md split, #3541) —
+# bot_doc_seeding.install_primary_reference_docs seeds
+# evolve/reference/{PAGE_CONTEXT,GLOSSARY,PLAYBOOKS,COMMANDS}.md via
+# write_doc (/tmp staging + cp + chown + chmod 644) and chowns the dir
+# to the bot user (the bot's own APPS_GUIDE.md writer needs a
+# bot-owned dir). Without these grants the evolve-user deploy paths
+# (repo-puller redeploy, admin daemon) password-prompt on every
+# primary doc install — the same failure shape the identity-doc
+# grants above were added for (#2921). dst pinned per filename, the
+# same blast-radius limit as those grants: the existing workspace
+# *.md / procedures grants end in literal tails that can never match
+# paths under evolve/reference/.
+evolve ALL=(root) NOPASSWD: /bin/mkdir -p /Users/*/.openclaw/workspace/evolve/reference
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/*/.openclaw/workspace/evolve/reference
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-*.md /Users/*/.openclaw/workspace/evolve/reference/PAGE_CONTEXT.md
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-*.md /Users/*/.openclaw/workspace/evolve/reference/GLOSSARY.md
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-*.md /Users/*/.openclaw/workspace/evolve/reference/PLAYBOOKS.md
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-*.md /Users/*/.openclaw/workspace/evolve/reference/COMMANDS.md
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/*/.openclaw/workspace/evolve/reference/*.md
+evolve ALL=(root) NOPASSWD: /bin/chmod 644 /Users/*/.openclaw/workspace/evolve/reference/*.md
+# Read fallback for AGENTS.md — heal needs to read existing content before
+# rewriting it (otherwise the rewrite would destroy any non-POD_CONDUCT.md
+# content). Direct read via ACL is primary; this grants the sudo cat fallback.
+evolve ALL=(root) NOPASSWD: /bin/cat /Users/*/.openclaw/workspace/AGENTS.md
+# POD_CONDUCT.md propagation: heal copies the pod-wide conduct file from
+# the shared dir into each bot's workspace, then chowns it to the bot user.
+evolve ALL=(root) NOPASSWD: /bin/cp /Users/Shared/evolve/POD_CONDUCT.md /Users/*/.openclaw/workspace/POD_CONDUCT.md
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/*/.openclaw/workspace/POD_CONDUCT.md
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-*.md /Users/*/.openclaw/agents/main/AGENTS.md
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/*/.openclaw/agents/main/AGENTS.md
+evolve ALL=(root) NOPASSWD: /bin/chmod 644 /Users/*/.openclaw/agents/main/AGENTS.md
+
+# ── 13. Fix file ownership on bot config files ───────────────────────────────
+# openclaw.json + its .bak hold the gateway + channel tokens, so they are
+# 0600, not 0644. The live openclaw.json chmod-600 grant is in §4; the .bak
+# (a copy of the same secret, written by safe_write_bot_config) gets its own
+# chmod-600 grant here, consumed by the secret_config_perms self-heal.
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/*/.openclaw/openclaw.json
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/*/.openclaw/openclaw.json.bak
+evolve ALL=(root) NOPASSWD: /bin/chmod 600 /Users/*/.openclaw/openclaw.json.bak
+
+# ── 14. Write/delete proposals and feedback (via /tmp staging) ───────────────
+# Needed when proposals/ and feedback/ dirs are root-owned (setup ran as root).
+evolve ALL=(root) NOPASSWD: /bin/mkdir -p /Users/Shared/evolve/proposals/pending
+evolve ALL=(root) NOPASSWD: /bin/mkdir -p /Users/Shared/evolve/proposals/approved
+evolve ALL=(root) NOPASSWD: /bin/mkdir -p /Users/Shared/evolve/proposals/rejected
+evolve ALL=(root) NOPASSWD: /bin/mkdir -p /Users/Shared/evolve/proposals/deployed
+evolve ALL=(root) NOPASSWD: /bin/mkdir -p /Users/Shared/evolve/proposals/validation-results
+evolve ALL=(root) NOPASSWD: /bin/mkdir -p /Users/Shared/evolve/feedback
+evolve ALL=(root) NOPASSWD: /bin/mkdir -p /Users/Shared/evolve/tests
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-proposal-* /Users/Shared/evolve/proposals/pending/*.json
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-proposal-* /Users/Shared/evolve/proposals/approved/*.json
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-proposal-* /Users/Shared/evolve/proposals/rejected/*.json
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-proposal-* /Users/Shared/evolve/proposals/deployed/*.json
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-proposal-* /Users/Shared/evolve/proposals/validation-results/*.json
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-proposal-* /Users/Shared/evolve/feedback/rejections.jsonl
+evolve ALL=(root) NOPASSWD: /bin/rm /Users/Shared/evolve/proposals/pending/*.json
+evolve ALL=(root) NOPASSWD: /bin/rm /Users/Shared/evolve/proposals/approved/*.json
+
+# ── 15. Git pull and plugin build in evolve-repo ─────────────────────────────
+# Upgrade job chowns .git and packages/plugin to evolve, runs git pull + npm,
+# then restores original owner.  The -R flag must be literal in the rule.
+# The whole-repo rule normalizes ownership after a fresh clone (which
+# typically lands as the human admin user); deploy_shared_dir invokes it.
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown -R * /Users/Shared/evolve-repo
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown -R * /Users/Shared/evolve-repo/.git
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown -R * /Users/Shared/evolve-repo/packages/plugin
+# chmod -R g+rwX runs alongside the chown above to make the deploy
+# checkout group-writable for both the evolve daemon and the human
+# admin (both in the staff group). See deploy_shared_dir().
+evolve ALL=(root) NOPASSWD: /bin/chmod -R g+rwX /Users/Shared/evolve-repo
+# Same g+rwX grant on packages/plugin/dist specifically: build_plugin()'s
+# `git checkout -- dist` step (run under sudo) writes root-owned files at
+# mode 644 in mode-755 dirs. The cleanup chowns back to evolve:staff but
+# also needs to add group-write so the next git pull from a different
+# staff-group user (the human admin) can unlink the old files.
+evolve ALL=(root) NOPASSWD: /bin/chmod -R g+rwX /Users/Shared/evolve-repo/packages/plugin/dist
+
+# ── 16. Plugin install directory (evolve-plugin) ──────────────────────────────
+# build_plugin() and fix_plugin_permissions() install compiled artifacts here
+# as root:wheel so openclaw's security scanner accepts them.
+evolve ALL=(root) NOPASSWD: /bin/mkdir -p /Users/Shared/evolve-plugin
+evolve ALL=(root) NOPASSWD: /bin/rm -rf /Users/Shared/evolve-plugin/dist
+evolve ALL=(root) NOPASSWD: /bin/rm -rf /Users/Shared/evolve-plugin/node_modules
+evolve ALL=(root) NOPASSWD: /bin/cp -R /Users/Shared/evolve-repo/packages/plugin/dist /Users/Shared/evolve-plugin/dist
+evolve ALL=(root) NOPASSWD: /bin/cp -R /Users/Shared/evolve-repo/packages/plugin/node_modules /Users/Shared/evolve-plugin/node_modules
+evolve ALL=(root) NOPASSWD: /bin/cp /Users/Shared/evolve-repo/packages/plugin/package.json /Users/Shared/evolve-plugin/package.json
+evolve ALL=(root) NOPASSWD: /bin/cp /Users/Shared/evolve-repo/packages/plugin/package-lock.json /Users/Shared/evolve-plugin/package-lock.json
+evolve ALL=(root) NOPASSWD: /bin/cp /Users/Shared/evolve-repo/packages/plugin/openclaw.plugin.json /Users/Shared/evolve-plugin/openclaw.plugin.json
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-manifest-*.json /Users/Shared/evolve-plugin/openclaw.plugin.json
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown -R * /Users/Shared/evolve-plugin
+evolve ALL=(root) NOPASSWD: /bin/chmod -R 755 /Users/Shared/evolve-plugin
+
+# ── 17. Probe TCP listener ownership for upgrade-safety preflight ────────────
+# safe_upgrade.gate_port_owners runs lsof to confirm each gateway port has a
+# listener owned by the expected bot user. macOS lsof from a non-root user
+# only sees the calling user's sockets — bot gateways run under per-bot users,
+# so an unprivileged probe falsely reports every gateway as 'not running'.
+# Colons must be backslash-escaped — macOS visudo rejects bare ':' in args.
+evolve ALL=(root) NOPASSWD: /usr/sbin/lsof -nP -iTCP\:* -sTCP\:LISTEN -Fpcun
+
+# ── 17a. Kill orphaned openclaw background processes (security, message) ───────
+# `openclaw security audit` and `openclaw message send` spawn background children
+# (openclaw-security, openclaw-message) that run as the bot user. oc_cli.py's
+# _kill_pg() tries os.killpg() first; when that raises PermissionError (process
+# group owned by the bot user, not evolve), it falls back to this grant.
+# The -9 flag is SIGKILL; the argument -<pgid> targets the whole process group.
+evolve ALL=(root) NOPASSWD: /bin/kill -9 -*
+
+# ── 18. Write per-bot filesystem-skill config files ────────────────────────────
+# Filesystem skills (Obsidian as obsidian_vault, plus future ones) store their
+# config in /Users/<bot>/.openclaw/skills/<skill_id>.json. The file and directory
+# are owned by the bot user; the evolve user writes via /tmp staging + sudo cp.
+# mkdir grant creates the skills/ dir on first install if it doesn't exist.
+# Grants are wildcarded over *.json in the skills dir so new filesystem skills
+# work without re-rolling sudoers.
+evolve ALL=(root) NOPASSWD: /bin/mkdir -p /Users/*/.openclaw/skills
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-*.json /Users/*/.openclaw/skills/*.json
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/*/.openclaw/skills
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/*/.openclaw/skills/*.json
+evolve ALL=(root) NOPASSWD: /bin/chmod 644 /Users/*/.openclaw/skills/*.json
+
+# ── 19. Write bot cron/jobs.json (UpsertCronJob / RemoveCronJob appliers) ─────
+# permissions.writer.write_cron_jobs targets /Users/<bot>/.openclaw/cron/jobs.json
+# via /tmp staging + sudo cp + chown + chmod. sudoers grants are per-destination
+# (macOS visudo globs don't cross '/'), so the openclaw.json grants in §4/§13
+# don't cover this path. mkdir is belt-and-suspenders for fresh bots whose cron/
+# dir doesn't exist yet. See docs/diagnosis-cron-caps-applier-sudo-wall-2026-05-20.md.
+evolve ALL=(root) NOPASSWD: /bin/mkdir -p /Users/*/.openclaw/cron
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-*.json /Users/*/.openclaw/cron/jobs.json
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/*/.openclaw/cron/jobs.json
+evolve ALL=(root) NOPASSWD: /bin/chmod 644 /Users/*/.openclaw/cron/jobs.json
+
+# ── 20. Write bot exec-approvals.json (UpdateExecApproval applier) ───────────
+# permissions.writer.write_exec_approvals targets /Users/<bot>/.openclaw/exec-approvals.json.
+# Latent gap until exec_approval mutation proposals start auto-promoting; granted
+# alongside cron/jobs.json so the next sibling applier doesn't hit the same wall.
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-*.json /Users/*/.openclaw/exec-approvals.json
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/*/.openclaw/exec-approvals.json
+evolve ALL=(root) NOPASSWD: /bin/chmod 644 /Users/*/.openclaw/exec-approvals.json
+
+# ── 20a. Write bot exec-approvals.preview.json (app-derived permissions) ─────
+# evolve_admin.app_permissions.reconciler writes the manifest-derived would-be
+# allowlist here on every deploy. Tracking-only in Phase A — the file is the
+# seed for the operator opt-in toggle (Phase C). Sits as a sibling next to
+# exec-approvals.json. See docs/spec-app-derived-permissions-2026-05-24.md.
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-preview-*.json /Users/*/.openclaw/exec-approvals.preview.json
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/*/.openclaw/exec-approvals.preview.json
+evolve ALL=(root) NOPASSWD: /bin/chmod 644 /Users/*/.openclaw/exec-approvals.preview.json
+
+# ── 21. Distribute the shared backup SSH key into each bot's ~/.ssh ──────────
+# /api/backup/cloud/keys/distribute (alias: /api/security/backup-distribute-key)
+# stages the private + matching .pub into
+# /tmp/evolve-backup-<bot>-{priv,pub}-XXXXXX, then sudo cp's both into
+# /Users/<bot>/.ssh/evolve-backup-<bot>{,.pub} owned by the bot user (600/644)
+# so the per-bot backup daemon (running as the bot user) can use it for the
+# `ssh -i ~/.ssh/evolve-backup-<bot>` git push. SSH's identity_sign step refuses
+# to load a private key whose paired .pub on disk doesn't match — that's why we
+# distribute the .pub alongside instead of only the private half.
+evolve ALL=(root) NOPASSWD: /bin/mkdir -p /Users/*/.ssh
+evolve ALL=(root) NOPASSWD: /bin/cp /tmp/evolve-backup-* /Users/*/.ssh/evolve-backup-*
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/*/.ssh
+evolve ALL=(root) NOPASSWD: /usr/sbin/chown * /Users/*/.ssh/evolve-backup-*
+evolve ALL=(root) NOPASSWD: /bin/chmod 700 /Users/*/.ssh
+evolve ALL=(root) NOPASSWD: /bin/chmod 600 /Users/*/.ssh/evolve-backup-*
+evolve ALL=(root) NOPASSWD: /bin/chmod 644 /Users/*/.ssh/evolve-backup-*
+
+# ── 22. Verify evolve sudoers syntax from the infra audit ────────────────────
+# applications.infra_audit._visudo_check runs `sudo -n /usr/sbin/visudo -c -f`
+# against the two evolve sudoers files to detect syntax breakage. Without these
+# narrow grants the audit can't escalate non-interactively; sudo's stderr
+# ("a terminal is required to read the password") would be misread as a
+# visudo parse error, producing critical-severity false positives. (Bug
+# surfaced 2026-05-25: two `sudoers_invalid_syntax` proposals fired at 0.85
+# confidence on files that validated fine under interactive sudo.) The grants
+# are read-only (-c is a syntax check; visudo never writes) and constrained to
+# the two evolve-owned files, so they can't be repurposed to mutate sudoers.
+evolve ALL=(root) NOPASSWD: /usr/sbin/visudo -c -f /etc/sudoers.d/evolve
+evolve ALL=(root) NOPASSWD: /usr/sbin/visudo -c -f /etc/sudoers.d/evolve-admin
+
+# ── 23. Read evolve sudoers files for the infra audit content check ───────────
+# applications.infra_audit._read_sudoers_contents runs `sudo -n <cat>` to read
+# the two evolve-owned drop-ins and verify the load-bearing grants are present
+# (the required-grant check). The files are mode 0440 root and live under
+# /etc/sudoers.d (0750 root on Linux), so the evolve user can't read them
+# directly — without this grant the content check always returned None and the
+# required-grant verification was effectively dead. Pinned to the two exact
+# files (no wildcard) so the grant can't be repurposed to read other root-only
+# files; read-only (cat) — the audit never writes sudoers. The {cat} path is
+# the same profile command the audit invokes, so grant and argv can't drift.
+evolve ALL=(root) NOPASSWD: /bin/cat /etc/sudoers.d/evolve
+evolve ALL=(root) NOPASSWD: /bin/cat /etc/sudoers.d/evolve-admin
+
+# ── 24. Machine + workspace audit probes (2026-07-29 VPS denial census) ──────
+# Four read-only probe families that had NO grant on either platform, so
+# their checks were dark fleet-wide (each degraded to a 'skipped'/'not
+# configured' finding or an empty scan, silently):
+#   • crontab -l — the application scanner reads each bot's crontab via
+#     `sudo -u <bot> crontab -l`. Bots are dynamic (added without a
+#     sudoers refresh), so the runas list is ALL; the command is pinned
+#     to the binary + the read-only -l flag.
+#   • sshd -T / lsof — audit.py's machine-hygiene checks (_check_ssh_config,
+#     _check_listening_ports). Binaries from the profile table; colons
+#     escaped (visudo rejects bare ':' in args — §17 precedent).
+#   • git rev-parse/show on the bot workspace repo — audit_identity's
+#     baseline check. `-c safe.directory=*` is required: git 2.35.2+
+#     refuses bot-owned repos even as root (dubious ownership). Both
+#     verbs are read-only; the -C path is pinned under the bot homes.
+#   • cat fallbacks for two evolve-workspace channels OUTSIDE the §3h
+#     doc set: pod_config.json (audit_pod_config's compare-before-write
+#     read) and audit_outbox/* (audit_poller drains bot-written recs,
+#     which the OC gateway umask mints 0600 — the ACL-mask birth clamp
+#     makes this fallback load-bearing on Linux until the hourly mask
+#     reassert catches up; same class as the §3i grants).
+evolve ALL=(ALL) NOPASSWD: /usr/bin/crontab -l
+evolve ALL=(root) NOPASSWD: /usr/sbin/sshd -T
+evolve ALL=(root) NOPASSWD: /usr/sbin/lsof -iTCP -sTCP\:LISTEN -n -P
+evolve ALL=(root) NOPASSWD: /usr/bin/git -c safe.directory=* -C /Users/*/.openclaw/workspace rev-parse HEAD
+evolve ALL=(root) NOPASSWD: /usr/bin/git -c safe.directory=* -C /Users/*/.openclaw/workspace show HEAD\:*
+evolve ALL=(root) NOPASSWD: /bin/cat /Users/*/.openclaw/workspace/evolve/pod_config.json
+evolve ALL=(root) NOPASSWD: /bin/cat /Users/*/.openclaw/workspace/evolve/audit_outbox/*
+
+# ── 25. Bot-user host-privilege probe (/etc/sudoers.d scan) ─────────────────
+# audit._check_bot_user_privilege fires CRITICAL when a BOT account holds
+# host admin/sudo — the inverse of the admin-user-gateway invariant, found
+# live on the mini 2026-08-02 (two legacy bot accounts in the macOS `admin`
+# group, hence stock %admin sudo + SSH reachability).
+# Group membership itself needs NO grant: the check probes it with an
+# unprivileged `id -Gn <user>` plus the platform group-record read. That
+# is deliberate — a grant-dependent probe is how `sshd -T` stayed dark
+# fleet-wide for months (#3462). Only the drop-in scan needs root:
+#   • ls -1 /etc/sudoers.d — the directory happens to be world-listable
+#     on macOS and 0750 root:root on Debian/Ubuntu; the check takes the
+#     granted path on both so the platforms behave identically.
+#   • cat /etc/sudoers.d/* — drop-ins are 0440 root on both platforms, so
+#     the fallback is the normal path. This WIDENS the §23 pair (which
+#     pinned evolve/evolve-admin by name) to the whole directory: the check
+#     must read files it cannot know the names of, since an operator-
+#     created drop-in granting a bot sudo is exactly what it is looking
+#     for. Still read-only and still confined to /etc/sudoers.d — nothing
+#     outside the sudoers policy dir becomes readable. The §23 grants stay
+#     as the narrower, self-documenting pins for the required-grant check.
+evolve ALL=(root) NOPASSWD: /bin/ls -1 /etc/sudoers.d
+evolve ALL=(root) NOPASSWD: /bin/cat /etc/sudoers.d/*

@@ -1,0 +1,301 @@
+{
+  "pkg_id": "p-738f057c",
+  "pkg_version": "2026.07.02-1.3",
+  "gallery_version": "2026.07.02-1.3",
+  "schema_version": 5,
+  "manifest_type": "evolve_application",
+  "display_name": "Calendar Daily Summary",
+  "author": "evolve",
+  "description": "Delivers one daily message with today's meeting schedule, a tomorrow preview, and any scheduling conflicts or tight transitions. Calendar-only — no weather, news, or email.",
+  "application_tags": [
+    "personal-productivity",
+    "calendar-summary",
+    "daily-digest",
+    "morning-routine",
+    "calendar",
+    "daily-brief-suite",
+    "email",
+    "productivity"
+  ],
+  "objective": "Compose the Calendar skill into a daily schedule summary delivered at 7 AM. Unlike Morning Briefing, this app is calendar-only: one tight message covering today's meetings, tomorrow's preview, and any overlap or tight-transition flags. Good for bots whose primary job is schedule awareness.",
+  "id": "app_calendar_summary",
+  "name": "Calendar Daily Summary",
+  "status": "active",
+  "dependencies": [],
+  "app_dependencies": [],
+  "requirements": {
+    "integrations": [
+      {
+        "id": "calendar",
+        "display_name": "Google Calendar",
+        "required": true,
+        "check_path": "openclaw.json → plugins.entries.google + calendar scope",
+        "setup_doc": "docs/integrations/calendar.md",
+        "reason": "Reads today's and tomorrow's calendar events to compose the daily schedule summary"
+      }
+    ],
+    "secrets": [],
+    "system": [],
+    "python_packages": [],
+    "messaging_channel": [
+      {
+        "id": "messaging_channel",
+        "display_name": "Connected messaging channel",
+        "required": true,
+        "reason": "Delivers the daily calendar summary to the operator's primary channel via `openclaw message send`."
+      }
+    ]
+  },
+  "interface_contract": {
+    "populated_by_forge": false,
+    "extracted_at": null,
+    "data_files": [
+      {
+        "path": "calendar_summary/config.json",
+        "description": "Per-bot configuration for delivery time, timezone, and calendar options",
+        "schema": {
+          "storage_format": "JSON",
+          "fields": {
+            "delivery_time": "HH:MM in 24-hour format (default 07:00)",
+            "time_zone": "IANA timezone string (default America/Los_Angeles)",
+            "include_tomorrow": "bool — whether to include tomorrow's preview (default true)",
+            "include_calendar_ids": "list of calendar IDs to read; empty = all (default [])",
+            "summarize_long_descriptions": "bool — LLM-summarize long event descriptions (default false)"
+          }
+        }
+      },
+      {
+        "path": "calendar_summary/last_run.json",
+        "description": "Metadata from the most recent run — for status command and idempotency check",
+        "schema": {
+          "storage_format": "JSON",
+          "fields": {
+            "date": "ISO date YYYY-MM-DD of the last run",
+            "sent_at": "HH:MM local time of delivery",
+            "today_count": "number of today's events surfaced",
+            "tomorrow_count": "number of tomorrow's events surfaced",
+            "conflict_count": "number of conflicts/tight-transitions flagged"
+          }
+        }
+      }
+    ],
+    "cli": [
+      {
+        "command": "python3 scripts/calendar_summary.py send",
+        "key_flags": [
+          "--time-zone TZ",
+          "--include-tomorrow",
+          "--no-include-tomorrow"
+        ],
+        "output_signals": [
+          "CAL_SUMMARY_SENT:",
+          "CAL_SUMMARY_FAILED:",
+          "CAL_SUMMARY_PARTIAL:"
+        ]
+      },
+      {
+        "command": "python3 scripts/calendar_summary.py preview",
+        "key_flags": [
+          "--time-zone TZ"
+        ],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/calendar_summary.py status",
+        "key_flags": [],
+        "output_signals": []
+      }
+    ],
+    "key_paths": {
+      "cli": "scripts/calendar_summary.py",
+      "cron_trigger": "scripts/calendar-summary-cron.sh",
+      "config": "calendar_summary/config.json",
+      "last_run": "calendar_summary/last_run.json",
+      "launchd_plist": "/Library/LaunchDaemons/com.{bot_id}.calendar-summary.plist"
+    },
+    "signal_prefixes": [
+      "CAL_SUMMARY_SENT:",
+      "CAL_SUMMARY_FAILED:",
+      "CAL_SUMMARY_PARTIAL:"
+    ],
+    "cron_schedule": "{delivery_time} daily (local timezone)"
+  },
+  "files": [],
+  "install_job": null,
+  "improvement_history": [],
+  "identity": {
+    "purpose": "Deliver a calendar-only daily summary message so the operator knows their schedule the moment they start their day — without opening a calendar app. Distinct from Morning Briefing (which also covers email, weather, and news): this is schedule-first.",
+    "scope_includes": [
+      "Fetch today's calendar events via Calendar skill (V2.1-3)",
+      "Fetch tomorrow's calendar events for the preview section (if include_tomorrow=true)",
+      "Detect scheduling conflicts (two events overlapping in time)",
+      "Detect tight transitions (two events within 5 minutes of each other)",
+      "Compose and deliver the summary to the user's recorded channel via `openclaw message send`",
+      "Write last_run.json with delivery metadata",
+      "Emit CAL_SUMMARY_SENT: or CAL_SUMMARY_FAILED: for the verify daemon"
+    ],
+    "scope_excludes": [
+      "Creating, editing, or deleting calendar events",
+      "Accessing Gmail or any integration other than Calendar",
+      "Weather, news, or email content",
+      "Cross-bot data sharing",
+      "Syncing calendar data to external services"
+    ],
+    "bot_interaction_pattern": "The daemon delivers the message; the bot does not need new tools. The operator can ask the bot 'show me today's schedule' and the bot calls calendar_summary.py preview, or asks 'did the summary run?' and the bot calls calendar_summary.py status.",
+    "user": "The bot operator — receives the daily schedule summary on their configured channel."
+  },
+  "success_criteria": {
+    "observable_outcomes": [
+      "Summary arrives at configured delivery time (within 2 minutes) every day",
+      "Message correctly names all of today's meetings with times",
+      "Conflicts and tight transitions are flagged when present",
+      "Tomorrow's preview appears when include_tomorrow=true",
+      "CAL_SUMMARY_SENT: signal emitted each run"
+    ],
+    "failure_signals": [
+      "CAL_SUMMARY_FAILED: — Calendar OAuth needs a refresh",
+      "CAL_SUMMARY_PARTIAL: — some events could not be read",
+      "No CAL_SUMMARY_SENT: by 9 AM — LaunchDaemon not loaded or cron misconfigured",
+      "Operator receives multiple summaries in one day — cron misconfigured"
+    ],
+    "quality_bar": {
+      "minimum": "Operator receives one message at the configured time listing today's meetings",
+      "excellent": "Operator can plan their entire day from the message: knows which meetings are back-to-back, which overlap, and what's coming tomorrow"
+    }
+  },
+  "build_spec": "# Calendar Daily Summary — Build Specification (V2.3-6)\n\n## Overview\n\nBuild a calendar-only daily summary app. The deliverable is one message per day,\ncomposed from Calendar events (today + tomorrow preview), delivered at a configured\ntime (default 7 AM).\n\nThis is the third gallery app (after Morning Briefing and Note-taker). Unlike\nMorning Briefing — which bundles email, weather, and news — this app is\ncalendar-only. Good for bots whose primary job is schedule awareness.\n\n**Key feature over Morning Briefing:** conflict detection and tight-transition\nflagging. If two meetings overlap, or two meetings are within 5 minutes of each\nother, the message flags them explicitly.\n\n---\n\n## File Layout\n\n```\nscripts/\n  calendar_summary.py        ← main CLI: send | preview | status\n  calendar-summary-cron.sh   ← cron trigger (calls calendar_summary.py send)\ncalendar_summary/\n  config.json                ← per-bot configuration\n  last_run.json              ← last-run metadata (idempotency + status)\n```\n\nAll paths are relative to the bot's workspace root\n(`/Users/{bot_id}/.openclaw/workspace/`).\n\n---\n\n## scripts/calendar_summary.py — CLI\n\n### `send` (runs once daily via LaunchDaemon)\n\n**Steps:**\n1. Load config from `calendar_summary/config.json` (fall back to CLI flags).\n2. Check idempotency: if `last_run.json` shows today's date + a successful\n   send, emit `CAL_SUMMARY_SENT: {date} already-sent` and exit 0 (one per day).\n3. Fetch today's events via Calendar skill (Google Calendar API).\n4. If `include_tomorrow=true`, fetch tomorrow's events.\n5. Detect scheduling conflicts and tight transitions (see Conflict Detection).\n6. Compose message (see Message Format).\n7. Deliver via `openclaw message send` — reuse the canonical delivery pattern (docs/spec-gallery-delivery-convention-2026-06-11.md; reference implementation in docs/reference/capabilities/template/scripts/example_script.py): resolve (channel, target) from the pod network.json — which lives ONLY at the canonical shared path `/Users/Shared/evolve/network.json` (read it there; it is NOT at `/Users/<bot>/.openclaw/network.json` and NOT in the workspace — copy the `SHARED_DIR = Path('/Users/Shared/evolve')` constant and `load_network()` helper from docs/reference/capabilities/template/scripts/example_script.py verbatim) — reading `bots.<bot_id>.primary_user.external_ids` (channel priority: telegram, whatsapp, signal, imessage, slack, discord, sms, matrix — intersected with the bot's own enabled channels from its openclaw.json `channels.<name>.enabled`, falling back to the best recorded id when there is no overlap so the send fails loudly), then run `openclaw message send --channel=<ch> --target=<target> --message=<text> --json` as the bot user (binary: `shutil.which(\"openclaw\")`, falling back to /opt/homebrew/bin, /usr/local/bin, /usr/bin; cwd = the executing account's pwd-database home, NOT $HOME, so node can resolve its CWD even under sudo-without--H; child PATH prefixed with the CLI's own bin dir so the `#!/usr/bin/env node` entrypoint resolves under launchd's minimal PATH; timeout 60s). Exit code 0 = the channel accepted the send. Never read gateway port/token; never POST to the gateway. If the bot has no recorded delivery route: emit `CAL_SUMMARY_SKIPPED: {date} no-delivery-route` and exit 0 without writing last_run.json.\n8. Write `calendar_summary/last_run.json` with today's date, sent_at, counts.\n9. Emit `CAL_SUMMARY_SENT: {date} {today_count}ev {conflict_count}conflicts`.\n\n**On Calendar fetch failure:**\n- Emit `CAL_SUMMARY_FAILED: {date} calendar-unavailable`.\n- Send a short alert: \"Calendar summary couldn't run — Calendar access needs\n  a refresh. You can fix this from the admin dashboard.\"\n- Exit 1.\n\n### `preview` (dry-run, print to stdout)\nSame as send but do not deliver, do not write last_run.json.\nDo not check or update idempotency. Useful for testing.\n\n### `status`\nPrint last-run metadata from `calendar_summary/last_run.json`,\nor \"No summary sent today yet.\" if file is absent or stale.\n\n---\n\n## Conflict Detection\n\nTwo events CONFLICT when their time ranges overlap:\n```\n  Event A: [start_a, end_a)\n  Event B: [start_b, end_b)\n  overlap when: start_a < end_b AND start_b < end_a\n```\n\nTwo events are a TIGHT TRANSITION when:\n- They do NOT overlap (no conflict), AND\n- The gap between end of the earlier and start of the later is <= 5 minutes.\n\nBoth checks run over today's events only (tomorrow preview is not checked).\n\nOutput in the message:\n- \"Conflicts: none\" — when no issues detected.\n- \"Conflict: 11am sync overlaps with 11:30am client call\" — per conflict pair.\n- \"Tight: 10am standup ends just before 10:05am design review\" — per pair.\n\nImplementation note: sort events by start time before checking. Skip events\nwith missing or unparseable start/end times.\n\n---\n\n## Message Format\n\n### Today with 3 meetings, one conflict:\n```\nToday — Tuesday, May 13\nToday: 3 meetings\n• 9:00am — Patel kitchen client (1h)\n• 11:00am — Internal sync (30m)\n• 11:30am — Robinson site visit (1h)\n\nConflicts: 11am internal sync overlaps with 11:30am Robinson site visit\n\nTomorrow: 2 meetings — 10am Wilson estimate review, 3pm vendor call\n```\n\n### Today with no meetings:\n```\nToday — Tuesday, May 13\nNo meetings today.\n\nTomorrow: 2 meetings — 10am check-in, 2pm design review\n```\n\n### Today with a tight transition:\n```\nToday — Tuesday, May 13\nToday: 2 meetings\n• 9:00am — Morning standup (25m)\n• 9:25am — Design review (1h)\n\nConflicts: none\nTight: morning standup ends right before design review (5 min gap)\n\nTomorrow: nothing scheduled\n```\n\n### Without tomorrow preview (include_tomorrow=false):\nOmit the Tomorrow: line entirely.\n\n---\n\n## config.json — per-bot configuration\n\n```json\n{\n  \"delivery_time\": \"{delivery_time}\",\n  \"time_zone\": \"{time_zone}\",\n  \"include_tomorrow\": {include_tomorrow},\n  \"include_calendar_ids\": [],\n  \"summarize_long_descriptions\": false\n}\n```\n\nDefaults: delivery_time=07:00, time_zone=America/Los_Angeles,\ninclude_tomorrow=true.\n\nThe `include_calendar_ids` list (default empty = all calendars) lets the\noperator scope the summary to specific calendar IDs (e.g. their work calendar\nonly, excluding the family calendar).\n\n`summarize_long_descriptions` is a future hook — when true, the forge engine\nwould call the bot's LLM to compress a long event description to one line.\nDefault false; LLM use is opt-in.\n\n---\n\n## calendar-summary-cron.sh — cron trigger\n\n```bash\n#!/bin/bash\n# calendar-summary-cron.sh — calendar summary cron trigger\n# Installed by Calendar Daily Summary app. LaunchDaemon fires daily at delivery_time.\n\nWORKSPACE=\"/Users/{bot_id}/.openclaw/workspace\"\nLOGFILE=\"/tmp/{bot_id}-calendar-summary.log\"\n\npython3 \"$WORKSPACE/scripts/calendar_summary.py\" send \\\n  --time-zone \"{time_zone}\" \\\n  >> \"$LOGFILE\" 2>&1\n\nexit 0\n```\n\nMake executable. Register as a LaunchDaemon at {delivery_time} daily.\n\n---\n\n## LaunchDaemon plist\n\nWrite to `/Library/LaunchDaemons/com.{bot_id}.calendar-summary.plist`.\n\nSystem-context LaunchDaemons load at boot regardless of GUI session — required\nfor headless bots on the mini, where ~/Library/LaunchAgents never load (no\nuser session). Daemon runs as the bot user via `UserName`.\n\n```xml\n<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\"\n  \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key>\n  <string>com.{bot_id}.calendar-summary</string>\n  <key>UserName</key>\n  <string>{bot_id}</string>\n  <key>GroupName</key>\n  <string>staff</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>/bin/bash</string>\n    <string>/Users/{bot_id}/.openclaw/workspace/scripts/calendar-summary-cron.sh</string>\n  </array>\n  <key>EnvironmentVariables</key>\n  <dict>\n    <key>TZ</key>\n    <string>{time_zone}</string>\n  </dict>\n  <key>StartCalendarInterval</key>\n  <dict>\n    <key>Hour</key>\n    <integer>{delivery_hour}</integer>\n    <key>Minute</key>\n    <integer>{delivery_minute}</integer>\n  </dict>\n  <key>StandardOutPath</key>\n  <string>/tmp/{bot_id}-calendar-summary-out.log</string>\n  <key>StandardErrorPath</key>\n  <string>/tmp/{bot_id}-calendar-summary-err.log</string>\n  <key>RunAtLoad</key>\n  <false/>\n</dict>\n</plist>\n```\n\nNote: `{delivery_hour}` and `{delivery_minute}` are derived from `{delivery_time}`\n(\"07:00\" → Hour=7, Minute=0) by the provisioner at install time.\n`{time_zone}` is the IANA timezone string (e.g. \"America/Los_Angeles\").\n\n---\n\n## Template variables\n\n| Variable | Required | Default | Description |\n|---|---|---|---|\n| `{bot_id}` | yes | — | Bot user ID (set automatically from install target) |\n| `{time_zone}` | no | America/Los_Angeles | IANA timezone for delivery time |\n| `{delivery_time}` | no | 07:00 | Delivery time HH:MM (24-hour, local timezone) |\n| `{delivery_hour}` | no | 7 | Derived from delivery_time |\n| `{delivery_minute}` | no | 0 | Derived from delivery_time |\n| `{include_tomorrow}` | no | true | Whether to include tomorrow's preview |\n\n---\n\n## Calendar API access pattern\n\nThe Calendar skill (V2.1-3) provides calendar.readonly access via the Google\nOpenClaw plugin. The script reads the bot's openclaw.json to find the gateway\nport and auth token, then calls the gateway to list events.\n\nAlternatively, the forge engine may wire real Google Calendar API calls via the\nbots's installed Google plugin at deploy time. The script must gracefully handle\nthe case where Calendar access returns an error (emit CAL_SUMMARY_FAILED:).\n\nStub pattern (for testing — same pattern as briefing.py):\n```python\ndef fetch_calendar_events(time_zone: str, date_str: str) -> tuple[list[dict], str | None]:\n    \"\"\"Return (events, error_note). Events: {id, title, start, end, attendees}.\"\"\"\n    # Stub: production forge engine wires real Calendar access at deploy time.\n    return [], None\n```\n\n---\n\n## Test sequence\n\nAfter building:\n\n```bash\n# 1. Syntax check\npython3 -m py_compile scripts/calendar_summary.py\n\n# 2. Preview (dry-run, no send)\npython3 scripts/calendar_summary.py preview --time-zone America/Los_Angeles\n# Expected: a formatted calendar summary printed to stdout\n\n# 3. Status (before first send)\npython3 scripts/calendar_summary.py status\n# Expected: 'No summary sent today yet.'\n\n# 4. Executable check\ntest -x scripts/calendar-summary-cron.sh && echo 'OK: cron script executable'\n```\n\nAll steps must exit 0. Step 2 must produce a non-empty message.\n\n---\n\n## FILE: scripts/calendar-summary-cron.sh\n```bash\n#!/bin/bash\n# calendar-summary-cron.sh — calendar summary cron trigger\n# Installed by Calendar Daily Summary app. LaunchDaemon fires daily at delivery_time.\n\nWORKSPACE=\"/Users/{bot_id}/.openclaw/workspace\"\nLOGFILE=\"/tmp/{bot_id}-calendar-summary.log\"\n\npython3 \"$WORKSPACE/scripts/calendar_summary.py\" send \\\n  --time-zone \"{time_zone}\" \\\n  >> \"$LOGFILE\" 2>&1\n\nexit 0\n```\n\n## FILE: /Library/LaunchDaemons/com.{bot_id}.calendar-summary.plist\n```xml\n<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\"\n  \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key>\n  <string>com.{bot_id}.calendar-summary</string>\n  <key>UserName</key>\n  <string>{bot_id}</string>\n  <key>GroupName</key>\n  <string>staff</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>/bin/bash</string>\n    <string>/Users/{bot_id}/.openclaw/workspace/scripts/calendar-summary-cron.sh</string>\n  </array>\n  <key>EnvironmentVariables</key>\n  <dict>\n    <key>TZ</key>\n    <string>{time_zone}</string>\n  </dict>\n  <key>StartCalendarInterval</key>\n  <dict>\n    <key>Hour</key>\n    <integer>{delivery_hour}</integer>\n    <key>Minute</key>\n    <integer>{delivery_minute}</integer>\n  </dict>\n  <key>StandardOutPath</key>\n  <string>/tmp/{bot_id}-calendar-summary-out.log</string>\n  <key>StandardErrorPath</key>\n  <string>/tmp/{bot_id}-calendar-summary-err.log</string>\n  <key>RunAtLoad</key>\n  <false/>\n</dict>\n</plist>\n```\n\n## FILE: calendar_summary/config.json\n```json\n{\n  \"delivery_time\": \"{delivery_time}\",\n  \"time_zone\": \"{time_zone}\",\n  \"include_tomorrow\": {include_tomorrow},\n  \"include_calendar_ids\": [],\n  \"summarize_long_descriptions\": false\n}\n```\n",
+  "example_triggers": [
+    "What's on my schedule today?",
+    "Show me today's meetings",
+    "Any conflicts in my calendar?",
+    "Preview today's calendar summary",
+    "Did the calendar summary run this morning?",
+    "What do I have tomorrow?"
+  ],
+  "test_cases": [
+    {
+      "trigger": "Show me today's meetings",
+      "expected": "Run python3 scripts/calendar_summary.py preview, return formatted schedule with today's events and any conflicts"
+    },
+    {
+      "trigger": "Did the calendar summary run this morning?",
+      "expected": "Run python3 scripts/calendar_summary.py status, report sent time and counts from last_run.json, or 'not yet' if not run today"
+    },
+    {
+      "trigger": "Any conflicts in my calendar?",
+      "expected": "Run python3 scripts/calendar_summary.py preview, surface conflict/tight-transition lines from the output"
+    }
+  ],
+  "constraints": {
+    "safety": [
+      "Read-only Calendar access — no event creation, editing, or deletion",
+      "No email, Drive, or other Google service access",
+      "No cross-bot data sharing",
+      "LLM description summarization is opt-in and off by default"
+    ],
+    "dependencies": [
+      "calendar (required) — reads meeting schedule via Calendar skill (V2.1-3)"
+    ],
+    "boundaries": [
+      "One summary per day — idempotency check in last_run.json",
+      "Conflict detection covers today only — tomorrow preview is informational",
+      "Does not infer action items or send messages to attendees"
+    ]
+  },
+  "scheduled_actions": [
+    {
+      "id": "calendar-summary",
+      "mechanism": "launchd",
+      "trigger": {
+        "kind": "launchd"
+      },
+      "install": {
+        "plist_label": "ai.evolve.${bot_id}.calendar-summary",
+        "command": "/bin/bash ${workspace}/scripts/calendar-summary-cron.sh",
+        "cwd": "${workspace}",
+        "schedule": {
+          "cron": {
+            "Hour": 7,
+            "Minute": 30
+          }
+        },
+        "exec_policy": "inherit"
+      },
+      "summary": "Daily calendar summary — edit install.schedule.cron to change the time."
+    }
+  ],
+  "usage": {
+    "model": "scheduled",
+    "trigger_recognition": {
+      "pattern": "The bot delivers the daily summary automatically on its launchd schedule. When the user asks about today's calendar mid-day, run `send` or `preview` rather than improvising.",
+      "hint_words": [
+        "schedule",
+        "calendar",
+        "today's meetings",
+        "calendar summary",
+        "what's on my calendar"
+      ],
+      "requires_keyword": false
+    },
+    "auto_capture": {
+      "enabled": false,
+      "sources": []
+    },
+    "how_to_use": "On its launchd schedule the script sends the daily calendar message; relay any errors it surfaces. If the user asks for an on-demand summary, run `send`. For a dry-run that previews without sending, run `preview`. Use `status` to check whether the daily run already happened.",
+    "bot_voice_examples": [
+      "Here's today's calendar — three meetings, one tight transition between 11am and 11:30.",
+      "Calendar summary sent — three meetings on the docket today, biggest gap is 2–4pm.",
+      "Today is clear — no meetings on your calendar."
+    ]
+  },
+  "verification": [
+    {
+      "kind": "artifact",
+      "name": "main_script_compiles",
+      "path": "scripts/calendar_summary.py",
+      "checks": [
+        "exists",
+        "py_compiles"
+      ]
+    },
+    {
+      "kind": "artifact",
+      "name": "cron_wrapper",
+      "path": "scripts/calendar-summary-cron.sh",
+      "checks": [
+        "exists",
+        "owner_exec"
+      ]
+    },
+    {
+      "kind": "command",
+      "name": "cli_status",
+      "argv": [
+        "python3",
+        "scripts/calendar_summary.py",
+        "status"
+      ],
+      "expected_exit": 0,
+      "timeout_s": 30
+    },
+    {
+      "kind": "artifact",
+      "name": "config_valid_if_present",
+      "path": "calendar_summary/config.json",
+      "checks": [
+        "json_valid"
+      ]
+    },
+    {
+      "kind": "artifact",
+      "name": "last_run_valid_if_present",
+      "path": "calendar_summary/last_run.json",
+      "checks": [
+        "json_valid"
+      ],
+      "modes": [
+        "dry-run"
+      ]
+    }
+  ]
+}

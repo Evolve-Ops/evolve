@@ -1,0 +1,23 @@
+{
+  "description": "Shared TS<->PY test vector pinning the app-id resolution priority order (audit-app-framework-2026-07-02 D4). Consumed by packages/plugin/tests/appIdResolution.test.mjs (appScriptRegistry.appIdOf) and packages/admin/tests/test_app_id_resolution_fixture.py (app_integrity_coverage.resolve_app_id). The two implementations hand-mirror the order pkg_id > id > spec_id > instance_id; a drift on either side reds the shared vector. expected_id: null means 'no id resolves' — each side maps null to its own documented fallback (TS 'unknown', PY ''). Values are pre-trimmed on purpose: the two sides differ on trim-of-the-returned-value (TS returns the raw value, PY strips it), a known divergence AL-1.4 collapses; this fixture pins the ORDER, not that quirk.",
+  "cases": [
+    { "name": "pkg_id_alone", "manifest": { "pkg_id": "app-a" }, "expected_id": "app-a" },
+    { "name": "id_alone", "manifest": { "id": "app-b" }, "expected_id": "app-b" },
+    { "name": "spec_id_alone", "manifest": { "spec_id": "app-c" }, "expected_id": "app-c" },
+    { "name": "instance_id_alone", "manifest": { "instance_id": "app-d" }, "expected_id": "app-d" },
+    { "name": "pkg_id_beats_id", "manifest": { "pkg_id": "app-a", "id": "app-b" }, "expected_id": "app-a" },
+    { "name": "id_beats_spec_id", "manifest": { "id": "app-b", "spec_id": "app-c" }, "expected_id": "app-b" },
+    { "name": "spec_id_beats_instance_id", "manifest": { "spec_id": "app-c", "instance_id": "app-d" }, "expected_id": "app-c" },
+    { "name": "pkg_id_beats_all_four", "manifest": { "instance_id": "app-d", "spec_id": "app-c", "id": "app-b", "pkg_id": "app-a" }, "expected_id": "app-a" },
+    { "name": "key_declaration_order_is_irrelevant", "manifest": { "id": "app-b", "pkg_id": "app-a" }, "expected_id": "app-a" },
+    { "name": "empty_pkg_id_falls_through_to_id", "manifest": { "pkg_id": "", "id": "app-b" }, "expected_id": "app-b" },
+    { "name": "whitespace_pkg_id_falls_through_to_id", "manifest": { "pkg_id": "   ", "id": "app-b" }, "expected_id": "app-b" },
+    { "name": "non_string_pkg_id_falls_through_to_id", "manifest": { "pkg_id": 7, "id": "app-b" }, "expected_id": "app-b" },
+    { "name": "null_pkg_id_falls_through_to_spec_id", "manifest": { "pkg_id": null, "spec_id": "app-c" }, "expected_id": "app-c" },
+    { "name": "nested_ids_are_ignored_top_level_only", "manifest": { "meta": { "pkg_id": "nested" }, "instance_id": "app-d" }, "expected_id": "app-d" },
+    { "name": "no_id_fields", "manifest": { "name": "morning-briefing" }, "expected_id": null },
+    { "name": "all_id_fields_empty", "manifest": { "pkg_id": "", "id": "", "spec_id": "", "instance_id": "" }, "expected_id": null },
+    { "name": "non_object_manifest_null", "manifest": null, "expected_id": null },
+    { "name": "non_object_manifest_list", "manifest": ["pkg_id", "app-a"], "expected_id": null }
+  ]
+}
