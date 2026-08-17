@@ -17,7 +17,7 @@ dependencies = [
     # LLM escalation paths (arbiter refine, security_warden LLM verifier,
     # tier-3 audit). Callers degrade gracefully when no API key is present,
     # but the import itself is unconditional in those modules.
-    "anthropic>=0.40",
+    "anthropic>=0.122.0",
     # Host metrics for tile_metrics.py.
     "psutil>=5.9",
 ]
