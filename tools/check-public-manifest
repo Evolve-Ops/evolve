@@ -1,0 +1,193 @@
+#!/usr/bin/env python3
+"""check-public-manifest — CI guard for docs/public-manifest.yaml.
+
+The manifest is the single source of truth for the public/private cut line
+(see tools/publish-public). A typo'd or dead glob silently widens or narrows
+that line, and an unclassified ``docs/`` path is a leak waiting for the next
+publish (PD-3b), so this guard fails the build when:
+
+  * the YAML is malformed, or has an unknown top-level key, or a malformed
+    ``private``/``public_docs`` entry (delegated to
+    publish-public.load_manifest_split); or
+  * a glob in EITHER list matches ZERO currently-tracked files — i.e. it is
+    dead or typo'd — UNLESS its prefix is already gitignored
+    (docs/private/, issues/open/), where matching nothing is legitimate; or
+  * a tracked ``docs/`` path matches NEITHER ``public_docs`` NOR ``private``
+    and is not a publish-time sanitize target — a new document class cannot
+    merge unclassified (PUB-1 Part C); or
+  * a tracked ``docs/`` path matches MORE than one of those three — the
+    reconciliation invariant (at most one classification per path).
+
+Pure-stdlib + PyYAML (an existing dependency). No network. Fast.
+
+Wired into .github/workflows/ci.yml as the ``public-manifest`` job.
+Spec: docs/spec-public-2026-06-18.md §4 (PD-3b).
+"""
+from __future__ import annotations
+
+import importlib.util
+import sys
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+
+# Reuse the manifest parser, glob compiler, tracked-file lister, and the
+# allowed-empty-prefix list from publish-public — one definition of the cut
+# line, no drift. publish-public loads the scrub module lazily, so importing
+# it here does NOT pull in pytest.
+_PUBLISH = Path(__file__).resolve().parent / "publish-public"
+_loader = SourceFileLoader("publish_public", str(_PUBLISH))
+_spec = importlib.util.spec_from_loader("publish_public", _loader)
+_pp = importlib.util.module_from_spec(_spec)
+_loader.exec_module(_pp)
+
+
+def dead_globs(globs: list[str], tracked: list[str]) -> tuple[list[str], list[str]]:
+    """Split ``globs`` into (dead, allowed_empty).
+
+    dead          — globs matching no tracked file (typo'd or stale).
+    allowed_empty — zero-match globs whose prefix is gitignored
+                    (publish-public.ALLOWED_EMPTY_PREFIXES), which may
+                    legitimately match nothing on any given checkout.
+    """
+    compiled = _pp.compile_globs(globs)
+    dead: list[str] = []
+    allowed: list[str] = []
+    for glob, pattern in compiled:
+        if any(pattern.match(rel) for rel in tracked):
+            continue
+        if glob.startswith(_pp.ALLOWED_EMPTY_PREFIXES):
+            allowed.append(glob)
+        else:
+            dead.append(glob)
+    return dead, allowed
+
+
+def classify_docs_paths(
+    tracked: list[str],
+    private_globs: list[str],
+    public_docs_globs: list[str],
+    sanitize_targets: frozenset[str],
+) -> tuple[list[str], list[tuple[str, list[str]]]]:
+    """PD-3b classification sweep over every tracked ``docs/`` path.
+
+    Returns (unclassified, conflicted):
+    unclassified — docs/ paths matching neither list nor a sanitize target;
+                   these would silently stay private today AND represent a
+                   document class nobody has decided on — the exact
+                   precondition of the 08-15 leak, so they fail CI.
+    conflicted   — (path, [labels]) for paths carrying more than one
+                   classification (reconciliation invariant violation).
+    """
+    private_c = _pp.compile_globs(private_globs)
+    public_c = _pp.compile_globs(public_docs_globs)
+    unclassified: list[str] = []
+    conflicted: list[tuple[str, list[str]]] = []
+    for rel in tracked:
+        if not rel.startswith("docs/"):
+            continue
+        labels = []
+        if _pp.first_matching_glob(rel, private_c) is not None:
+            labels.append("private")
+        if _pp.first_matching_glob(rel, public_c) is not None:
+            labels.append("public_docs")
+        if rel in sanitize_targets:
+            labels.append("sanitize-target")
+        if not labels:
+            unclassified.append(rel)
+        elif len(labels) > 1:
+            conflicted.append((rel, labels))
+    return unclassified, conflicted
+
+
+def main() -> int:
+    try:
+        private_globs, public_docs_globs = _pp.load_manifest_split()
+    except ValueError as exc:
+        print(f"check-public-manifest: FAIL — {exc}", file=sys.stderr)
+        return 1
+
+    if not private_globs:
+        print(
+            "check-public-manifest: FAIL — manifest has an empty 'private' "
+            "denylist; expected at least one private glob.",
+            file=sys.stderr,
+        )
+        return 1
+    if not public_docs_globs:
+        print(
+            "check-public-manifest: FAIL — manifest has an empty 'public_docs' "
+            "allowlist; docs/ is private by default (PD-3b), so an empty "
+            "allowlist would unpublish the entire product doc corpus.",
+            file=sys.stderr,
+        )
+        return 1
+
+    tracked = _pp.tracked_files()
+
+    failed = False
+    for label, globs in (("private", private_globs), ("public_docs", public_docs_globs)):
+        dead, allowed = dead_globs(globs, tracked)
+        for glob in allowed:
+            print(
+                f"  ok (allowed-empty, gitignored prefix): {glob} — matches no "
+                f"tracked file, permitted."
+            )
+        if dead:
+            failed = True
+            print(
+                f"check-public-manifest: FAIL — {len(dead)} '{label}' glob(s) "
+                f"match no tracked file (dead or typo'd):",
+                file=sys.stderr,
+            )
+            for glob in dead:
+                print(f"  - {glob}", file=sys.stderr)
+            print(
+                "\nEither fix the glob, remove it, or — if it intentionally guards "
+                "a not-yet-present gitignored dir — ensure its prefix is in "
+                "ALLOWED_EMPTY_PREFIXES in tools/publish-public.",
+                file=sys.stderr,
+            )
+
+    unclassified, conflicted = classify_docs_paths(
+        tracked, private_globs, public_docs_globs, _pp.docs_sanitize_targets()
+    )
+    if unclassified:
+        failed = True
+        print(
+            f"check-public-manifest: FAIL — {len(unclassified)} tracked docs/ "
+            f"path(s) are UNCLASSIFIED (PD-3b: every docs/ path must match "
+            f"public_docs or private):",
+            file=sys.stderr,
+        )
+        for rel in unclassified:
+            print(f"  - {rel}", file=sys.stderr)
+        print(
+            "\nAdd each to `public_docs:` in docs/public-manifest.yaml if it is "
+            "a product doc; to `private:` otherwise — when unsure, private.",
+            file=sys.stderr,
+        )
+    if conflicted:
+        failed = True
+        print(
+            f"check-public-manifest: FAIL — {len(conflicted)} docs/ path(s) "
+            f"carry MORE than one classification (reconciliation invariant: "
+            f"allowlisted, denylisted, or sanitize target — at most one):",
+            file=sys.stderr,
+        )
+        for rel, labels in conflicted:
+            print(f"  - {rel}  [{', '.join(labels)}]", file=sys.stderr)
+
+    if failed:
+        return 1
+
+    print(
+        f"check-public-manifest: OK — {len(private_globs)} private glob(s) + "
+        f"{len(public_docs_globs)} public_docs glob(s), all matching ≥1 tracked "
+        f"file or allowed-empty; every tracked docs/ path carries exactly one "
+        f"classification (of {len(tracked)} tracked)."
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

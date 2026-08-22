@@ -1,0 +1,264 @@
+# Source of truth for the public/private cut line when publishing to
+# evolve-ops/evolve. Consumed by tools/publish-public and the CI guard
+# (tools/check-public-manifest). Spec: docs/spec-public-2026-06-18.md §4.
+#
+# THE MODEL (PD-3b, 2026-08-15): `docs/**` is PRIVATE unless it matches
+# `public_docs`. Everything else in the repo remains public unless it
+# matches `private`. The `private` denylist wins on conflict, always.
+# (The 08-15 leak proved a denylist cannot win the race against
+# newly-invented document classes — see
+# docs/incidents/incident-public-leak-2026-08-15.md. The docs/ globs under
+# `private:` remain as belt-and-braces; PUB-2 may collapse them.)
+#
+# A third classification exists for docs/ paths: the publish-time
+# sanitize targets (tools/publish_sanitize.py, e.g.
+# docs/PLACEHOLDER_NAMING.md). They ship sanitized and are NEVER also
+# allowlisted or denylisted here.
+#
+# REVERSAL (operator, 2026-07-02): the 2026-06-18 posture said the META
+# coordinator system and the internal design corpus ship with the public
+# repo ("DO NOT add these here — intentionally PUBLIC"). That decision is
+# REVERSED: the public repo is the PRODUCT, not the dev methodology, and
+# the META coordinator apparatus (registry, session guides, skills,
+# tools/meta-*) indexes and paraphrases the withheld design specs — so
+# shipping it would leak the corpus it coordinates. Both the internal
+# design corpus (spec-/design-/decision-/research-/roadmap-/audit-/
+# census-/runbook- docs) and the META apparatus are now denylisted.
+#
+# Still intentionally PUBLIC outside docs/ (do not denylist): CLAUDE.md,
+# AGENTS.md, ONBOARDING.md, .claude/settings.json (sanitized at publish
+# time by tools/publish_sanitize.py). The public docs/ corpus lives in
+# `public_docs:` at the end of this file.
+#
+# Reconciliation invariant (tested in tools/test_publish_public.py and
+# enforced per-path by tools/check-public-manifest): a docs/ path is
+# allowlisted (`public_docs`), denylisted (`private`), or a sanitize
+# target — AT MOST one, and (for docs/ paths) at least one.
+#
+# The operator-local meta-state/ ledgers and per-aspect memory files are
+# NOT tracked in this repo at all (they live under the operator's
+# ~/.claude/.../memory and a gitignored meta-state/), so they need no glob
+# here — git ls-files never surfaces them to the publisher.
+private:
+  - docs/private/**          # already gitignored; defensive
+  - issues/**                # internal issue tracker
+  - docs/market-intelligence/**   # competitive strategy
+  - docs/incidents/**        # reference-deployment ops incidents (billing/transcripts)
+  - docs/forensic-*          # security incidents naming real bots
+  - docs/diagnosis-*         # reference-deployment operational diagnoses
+  - docs/diag-*
+
+  # Internal design corpus (2026-07-02 reversal). Specs, design notes,
+  # decisions, research, roadmaps, audits, censuses, and operational
+  # runbooks are the dev methodology's paper trail, not product docs.
+  # docs/runbook-* subsumes the three token-bearing runbooks previously
+  # listed individually (PUBLIC-3) AND docs/runbook-public-cutover.md,
+  # which therefore left the publish-time sanitize target set — a file is
+  # either sanitized-and-shipped or denylisted, never both.
+  - docs/spec-*
+  - docs/design-*
+  - docs/design/**
+  - docs/decision-*
+  - docs/research-*
+  - docs/research/**         # market/positioning research — same class as market-intelligence
+  - docs/roadmap-*
+  - docs/audit-*
+  - docs/census-*
+  - docs/runbook-*
+
+  # Product strategy + GTM + chip build briefs (2026-08-15, PUB-1). The
+  # strategy docs are competitive positioning (same class as
+  # market-intelligence); the build briefs and work orders index the
+  # withheld design corpus by file:line. These four prefixes shipped to
+  # the public repo on 08-15 because they were not yet denylisted — see
+  # docs/incidents/incident-public-leak-2026-08-15.md. (The sibling globs
+  # docs/MARCHING-ORDERS-* and docs/early-user-program.md land with the
+  # branch that introduces those files — a glob matching zero tracked
+  # files fails tools/check-public-manifest.)
+  - docs/strategy-*
+  - docs/build-*
+  - docs/workorder-*         # execution work orders (H0–H3 plans; leaked 08-15 — see PUB-1)
+  - docs/MARCHING-ORDERS-*   # dated internal marching orders; index the withheld corpus (PUB-1)
+  - docs/early-user-program.md  # channel/competitor analysis + internal candor about alpha state
+
+  # PUB-1 census additions (2026-08-16): remaining tracked docs/ paths
+  # that are dated, internal-process, or index the withheld corpus, and
+  # carried prefixes no earlier glob covered. Everything else currently
+  # public under docs/ was affirmed product-doc in the same census — that
+  # census seeds the Part B public_docs allowlist.
+  - docs/linux-ga-declaration-*   # dated GA declaration; cites the workorder + design records
+  - docs/roadmap.md               # internal roadmap; links specs + withheld status docs (roadmap-* covers the rest)
+  - docs/pwa/**                   # dated spec-pwa phase-0 audits (browser-compat, test matrix)
+  - docs/review/**                # per-chip PR review artifacts (admin-UI screenshots
+                                  # attached to a PR body; internal review evidence,
+                                  # and they picture a pod's own app inventory)
+
+  # META coordinator apparatus (2026-07-02 reversal). The registry,
+  # session guides, procedure docs, dispatch briefs, coordinator skills,
+  # and the tools/meta-* CLI surface index and paraphrase the withheld
+  # design corpus.
+  - docs/META-*
+  - docs/meta-*
+  - docs/using-the-meta-system.md
+  - docs/dispatch/**
+  - docs/routines/**
+  - .claude/skills/**        # the META coordinator skills (/meta, /status, /queue, ...)
+  - .claude/meta.json        # META substrate parameterization
+  - .claude/hooks/**         # dev-guardrail session hooks (pair with docs/dev-guardrails.md)
+  - tools/meta-*
+  - tools/meta_config.py
+  - tools/test_meta_*.py
+  - tools/hooks/meta-*
+  - tools/hooks/test_meta_*
+  - tools/hooks/prepend-meta-prefix.sh
+  - tools/hooks/test_prepend_meta_prefix.sh
+  - tools/hooks/record-dispatch-claim.sh
+  - tools/hooks/test_record_dispatch_claim.sh
+  - packages/admin/tests/test_meta_queue.py   # tests the denylisted tools/meta-queue
+
+  # Dated one-off audits / internal-process docs (2026-07-02 sweep —
+  # judged by the same content test: internal, dated, or
+  # reference-deployment-specific, not reusable product docs).
+  - docs/apps-shared-contract-audit-*
+  - docs/alert-root-cause-audit-*
+  - docs/apps-atlas-sync-disposition-*
+  - docs/apps-lineage-repoint-atlas-OBE-*
+  - docs/contract-app-result-block-*
+  - docs/cascade-validation-on-the-mini.md
+  - docs/dev-guardrails.md
+  - docs/edr/**              # dev-rig (EDR) design docs
+
+  # Dated internal working docs (2026-07-28 pre-beta sweep — same content
+  # test as above; these carried prefixes the earlier globs didn't cover:
+  # findings, incident postmortems, one-off validations/verifications,
+  # internal plans/notes/backlogs, and reference-deployment health checks).
+  - docs/admin-coverage-backlog.md
+  - docs/ci-flaky-jobs.md
+  - docs/finding-*
+  - docs/footprint-*
+  - docs/gallery-merge-task-manager-*
+  - docs/gallery-removals-*
+  - docs/gallery-spec-quality-audit-*
+  - docs/incident-*
+  - docs/investigation-*
+  - docs/note-*
+  - docs/oc-install-health-*
+  - docs/openclaw-coverage-audit-*
+  - docs/pending-ideas.md
+  - docs/plan-*
+  - docs/postmortem-*
+  - docs/primary-bot-interface-status.md
+  - docs/reference-conversational-bot-creation-*
+  - docs/review-reports-subscriptions-*
+  - docs/rsi-dry-run-operator-guide-*
+  - docs/skills-deep-audit-*
+  - docs/test-spend-alert-replay.md
+  - docs/ui-audit-*
+  - docs/validation-*
+  - docs/verification-*
+  - docs/vetting-*
+
+  # Token-bearing test fixtures. These embed the reserved bot/account
+  # tokens BY DESIGN (they assert the scrub catches them, keep an
+  # authoritative RESERVED_TOKENS copy, or use real names as fixtures).
+  # They are exempt from the private-CI scrub via ALLOWLISTED_PATHS in
+  # packages/admin/tests/test_public_launch_scrub.py, but that exemption
+  # must NOT carry into the public output — denylist them so the public
+  # repo never ships the embedded tokens. (PUBLIC-3)
+  - packages/admin/tests/test_files_pack_integrity.py
+  - packages/admin/tests/test_no_personal_pii_in_source.py
+  - packages/admin/tests/test_public_launch_scrub.py
+  - packages/analyzer/tests/test_oc_cli_dedup.py
+  - packages/plugin/tests/turnObserver.chosenBy.test.mjs
+  - tools/test_publish_public.py
+
+  # The publish workflow itself (2026-07-29). Not withheld for secrecy —
+  # tools/publish-public and this manifest both ship — but because shipping it
+  # is an active footgun: `on: push: branches: [main]` would fire inside the
+  # PUBLIC repo on every force-pushed snapshot, and its body instructs a reader
+  # to mint a PUBLIC_REPO_PUSH_TOKEN "on THIS (private) repo". In the public
+  # repo it can only ever skip (no secret) or, if someone took that instruction
+  # literally, force-push the repo to itself in a loop. It is publish
+  # apparatus with no public consumer.
+  - .github/workflows/publish-public.yml
+
+  # Its drift alarm (2026-08-11), withheld for the same reason: shipped, its
+  # `on: schedule` would fire inside the PUBLIC repo, comparing that repo to
+  # itself on a cron and filing tracking issues there. Same class — publish
+  # apparatus with no public consumer.
+  - .github/workflows/publish-drift.yml
+
+  # The full-history secret scan and its baseline (2026-08-11), withheld for the
+  # same reason plus one of its own. Same class first: shipped, its `on:
+  # schedule` would fire inside the PUBLIC repo and file tracking issues there,
+  # against a snapshot that is a single fresh commit with no history to scan.
+  # The reason of its own: the baseline is a list of THIS repo's private commit
+  # SHAs and paths, and it is meaningless against the public repo's history —
+  # every fingerprint would fail to match, so shipping it would also hand a
+  # reader a map of private commits for no benefit.
+  - .github/workflows/secret-history-scan.yml
+  - .github/secret-history-scan/.gitleaksignore
+
+  # Reference-deployment operational scripts — same class as
+  # docs/incidents/** (the runbooks of this class are covered by
+  # docs/runbook-* above).
+  - scripts/decommission_sentry_watchdog.sh
+
+  # Darwin PM spec — §10 is an operator runbook against the live Linux VPS
+  # pod (names the real `darwin` bot, /home/darwin, systemd unit names, the
+  # ssh/PAT flow). Same reference-deployment-ops class as the runbooks above;
+  # withhold the whole doc from the public snapshot. (META:public, 2026-07-02)
+  - docs/spec-darwin-pm-2026-07-02.md
+
+# The docs/ allowlist (PD-3b, seeded from the PUB-1 Part A census of
+# 2026-08-16, which reviewed every then-public docs/ path against spec
+# §4.1's product-doc list). A docs/ path ships ONLY if it matches a glob
+# here (and no `private` glob). New document classes are born private;
+# adding a glob here is the explicit human act that makes a class public.
+# When unsure, leave it private — reversing private→public later costs
+# nothing; the other direction is the 08-15 incident.
+#
+# NOT listed by design: docs/PLACEHOLDER_NAMING.md (publish-time sanitize
+# target — its own classification; it ships sanitized).
+public_docs:
+  - docs/application-manifests.md
+  - docs/applications-vs-skills.md
+  - docs/applications.md
+  - docs/architecture.md
+  - docs/atlas-app-manifests/**   # importable reference app packages (product)
+  - docs/calibration-schema.md
+  - docs/configuration.md
+  - docs/continuity-engine.md
+  - docs/contributing-skills.md
+  - docs/deployment-guide.md
+  - docs/feedback-loop.md
+  - docs/fixtures/**              # field-name oracle read by shipped code/tests
+  - docs/getting-started.md
+  - docs/gitpages/**              # the public site
+  - docs/help/**                  # operator help corpus
+  - docs/https-setup.md
+  - docs/index.html
+  - docs/local-deployment-architecture.md
+  - docs/manifest-authoring-guide.md
+  - docs/manifest-schema.json
+  - docs/manifest-spec.md
+  - docs/model-roles.md
+  - docs/operator-message-style.md
+  - docs/operator-runbook.md      # product troubleshooting runbook (not reference-deployment ops)
+  - docs/overview.md
+  - docs/policy/**                # engineering policy parsed by shipped tests (launchd scope)
+  - docs/pre-install-checklist.md
+  - docs/principle-*
+  - docs/product-vision.md
+  - docs/public-manifest.yaml     # this file — the cut line is public by design
+  - docs/reference/**
+  - docs/remote-operator-access.md
+  - docs/schemas/**
+  - docs/scripts.md
+  - docs/skills/**                # per-integration setup guides
+  - docs/slack-setup.md
+  - docs/style-guide.md
+  - docs/system/**                # runtime content injected into bot session prompts
+  - docs/threat-model.md
+  - docs/use-cases.md
+  - docs/voice-guide.md

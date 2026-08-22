@@ -1,0 +1,31 @@
+id: workspace_security
+schema_version: 1
+type: guardian
+dimension: safety
+# Surface routing: firing. A credential found in a workspace file is a
+# top-of-list issue — the operator should see this with the loudest
+# treatment, not buried in drift. Spec:
+# docs/spec-recommendations-rework-2026-06-02.md §"Generator routing".
+surface: firing
+purpose: >
+  Consume ``misplaced_secret`` Signals from the compliance scan and
+  emit Investigation Proposals so the operator can review credentials
+  found in workspace files. Investigation-shaped (not auto-remediating)
+  for two reasons: the operator has to inspect the file to decide
+  whether it's a real leak or a documented sample, and any auto-fix
+  (rotate, redact, move) carries blast radius that needs explicit
+  approval. Severity skews critical — credentials in untracked files
+  are a top-of-list issue.
+cadence: daily
+resolves_when_silent: true
+invariants:
+  - id: action_kind_allowed
+    description: Workspace Security emits Investigations only — credential remediation is operator-driven.
+    check_kind: action_kind_allowed
+    params:
+      allowlist: [Investigation]
+  - id: touches_forbidden
+    description: Workspace Security does not touch auth, tools, or channel config files itself.
+    check_kind: touches_forbidden
+    params:
+      forbidden: [auth, tools, channel_config, gateway_core]

@@ -1,0 +1,47 @@
+id: exec_outcome_investigator
+schema_version: 1
+type: optimizer
+dimension: safety
+bucket: improve
+# Surface routing: drift. Investigates exec failures and attributes root cause. Operational
+#   triage shape.
+# Spec: docs/spec-recommendations-rework-2026-06-02.md §"Generator routing".
+surface: drift
+purpose: >
+  Investigate bot exec-outcome failures (denied / approval timed out /
+  preflight blocked / tool-error burst) and emit one Proposal per
+  investigated bot with the root cause attributed. Second reference
+  implementation of the investigate-before-propose architecture from
+  docs/spec-smarter-generators-2026-05-28.md, this time targeting the
+  bot-intent ↔ execution-outcome gap surfaced by the 2026-05-28 Security_bot
+  approval-timeout and 2026-05-24 team_bot_a protein-tracker cases (see
+  docs/spec-exec-outcome-watchdog-2026-05-28.md).
+cadence: daily
+# Sensor-style: when the upstream exec_outcome_watchdog Signals stop
+# firing (operator extended the allowlist, switched approval channel,
+# bot stopped retrying), the Proposal auto-archives.
+resolves_when_silent: true
+invariants:
+  - id: action_kind_allowed
+    description: >
+      Phase 3 (shipped 2026-05-28): exec_denied_allowlist_gap cause
+      emits UpdateExecApproval(add) — the canonical L2 applier for
+      bot exec-approvals.json that already exists for app_permission_
+      drift. Other cause_keys still emit Investigation (operator-routing
+      / preflight-block / unclassified / ambiguous all need operator
+      decisions, not autonomous writes). ConfigPatch is permitted but
+      not currently used; reserved for a future cause that targets
+      openclaw.json fields directly.
+    check_kind: action_kind_allowed
+    params:
+      allowlist: [Investigation, ConfigPatch, UpdateExecApproval]
+  - id: touches_forbidden
+    description: >
+      Exec-outcome investigator does not touch channel_config or
+      gateway_core. The "auth_config" touch is permitted because the
+      canonical Phase 3 action is "extend exec-approvals allowlist" —
+      gated to the UpdateExecApproval applier's own auto-reject guards
+      (denylist regex, scope check).
+    check_kind: touches_forbidden
+    params:
+      forbidden: [channel_config, gateway_core]

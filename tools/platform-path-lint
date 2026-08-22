@@ -1,0 +1,1054 @@
+#!/usr/bin/env python3
+"""platform-path-lint — ratchet gates that keep producer code platform-portable.
+
+Four rule classes share this tool because all protect the same invariant
+(packages/analyzer/platform_profile.py is the ONE home for platform
+divergence) and all ride the same shrink-only baseline machinery:
+
+  paths   — hardcoded ``/Users/`` path literals (the original rule).
+  blind   — platform-BLIND producers/monitors: a macOS-only binary or a
+            macOS-only string baked into a user-facing Signal/Finding
+            message with NO nearby platform gate. On a Linux/VPS pod these
+            ``FileNotFoundError`` into false CRITICALs (the
+            "macOS check fires false CRITICAL on a Linux pod" bug class).
+  repo    — hardcoded ``/Users/Shared/evolve-repo`` deploy-checkout literals
+            in a path-resolution context (``Path(...)`` / ``os.path.*`` /
+            subprocess ``cwd=``). The deploy checkout is
+            ``/var/lib/evolve/repo`` on Linux, so a macOS literal silently
+            breaks path resolution on Linux pods. A narrower, HARD-BLOCK
+            sibling of the paths rule: its baseline is empty (the class is
+            fully platform-keyed), so ANY reintroduction is caught — even in
+            a file whose paths baseline still grandfathers other ``/Users/``
+            literals. Steer authors to
+            ``platform_profile.get_profile().deploy_checkout_default``.
+  binpath — hardcoded COMMAND-BINARY path literals that live at a
+            DIFFERENT absolute path per platform: ``/usr/sbin/chown`` (Linux
+            ``/usr/bin/chown``), ``/usr/sbin/lsof`` (Linux
+            ``/usr/bin/lsof``), and any absolute openclaw CLI path (macOS
+            Homebrew symlink vs Linux ``/usr/bin/openclaw`` vs the
+            node_modules entrypoints). Scoped to the admin daemon package
+            (``packages/admin/evolve_admin``). The bug is silent and severe:
+            the ``evolve`` NOPASSWD sudoers grant is rendered with the
+            platform-correct binary, so on a Linux pod a ``sudo
+            /usr/sbin/chown …`` argv does NOT match the grant → sudo asks for
+            a password → no TTY on the daemon → the op fails, often leaving a
+            file root-owned and unreadable by the bot (live VPS incident:
+            approving a Telegram user left the bot creds root-owned →
+            gateway EACCES; a second: bot_forge's hardcoded
+            ``/opt/homebrew/bin/openclaw`` failed 4/4 Linux forge installs).
+            Route the binary through
+            ``platform_profile.get_profile().chown`` / ``.lsof``, and
+            openclaw through ``platform_profile.find_openclaw_cli()``.
+
+``--rule {paths,blind,repo,binpath,all}`` selects; the default is ``all`` so
+a bare ``--all`` (the CI invocation) runs every rule. The pre-commit hook
+runs the fast, low-false-positive rules (``blind``, ``repo``, ``binpath``)
+in ``--staged`` mode; the broader ``paths`` rule stays CI-only.
+
+────────────────────────────────────────────────────────────────────────────
+paths rule (8.3 Linux port, docs/design-linux-port-2026-06-10.md §6)
+────────────────────────────────────────────────────────────────────────────
+Every platform-divergent path lives in ``platform_profile.py`` and every
+home-directory lookup goes through the blessed helpers
+(``evolve_config.bot_home`` / ``user_home`` — pwd-first resolution; never
+``f"/Users/{bot_id}"`` path math, because bot_id ≠ OS account name).
+
+This gate freezes the current per-file count of ``/Users/`` string
+literals in tools/platform-path-baseline.txt, BLOCKS any change that adds
+a new one, and lets the baseline ratchet DOWN as files are migrated.
+
+Detection is AST-based: every ``str`` constant containing ``/Users/``
+counts once per occurrence — f-string fragments included. Comments and
+docstrings do NOT count (comments are invisible to the AST; docstrings are
+prose, and prose may legitimately mention macOS paths).
+
+To fix a paths hit, in order of preference:
+  1. home lookup for a logical bot id      → evolve_config.bot_home(bot_id)
+  2. home lookup for a resolved OS account → evolve_config.user_home(user)
+  3. platform default (shared dir, deploy checkout, daemon dir,
+     command path)                         → platform_profile.get_profile()
+
+────────────────────────────────────────────────────────────────────────────
+blind rule (platform-blind producer guard)
+────────────────────────────────────────────────────────────────────────────
+Producers/monitors under ``packages/analyzer/`` emit Signals/Findings. Some
+hardcode a macOS-only binary or a macOS-only message string with no platform
+branch; on a Linux pod the binary is absent, the subprocess raises, and the
+monitor reports a false CRITICAL. This rule flags, when NOT inside a
+function that consults a platform gate:
+
+  - a subprocess invocation (``subprocess.run/Popen/call/check_call/
+    check_output``) whose argv names a macOS-only tool — socketfilterfw,
+    pfctl, dscl, fdesetup, softwareupdate, csrutil, spctl, scutil,
+    system_profiler, sw_vers, diskutil, or any
+    ``/usr/libexec/ApplicationFirewall/*`` path. ``launchctl``/``systemctl``
+    are deliberately NOT here — those go through the scheduler seam, which
+    ``scheduler-factory-lint`` owns.
+  - a ``"macOS"`` / ``"darwin"`` / ``"FileVault"`` substring (case-
+    insensitive) embedded in a ``message=`` / ``body=`` / ``title=`` keyword
+    argument — the user-facing text of a Finding/Signal.
+
+"Guarded" (proximity heuristic) = the offending call/literal is lexically
+inside a function whose body anywhere references ``get_profile`` OR a raw
+``sys.platform`` / ``platform.system()`` check. A raw platform check is
+accepted here because it correctly skips the macOS path on Linux (it
+prevents the false CRITICAL, which is THIS rule's concern); the paths rule
+still steers new path code toward the blessed accessor.
+
+Scope is ``packages/analyzer/`` minus the per-OS seam adapters
+(``runtime/`` isolation/perms/scheduler, selected by a factory and thus
+legitimately macOS-specific), the platform home itself, and in-bot
+application code (``evolve_apps/``). Counts are frozen per-file in
+tools/platform-blind-baseline.txt and may only ratchet DOWN.
+
+To fix a blind hit: wrap the macOS-only path in
+``if get_profile().name == "macos":`` (return a ``skipped`` Finding /
+no Signal on other platforms), or add the Linux equivalent behind the
+matching branch. If a macOS-only message is correct only on macOS, gate
+the whole check. If a hit is genuinely unavoidable, bump
+tools/platform-blind-baseline.txt in this PR so the exception is reviewable.
+
+────────────────────────────────────────────────────────────────────────────
+repo rule (deploy-checkout-path guard)
+────────────────────────────────────────────────────────────────────────────
+The deploy checkout — the read-only repo the daemons load code from — is
+``/Users/Shared/evolve-repo`` on macOS but ``/var/lib/evolve/repo`` on
+Linux. A hardcoded macOS literal in a path-resolution position fails on a
+Linux pod: the path does not exist, so a rollback safety net no-ops, a
+monitor goes blind, a runner script is never found. This rule flags a
+``str`` constant containing ``/Users/Shared/evolve-repo`` when it is:
+
+  - a positional argument to ``Path(...)`` (or ``PurePath`` / ``PosixPath`` /
+    ``PurePosixPath``),
+  - a positional argument to an ``os.path.*`` helper, or
+  - the value of a ``cwd=`` keyword argument.
+
+We match the FULL deploy-checkout literal, not a bare ``evolve-repo``
+substring, so unrelated uses (the SSH deploy-key path
+``/Users/evolve/.ssh/evolve-repo``, an ``evolve-repo-backup`` sibling) are
+not false-flagged. Comments and docstrings do not count (AST-invisible /
+prose). Operator-recipe strings, log lines, and help text are not path
+resolution and are out of scope (the paths rule still counts them).
+
+To fix a repo hit: resolve the deploy checkout from the platform profile —
+``from platform_profile import get_profile`` then
+``Path(get_profile().deploy_checkout_default)`` (see
+``repo_puller.DEFAULT_REPO`` for the reference usage). Counts are frozen
+per-file in tools/platform-repo-path-baseline.txt and may only ratchet
+DOWN; the goal state is empty.
+
+────────────────────────────────────────────────────────────────────────────
+binpath rule (macOS command-binary path guard)
+────────────────────────────────────────────────────────────────────────────
+``chown`` and ``lsof`` exist on Linux but at a DIFFERENT absolute path than
+on macOS (``/usr/sbin/chown`` → ``/usr/bin/chown``; ``/usr/sbin/lsof`` →
+``/usr/bin/lsof``). The admin daemon runs these under ``sudo`` against a
+NOPASSWD grant that is itself rendered from the platform profile
+(``setup_wizard._render_evolve_sudoers`` uses ``get_profile().chown`` /
+``.lsof``). A hardcoded macOS path in the daemon's argv therefore fails to
+match the Linux grant: sudo prompts for a password, the daemon has no TTY,
+and the chown/lsof silently fails (a chown often leaves a token file
+root-owned and unreadable by the bot user).
+
+The openclaw CLI is the same class: its ``evolve ALL=(ALL) NOPASSWD:
+SETENV: <path>`` grant is baked from
+``platform_profile.find_openclaw_cli()`` at setup time, and the binary
+lives at a different path per platform/install (Homebrew symlink,
+``/usr/bin/openclaw``, node_modules entrypoints). A hardcoded absolute
+openclaw path in daemon argv can only ever match one platform's grant —
+bot_forge's ``/opt/homebrew/bin/openclaw`` constant killed every forge
+install on the Linux VPS ("sudo: a password is required", 2026-07-11). All
+six resolver candidates are needled; the fix is
+``platform_profile.find_openclaw_cli()`` (or ``deploy._openclaw_bin()``),
+resolved at call time.
+
+This rule counts every NON-docstring string constant whose value is
+EXACTLY one of the needled binary paths, anywhere under
+``packages/admin/evolve_admin`` — argv lists AND the common ``cmd = [...];
+subprocess.run(cmd)`` form alike (an exact-match keeps embedded prose like
+``f"sudo /usr/sbin/chown …"`` and comments out of scope). Two data-declaration modules that legitimately NAME
+the macOS path — ``applications/env_portability_lint.py`` (its skip-list of
+common system paths) and ``evo/inspector.py`` (the evo sandbox's macOS
+allow-list) — are allowlisted, not baselined.
+
+To fix a binpath hit: ``from platform_profile import get_profile`` then use
+``get_profile().chown`` / ``get_profile().lsof`` in the argv, or for the
+openclaw CLI ``platform_profile.find_openclaw_cli()`` (admin code typically
+via the cached ``deploy._openclaw_bin()``) — in every case resolve at
+call time, not module import, so a test's ``set_profile`` / filesystem
+patching takes effect. A
+bot account's PRIMARY group ``:staff`` stays a literal — it exists on Ubuntu
+(gid 50); only the gid-0 ADMIN group (``wheel`` → ``root``) routes through
+``get_profile().admin_group``. Counts are frozen per-file in
+tools/platform-binpath-baseline.txt and may only ratchet DOWN; goal: empty.
+
+────────────────────────────────────────────────────────────────────────────
+Usage:
+  tools/platform-path-lint <file.py> [...]            # lint specific files
+  tools/platform-path-lint --all                      # lint all in scope
+  tools/platform-path-lint --staged                   # lint git-staged
+  tools/platform-path-lint --rule blind --staged      # one rule only
+  tools/platform-path-lint --rule repo --staged        # deploy-checkout only
+  tools/platform-path-lint --rule binpath --staged     # macOS command binary
+  tools/platform-path-lint --all --update-baseline    # re-freeze (shrink)
+
+Exit status: 0 if no file exceeds its baseline; 1 if a new literal/blind
+producer appeared.
+"""
+from __future__ import annotations
+
+import argparse
+import ast
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# ── paths rule config ───────────────────────────────────────────────────────
+PATHS_BASELINE_PATH = REPO_ROOT / "tools" / "platform-path-baseline.txt"
+
+NEEDLE = "/Users/"
+
+# Production code only — test files (and their golden fixtures) routinely
+# pin macOS-shaped paths as expected values; including them would bloat
+# the baseline without protecting the runtime.
+_LINT_ROOTS = ("packages",)
+
+# Files allowed to contain /Users/ literals forever (never baselined):
+# the blessed profile home itself.
+_ALLOWLIST = {
+    "packages/analyzer/platform_profile.py",
+}
+
+# ── blind rule config ───────────────────────────────────────────────────────
+BLIND_BASELINE_PATH = REPO_ROOT / "tools" / "platform-blind-baseline.txt"
+
+# Root the blind --all sweep walks: pod producers/monitors live here.
+_BLIND_ROOT = "packages/analyzer"
+
+# Subtrees/files under _BLIND_ROOT excluded from the blind rule. These are
+# legitimately platform-specific (a per-OS seam adapter selected by a
+# factory, with a Linux sibling) — flagging the macOS branch of code that
+# already HAS a Linux branch would be noise.
+_BLIND_EXCLUDE = (
+    "packages/analyzer/platform_profile.py",  # the platform home itself
+    "packages/analyzer/runtime/",             # isolation/perms/scheduler seam adapters
+)
+
+# evolve_apps/ used to be excluded WHOLESALE ("in-bot application code, not
+# pod monitors"). That blanket carve-out let any pod-scheduled DAEMON living
+# under evolve_apps/ dodge this gate — security-cve-scan/finalize.py is
+# installed as the ``ai.evolve.evolve.security-cve-scan-finalize`` launchd /
+# systemd unit, runs as ``evolve``, and shelled out to the macOS-only
+# ``sw_vers`` with no platform branch (a textbook blind hit). It is NOT
+# in-bot code. So the default is now IN SCOPE: every file under evolve_apps/
+# is linted by the blind rule unless explicitly exempted below.
+#
+# A genuinely in-bot script — one that runs only inside a bot's openclaw
+# workspace, on the same OS as the pod, and never emits a pod Signal/Finding
+# (so the "false CRITICAL on a Linux pod" failure mode can't apply) — may be
+# exempted here with a one-line justification. A pod-installed daemon must
+# NEVER be added: the meta-test
+# ``test_evolve_apps_pod_daemons_are_blind_in_scope`` derives the pod-daemon
+# set from deploy.py's installers and fails if any of them lands in this list.
+# Empty today — no shipped evolve_apps/ script is bot-workspace-only.
+_BLIND_INBOT_EXEMPT: tuple[str, ...] = ()
+
+# macOS-only CLI tools: a subprocess argv element whose basename is one of
+# these (or any /usr/libexec/ApplicationFirewall/* path) FileNotFound-errors
+# on a Linux pod. launchctl/systemctl are intentionally ABSENT — those go
+# through the scheduler seam (scheduler-factory-lint owns them).
+_MACOS_BINARIES = frozenset({
+    "socketfilterfw", "pfctl", "dscl", "fdesetup", "softwareupdate",
+    "csrutil", "spctl", "scutil", "system_profiler", "sw_vers", "diskutil",
+})
+_APPLICATION_FIREWALL_PREFIX = "/usr/libexec/ApplicationFirewall/"
+
+# Substrings (case-insensitive) that are wrong on a Linux pod when baked
+# into a user-facing message. Checked inside message/body/title kwargs only.
+_MACOS_MESSAGE_TOKENS = ("macos", "darwin", "filevault")
+_MESSAGE_KWARGS = frozenset({"message", "body", "title"})
+
+# subprocess entrypoints whose first positional arg is the argv.
+_SUBPROC_METHODS = frozenset({"run", "Popen", "call", "check_call", "check_output"})
+
+# ── repo rule config ──────────────────────────────────────────────────────────
+REPO_BASELINE_PATH = REPO_ROOT / "tools" / "platform-repo-path-baseline.txt"
+
+# The macOS deploy-checkout literal. A NEW occurrence in a path-resolution
+# context (Path()/os.path.*/cwd=) is a hard block: on Linux the deploy
+# checkout is /var/lib/evolve/repo, so a macOS literal breaks path
+# resolution there. Match the FULL literal (not a bare "evolve-repo"
+# substring) so the SSH deploy-key path /Users/evolve/.ssh/evolve-repo and
+# similar non-checkout uses are not false-flagged.
+_REPO_NEEDLE = "/Users/Shared/evolve-repo"
+
+# Path constructors whose positional string args are path resolution.
+_PATH_CTORS = frozenset({"Path", "PurePath", "PosixPath", "PurePosixPath"})
+
+# ── binpath rule config ───────────────────────────────────────────────────────
+BINPATH_BASELINE_PATH = REPO_ROOT / "tools" / "platform-binpath-baseline.txt"
+
+# Root the binpath sweep walks: the admin daemon package. The daemon runs as
+# the `evolve` user with no TTY, so a sudo argv that misses the NOPASSWD grant
+# (because the binary path is the macOS one) fails silently here.
+_BINPATH_ROOT = "packages/admin/evolve_admin"
+
+# macOS command-binary absolute paths that live elsewhere on Linux. EXACT
+# (whole-string) match — an embedded fragment like "sudo /usr/sbin/chown -R"
+# is operator-recipe prose, not a binary token, so it is out of scope.
+#
+# The openclaw CLI paths are the same bug class with a twist: the binary
+# lives at a DIFFERENT path per platform (macOS Homebrew symlink vs Linux
+# /usr/bin symlink vs the node_modules entrypoints), and the sudoers SETENV
+# grant is rendered from platform_profile.find_openclaw_cli() at setup time
+# — so ANY hardcoded absolute openclaw path in daemon argv can't match the
+# grant on the other platform (live incident: bot_forge's hardcoded
+# /opt/homebrew/bin/openclaw killed every Linux forge dispatch with "sudo: a
+# password is required"). All six resolver candidates are needled: route
+# through platform_profile.find_openclaw_cli() (admin code typically via
+# deploy._openclaw_bin()), resolved at call time.
+_BINPATH_NEEDLES = frozenset({
+    "/usr/sbin/chown",   # Linux: /usr/bin/chown
+    "/usr/sbin/lsof",    # Linux: /usr/bin/lsof
+    # openclaw CLI — the six platform_profile.OPENCLAW_CLI_CANDIDATES:
+    "/opt/homebrew/bin/openclaw",
+    "/usr/local/bin/openclaw",
+    "/usr/bin/openclaw",
+    "/opt/homebrew/lib/node_modules/openclaw/bin/openclaw",
+    "/usr/local/lib/node_modules/openclaw/bin/openclaw",
+    "/usr/lib/node_modules/openclaw/bin/openclaw",
+})
+
+# Files that legitimately NAME a macOS binary path as DATA (not as a
+# subprocess invocation), so routing through platform_profile would be wrong —
+# the binpath analogue of the paths rule's platform_profile.py allowlist:
+#   env_portability_lint.py — a skip-list of common system paths the lint
+#     must spell out to recognise them.
+#   evo/inspector.py — the evo sandbox's macOS full-path allow-list (a
+#     genuinely macOS-only DATA table; making it platform-aware is a separate
+#     evo-on-Linux concern, deliberately out of this rule's scope).
+_BINPATH_ALLOWLIST = {
+    # The blessed platform home — the ONE place the macOS binary paths are
+    # DEFINED (chown="/usr/sbin/chown", lsof="/usr/sbin/lsof"). Outside the
+    # admin scope this rule walks, but named explicitly by the lint's own
+    # self-test, so allowlist it the way the paths rule's _ALLOWLIST does.
+    "packages/analyzer/platform_profile.py",
+    "packages/admin/evolve_admin/applications/env_portability_lint.py",
+    "packages/admin/evolve_admin/evo/inspector.py",
+}
+
+
+def _is_test_path(rel: str) -> bool:
+    parts = rel.replace("\\", "/").split("/")
+    if any(p in ("tests", "test") for p in parts):
+        return True
+    base = parts[-1]
+    return base.startswith("test_") or base == "conftest.py"
+
+
+def _docstring_nodes(tree: ast.AST) -> set[int]:
+    """ids of Constant nodes that are docstrings (module/class/def lead)."""
+    out: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(
+            node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+        ):
+            body = getattr(node, "body", [])
+            if (
+                body
+                and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)
+            ):
+                out.add(id(body[0].value))
+    return out
+
+
+# ── paths rule ───────────────────────────────────────────────────────────────
+def _literal_count(path: Path) -> int:
+    """Occurrences of /Users/ across non-docstring string constants."""
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (SyntaxError, UnicodeDecodeError, ValueError):
+        return 0
+    docstrings = _docstring_nodes(tree)
+    n = 0
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and id(node) not in docstrings
+        ):
+            n += node.value.count(NEEDLE)
+    return n
+
+
+def _iter_production_files() -> list[Path]:
+    out: list[Path] = []
+    for root in _LINT_ROOTS:
+        for dirpath, _dirs, files in os.walk(REPO_ROOT / root):
+            if "__pycache__" in dirpath:
+                continue
+            for f in files:
+                if not f.endswith(".py"):
+                    continue
+                p = Path(dirpath) / f
+                rel = str(p.relative_to(REPO_ROOT))
+                if _is_test_path(rel) or rel in _ALLOWLIST:
+                    continue
+                out.append(p)
+    return out
+
+
+def _staged_py_files() -> list[Path]:
+    r = subprocess.run(
+        ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+    )
+    out = []
+    for name in r.stdout.splitlines():
+        if name.endswith(".py") and not _is_test_path(name) and name not in _ALLOWLIST:
+            p = REPO_ROOT / name
+            if p.exists():
+                out.append(p)
+    return out
+
+
+# ── blind rule ────────────────────────────────────────────────────────────────
+def _blind_excluded(rel: str) -> bool:
+    rel = rel.replace("\\", "/")
+    if any(rel == e or rel.startswith(e) for e in _BLIND_EXCLUDE):
+        return True
+    # evolve_apps/ is in scope by default (pod daemons must be linted); only an
+    # explicitly-listed genuinely-in-bot script is exempt.
+    return rel in _BLIND_INBOT_EXEMPT
+
+
+def _is_guard_node(node: ast.AST) -> bool:
+    """True if *node* is a platform-gate reference: ``get_profile`` (the
+    blessed accessor, as a bare name or attribute), ``sys.platform``, or
+    ``platform.system()``/``machine()``/``uname()``."""
+    if isinstance(node, ast.Name) and node.id == "get_profile":
+        return True
+    if isinstance(node, ast.Attribute):
+        if node.attr == "get_profile":
+            return True
+        if (
+            node.attr == "platform"
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "sys"
+        ):
+            return True
+        if (
+            node.attr in ("system", "machine", "uname")
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "platform"
+        ):
+            return True
+    return False
+
+
+def _scope_has_guard(fn: ast.AST) -> bool:
+    return any(_is_guard_node(n) for n in ast.walk(fn))
+
+
+def _is_subprocess_call(node: ast.Call) -> bool:
+    fn = node.func
+    if isinstance(fn, ast.Attribute) and fn.attr in _SUBPROC_METHODS:
+        return isinstance(fn.value, ast.Name) and fn.value.id == "subprocess"
+    return isinstance(fn, ast.Name) and fn.id in _SUBPROC_METHODS
+
+
+def _argv_strings(argv: ast.AST) -> list[str]:
+    """String literals in a subprocess argv (a list/tuple, or a bare str)."""
+    if isinstance(argv, (ast.List, ast.Tuple)):
+        elts = argv.elts
+    elif isinstance(argv, ast.Constant) and isinstance(argv.value, str):
+        elts = [argv]
+    else:
+        return []
+    return [
+        e.value for e in elts
+        if isinstance(e, ast.Constant) and isinstance(e.value, str)
+    ]
+
+
+def _macos_binary(s: str) -> str | None:
+    if s.startswith(_APPLICATION_FIREWALL_PREFIX):
+        return s.rsplit("/", 1)[-1] or "ApplicationFirewall"
+    base = s.rsplit("/", 1)[-1]
+    return base if base in _MACOS_BINARIES else None
+
+
+def _string_fragments(value: ast.AST) -> list[str]:
+    if isinstance(value, ast.Constant) and isinstance(value.value, str):
+        return [value.value]
+    if isinstance(value, ast.JoinedStr):
+        return [
+            v.value for v in value.values
+            if isinstance(v, ast.Constant) and isinstance(v.value, str)
+        ]
+    return []
+
+
+def _blind_violations(path: Path) -> list[tuple[int, str, str]]:
+    """List of (lineno, kind, detail) for unguarded macOS-only producer
+    code. kind ∈ {"binary", "message"}."""
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (SyntaxError, UnicodeDecodeError, ValueError):
+        return []
+    out: list[tuple[int, str, str]] = []
+
+    def check_call(node: ast.Call) -> None:
+        if _is_subprocess_call(node) and node.args:
+            for s in _argv_strings(node.args[0]):
+                b = _macos_binary(s)
+                if b:
+                    out.append((node.lineno, "binary", b))
+                    break
+        for kw in node.keywords:
+            if kw.arg in _MESSAGE_KWARGS:
+                for frag in _string_fragments(kw.value):
+                    low = frag.lower()
+                    if any(tok in low for tok in _MACOS_MESSAGE_TOKENS):
+                        out.append((node.lineno, "message", kw.arg or "?"))
+                        break
+
+    def visit(node: ast.AST, guarded: bool) -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            guarded = guarded or _scope_has_guard(node)
+        if not guarded and isinstance(node, ast.Call):
+            check_call(node)
+        for child in ast.iter_child_nodes(node):
+            visit(child, guarded)
+
+    visit(tree, False)
+    return out
+
+
+def _iter_blind_files() -> list[Path]:
+    out: list[Path] = []
+    for dirpath, _dirs, files in os.walk(REPO_ROOT / _BLIND_ROOT):
+        if "__pycache__" in dirpath:
+            continue
+        for f in files:
+            if not f.endswith(".py"):
+                continue
+            p = Path(dirpath) / f
+            rel = str(p.relative_to(REPO_ROOT))
+            if _is_test_path(rel) or _blind_excluded(rel):
+                continue
+            out.append(p)
+    return out
+
+
+def _staged_blind_files() -> list[Path]:
+    r = subprocess.run(
+        ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+    )
+    out = []
+    for name in r.stdout.splitlines():
+        norm = name.replace("\\", "/")
+        if not norm.endswith(".py") or not norm.startswith(_BLIND_ROOT + "/"):
+            continue
+        if _is_test_path(norm) or _blind_excluded(norm):
+            continue
+        p = REPO_ROOT / name
+        if p.exists():
+            out.append(p)
+    return out
+
+
+# ── repo rule ─────────────────────────────────────────────────────────────────
+def _is_path_resolution_context(parent: ast.AST | None, node: ast.Constant) -> str | None:
+    """Return a short context label if *node* (a str Constant) sits in a
+    path-resolution position within its AST *parent*, else None.
+
+    Path-resolution positions (the deploy-checkout-path contract):
+      • a positional arg to Path()/PurePath()/PosixPath()/PurePosixPath()
+      • a positional arg to an os.path.* helper (join/exists/isdir/...)
+      • the value of a cwd= keyword (subprocess.run/Popen/..., or any call)
+    """
+    if isinstance(parent, ast.keyword) and parent.arg == "cwd" and parent.value is node:
+        return "cwd="
+    if isinstance(parent, ast.Call) and node in parent.args:
+        fn = parent.func
+        if isinstance(fn, ast.Name) and fn.id in _PATH_CTORS:
+            return f"{fn.id}()"
+        if isinstance(fn, ast.Attribute) and fn.attr in _PATH_CTORS:
+            return f"{fn.attr}()"  # e.g. pathlib.Path("...")
+        if (
+            isinstance(fn, ast.Attribute)
+            and isinstance(fn.value, ast.Attribute)
+            and fn.value.attr == "path"
+            and isinstance(fn.value.value, ast.Name)
+            and fn.value.value.id == "os"
+        ):
+            return f"os.path.{fn.attr}()"
+    return None
+
+
+def _repo_violations(path: Path) -> list[tuple[int, str]]:
+    """List of (lineno, context) for /Users/Shared/evolve-repo literals used
+    in a path-resolution context (Path()/os.path.*/cwd=). Docstrings and
+    comments are excluded (prose / AST-invisible)."""
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (SyntaxError, UnicodeDecodeError, ValueError):
+        return []
+    docstrings = _docstring_nodes(tree)
+    parents: dict[int, ast.AST] = {}
+    for n in ast.walk(tree):
+        for c in ast.iter_child_nodes(n):
+            parents[id(c)] = n
+    out: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and _REPO_NEEDLE in node.value
+            and id(node) not in docstrings
+        ):
+            ctx = _is_path_resolution_context(parents.get(id(node)), node)
+            if ctx:
+                out.append((node.lineno, ctx))
+    return out
+
+
+# ── binpath rule ──────────────────────────────────────────────────────────────
+def _binpath_excluded(rel: str) -> bool:
+    rel = rel.replace("\\", "/")
+    return rel in _BINPATH_ALLOWLIST
+
+
+def _binpath_violations(path: Path) -> list[tuple[int, str]]:
+    """List of (lineno, binary) for non-docstring string constants whose value
+    is EXACTLY a macOS command-binary path that differs on Linux. Docstrings
+    (prose) and comments (AST-invisible) do not count; an embedded fragment
+    such as ``f"sudo /usr/sbin/chown -R …"`` does not count either (the
+    constant must equal the binary path)."""
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (SyntaxError, UnicodeDecodeError, ValueError):
+        return []
+    docstrings = _docstring_nodes(tree)
+    out: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and node.value in _BINPATH_NEEDLES
+            and id(node) not in docstrings
+        ):
+            out.append((node.lineno, node.value))
+    return out
+
+
+def _iter_binpath_files() -> list[Path]:
+    out: list[Path] = []
+    for dirpath, _dirs, files in os.walk(REPO_ROOT / _BINPATH_ROOT):
+        if "__pycache__" in dirpath:
+            continue
+        for f in files:
+            if not f.endswith(".py"):
+                continue
+            p = Path(dirpath) / f
+            rel = str(p.relative_to(REPO_ROOT))
+            if _is_test_path(rel) or _binpath_excluded(rel):
+                continue
+            out.append(p)
+    return out
+
+
+def _staged_binpath_files() -> list[Path]:
+    r = subprocess.run(
+        ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+    )
+    out = []
+    for name in r.stdout.splitlines():
+        norm = name.replace("\\", "/")
+        if not norm.endswith(".py") or not norm.startswith(_BINPATH_ROOT + "/"):
+            continue
+        if _is_test_path(norm) or _binpath_excluded(norm):
+            continue
+        p = REPO_ROOT / name
+        if p.exists():
+            out.append(p)
+    return out
+
+
+# ── baseline I/O (shared) ─────────────────────────────────────────────────────
+def _load_baseline(path: Path) -> dict[str, int]:
+    if not path.exists():
+        return {}
+    baseline: dict[str, int] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split("\t", 1)  # "<count>\t<path>"
+        if len(parts) != 2:
+            continue
+        try:
+            baseline[parts[1]] = int(parts[0])
+        except ValueError:
+            continue
+    return baseline
+
+
+_PATHS_HEADER = (
+    "# platform-path-baseline — hardcoded /Users/ literal counts per file.",
+    "# Generated by `tools/platform-path-lint --all --update-baseline`. The",
+    "# lint blocks any file that EXCEEDS its count, so this file may only",
+    "# ratchet DOWN: migrate a literal onto evolve_config.bot_home/user_home",
+    "# or platform_profile.get_profile() -> rerun --update-baseline -> the",
+    "# number drops. Goal state: this file is empty (8.3 Linux port, §6).",
+)
+
+_BLIND_HEADER = (
+    "# platform-blind-baseline — unguarded macOS-only producer hits per file.",
+    "# Generated by `tools/platform-path-lint --rule blind --all",
+    "# --update-baseline`. A hit is a macOS-only binary (socketfilterfw,",
+    "# pfctl, dscl, fdesetup, softwareupdate, ...) or a macOS/darwin/FileVault",
+    "# string in a Finding/Signal message/body/title that is NOT inside a",
+    "# get_profile()/sys.platform-guarded function. The lint blocks any file",
+    "# that EXCEEDS its count, so this file may only ratchet DOWN: gate the",
+    "# check behind get_profile().name == 'macos' (or add the Linux branch)",
+    "# -> rerun --update-baseline -> the number drops. Goal state: empty.",
+)
+
+_REPO_HEADER = (
+    "# platform-repo-path-baseline — hardcoded /Users/Shared/evolve-repo",
+    "# deploy-checkout literals in a path-resolution context (Path()/",
+    "# os.path.*/cwd=) per file. Generated by `tools/platform-path-lint",
+    "# --rule repo --all --update-baseline`. The deploy checkout is",
+    "# /var/lib/evolve/repo on Linux, so a hardcoded macOS literal breaks",
+    "# path resolution on Linux pods — resolve via",
+    "# platform_profile.get_profile().deploy_checkout_default instead. The",
+    "# lint blocks any file that EXCEEDS its count, so this file may only",
+    "# ratchet DOWN. Goal state: empty (deploy-checkout path class fully",
+    "# platform-keyed).",
+)
+
+_BINPATH_HEADER = (
+    "# platform-binpath-baseline — hardcoded platform-divergent command-binary",
+    "# path literals (/usr/sbin/chown, /usr/sbin/lsof, and any absolute",
+    "# openclaw CLI path) per file under packages/admin/evolve_admin.",
+    "# Generated by `tools/platform-path-lint --rule binpath --all",
+    "# --update-baseline`. These binaries live at a different absolute path",
+    "# per platform, and the daemon's sudo NOPASSWD grants are rendered with",
+    "# the platform-correct binary — so a hardcoded path makes sudo prompt",
+    "# (no TTY) and the op fails silently. Route chown/lsof through",
+    "# platform_profile.get_profile().chown / .lsof, and openclaw through",
+    "# platform_profile.find_openclaw_cli() (resolved at call time). The lint",
+    "# blocks any file that EXCEEDS its count, so this file may only ratchet",
+    "# DOWN. Goal state: empty.",
+)
+
+
+def _write_baseline(path: Path, counts: dict[str, int], header: tuple[str, ...]) -> None:
+    lines = list(header) + [""]
+    for p in sorted(counts):
+        if counts[p] > 0:
+            lines.append(f"{counts[p]}\t{p}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _rel(p: Path) -> str:
+    try:
+        return str(p.resolve().relative_to(REPO_ROOT))
+    except ValueError:
+        return str(p)
+
+
+# ── rule runners ──────────────────────────────────────────────────────────────
+def _paths_targets(args: argparse.Namespace) -> list[Path]:
+    if args.all:
+        return _iter_production_files()
+    if args.staged:
+        return _staged_py_files()
+    return [Path(f) for f in args.files if f.endswith(".py")]
+
+
+def _run_paths(args: argparse.Namespace) -> int:
+    baseline = _load_baseline(PATHS_BASELINE_PATH)
+    violations: list[tuple[str, int, int]] = []
+    below = 0
+    for p in _paths_targets(args):
+        rel = _rel(p)
+        if _is_test_path(rel) or rel in _ALLOWLIST or not p.exists():
+            continue
+        n = _literal_count(p)
+        allowed = baseline.get(rel, 0)
+        if n > allowed:
+            violations.append((rel, n, allowed))
+        elif n < allowed:
+            below += 1
+
+    if violations:
+        print("✗ new hardcoded /Users/ path literal(s):\n")
+        for rel, n, allowed in violations:
+            print(f"  {rel}: {n} literal(s), baseline allows {allowed}")
+        print(
+            "\n/Users/ is macOS-only (8.3 Linux port). Resolve homes via the\n"
+            "blessed helpers — evolve_config.bot_home(bot_id) for logical ids,\n"
+            "evolve_config.user_home(account) for resolved accounts — and take\n"
+            "platform defaults (shared dir, deploy checkout, daemon dir,\n"
+            "command paths) from platform_profile.get_profile(). If a literal\n"
+            "is truly unavoidable, bump tools/platform-path-baseline.txt in\n"
+            "this PR so the exception is reviewable.\n"
+        )
+        return 1
+
+    if below:
+        print(
+            f"platform-path-lint[paths]: {below} file(s) now below baseline — run\n"
+            "`tools/platform-path-lint --rule paths --all --update-baseline` to ratchet down."
+        )
+    return 0
+
+
+def _blind_targets(args: argparse.Namespace) -> list[Path]:
+    if args.all:
+        return _iter_blind_files()
+    if args.staged:
+        return _staged_blind_files()
+    return [Path(f) for f in args.files if f.endswith(".py")]
+
+
+def _run_blind(args: argparse.Namespace) -> int:
+    baseline = _load_baseline(BLIND_BASELINE_PATH)
+    violations: list[tuple[str, int, int, list[tuple[int, str, str]]]] = []
+    below = 0
+    for p in _blind_targets(args):
+        rel = _rel(p)
+        if _is_test_path(rel) or _blind_excluded(rel) or not p.exists():
+            continue
+        v = _blind_violations(p)
+        n = len(v)
+        allowed = baseline.get(rel, 0)
+        if n > allowed:
+            violations.append((rel, n, allowed, v))
+        elif n < allowed:
+            below += 1
+
+    if violations:
+        print("✗ new platform-blind producer/monitor code:\n")
+        for rel, n, allowed, hits in violations:
+            print(f"  {rel}: {n} hit(s), baseline allows {allowed}")
+            for lineno, kind, detail in hits:
+                if kind == "binary":
+                    print(f"    L{lineno}: macOS-only binary `{detail}` in a subprocess call")
+                else:
+                    print(f"    L{lineno}: macOS-only string in `{detail}=` message")
+        print(
+            "\nThese FileNotFoundError into false CRITICALs on a Linux/VPS pod.\n"
+            "Gate the check behind a platform branch — e.g.\n"
+            "    from platform_profile import get_profile\n"
+            "    if get_profile().name != \"macos\":\n"
+            "        return []   # or a 'skipped' Finding / no Signal\n"
+            "— or add the Linux equivalent behind the matching branch. If a\n"
+            "hit is genuinely unavoidable, bump tools/platform-blind-baseline.txt\n"
+            "in this PR so the exception is reviewable.\n"
+        )
+        return 1
+
+    if below:
+        print(
+            f"platform-path-lint[blind]: {below} file(s) now below baseline — run\n"
+            "`tools/platform-path-lint --rule blind --all --update-baseline` to ratchet down."
+        )
+    return 0
+
+
+def _repo_targets(args: argparse.Namespace) -> list[Path]:
+    # Same scope as the paths rule: production files (tests/golden fixtures
+    # legitimately pin macOS-shaped paths).
+    if args.all:
+        return _iter_production_files()
+    if args.staged:
+        return _staged_py_files()
+    return [Path(f) for f in args.files if f.endswith(".py")]
+
+
+def _run_repo(args: argparse.Namespace) -> int:
+    baseline = _load_baseline(REPO_BASELINE_PATH)
+    violations: list[tuple[str, int, int, list[tuple[int, str]]]] = []
+    below = 0
+    for p in _repo_targets(args):
+        rel = _rel(p)
+        if _is_test_path(rel) or rel in _ALLOWLIST or not p.exists():
+            continue
+        v = _repo_violations(p)
+        n = len(v)
+        allowed = baseline.get(rel, 0)
+        if n > allowed:
+            violations.append((rel, n, allowed, v))
+        elif n < allowed:
+            below += 1
+
+    if violations:
+        print("✗ new hardcoded deploy-checkout literal (/Users/Shared/evolve-repo):\n")
+        for rel, n, allowed, hits in violations:
+            print(f"  {rel}: {n} hit(s), baseline allows {allowed}")
+            for lineno, ctx in hits:
+                print(f"    L{lineno}: /Users/Shared/evolve-repo in {ctx}")
+        print(
+            "\nThe deploy checkout is /Users/Shared/evolve-repo on macOS but\n"
+            "/var/lib/evolve/repo on Linux — a hardcoded macOS literal breaks\n"
+            "path resolution on Linux pods (rollback no-ops, monitors go blind,\n"
+            "runner scripts are never found). Resolve it from the platform\n"
+            "profile instead:\n"
+            "    from platform_profile import get_profile\n"
+            "    Path(get_profile().deploy_checkout_default)\n"
+            "(see repo_puller.DEFAULT_REPO for the reference usage). If a hit\n"
+            "is genuinely unavoidable, bump tools/platform-repo-path-baseline.txt\n"
+            "in this PR so the exception is reviewable.\n"
+        )
+        return 1
+
+    if below:
+        print(
+            f"platform-path-lint[repo]: {below} file(s) now below baseline — run\n"
+            "`tools/platform-path-lint --rule repo --all --update-baseline` to ratchet down."
+        )
+    return 0
+
+
+def _binpath_targets(args: argparse.Namespace) -> list[Path]:
+    if args.all:
+        return _iter_binpath_files()
+    if args.staged:
+        return _staged_binpath_files()
+    return [Path(f) for f in args.files if f.endswith(".py")]
+
+
+def _run_binpath(args: argparse.Namespace) -> int:
+    baseline = _load_baseline(BINPATH_BASELINE_PATH)
+    violations: list[tuple[str, int, int, list[tuple[int, str]]]] = []
+    below = 0
+    for p in _binpath_targets(args):
+        rel = _rel(p)
+        if _is_test_path(rel) or _binpath_excluded(rel) or not p.exists():
+            continue
+        v = _binpath_violations(p)
+        n = len(v)
+        allowed = baseline.get(rel, 0)
+        if n > allowed:
+            violations.append((rel, n, allowed, v))
+        elif n < allowed:
+            below += 1
+
+    if violations:
+        print("✗ new hardcoded platform-divergent command-binary path "
+              "(/usr/sbin/chown|lsof, openclaw CLI):\n")
+        for rel, n, allowed, hits in violations:
+            print(f"  {rel}: {n} literal(s), baseline allows {allowed}")
+            for lineno, binary in hits:
+                print(f"    L{lineno}: {binary}")
+        print(
+            "\nThese binaries live at a DIFFERENT path per platform (chown/lsof:\n"
+            "/usr/bin/* on Linux; the openclaw CLI: Homebrew symlink vs\n"
+            "/usr/bin/openclaw vs node_modules entrypoints). The admin daemon\n"
+            "runs them under sudo against a NOPASSWD grant rendered from the\n"
+            "platform profile, so a hardcoded path makes sudo prompt for a\n"
+            "password — and the daemon has no TTY, so the op fails silently\n"
+            "(a chown often leaves a token file root-owned; a forge dispatch\n"
+            "dies rc=1). Route the binary through the profile, resolved at\n"
+            "call time:\n"
+            "    from platform_profile import get_profile\n"
+            "    subprocess.run([\"sudo\", get_profile().chown, owner, path])\n"
+            "and for the openclaw CLI:\n"
+            "    from platform_profile import find_openclaw_cli   # or\n"
+            "    from evolve_admin.deploy import _openclaw_bin    # cached\n"
+            "Keep a bot's PRIMARY group `:staff` literal (it exists on Ubuntu);\n"
+            "only the gid-0 ADMIN group routes through get_profile().admin_group.\n"
+            "If a literal is genuinely DATA (not a subprocess call), allowlist\n"
+            "the file in tools/platform-path-lint (_BINPATH_ALLOWLIST) in this\n"
+            "PR so the exception is reviewable.\n"
+        )
+        return 1
+
+    if below:
+        print(
+            f"platform-path-lint[binpath]: {below} file(s) now below baseline — run\n"
+            "`tools/platform-path-lint --rule binpath --all --update-baseline` to ratchet down."
+        )
+    return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description="Ratchet gates keeping producer code platform-portable."
+    )
+    ap.add_argument("files", nargs="*", help="specific .py files to lint")
+    ap.add_argument("--all", action="store_true", help="lint all in-scope .py")
+    ap.add_argument("--staged", action="store_true", help="lint git-staged .py")
+    ap.add_argument(
+        "--rule", choices=["paths", "blind", "repo", "binpath", "all"], default="all",
+        help="which rule class to run (default: all)",
+    )
+    ap.add_argument(
+        "--update-baseline", action="store_true",
+        help="regenerate the selected baseline(s) from current counts (requires --all)",
+    )
+    args = ap.parse_args()
+
+    run_paths = args.rule in ("paths", "all")
+    run_blind = args.rule in ("blind", "all")
+    run_repo = args.rule in ("repo", "all")
+    run_binpath = args.rule in ("binpath", "all")
+
+    if args.update_baseline:
+        if not args.all:
+            print("--update-baseline requires --all", file=sys.stderr)
+            return 2
+        if run_paths:
+            counts = {_rel(p): _literal_count(p) for p in _iter_production_files()}
+            _write_baseline(PATHS_BASELINE_PATH, counts, _PATHS_HEADER)
+            total = sum(counts.values())
+            files = sum(1 for v in counts.values() if v)
+            print(f"paths baseline written: {total} /Users/ literals across {files} files")
+        if run_blind:
+            counts = {_rel(p): len(_blind_violations(p)) for p in _iter_blind_files()}
+            _write_baseline(BLIND_BASELINE_PATH, counts, _BLIND_HEADER)
+            total = sum(counts.values())
+            files = sum(1 for v in counts.values() if v)
+            print(f"blind baseline written: {total} hit(s) across {files} files")
+        if run_repo:
+            counts = {_rel(p): len(_repo_violations(p)) for p in _iter_production_files()}
+            _write_baseline(REPO_BASELINE_PATH, counts, _REPO_HEADER)
+            total = sum(counts.values())
+            files = sum(1 for v in counts.values() if v)
+            print(f"repo baseline written: {total} literal(s) across {files} files")
+        if run_binpath:
+            counts = {_rel(p): len(_binpath_violations(p)) for p in _iter_binpath_files()}
+            _write_baseline(BINPATH_BASELINE_PATH, counts, _BINPATH_HEADER)
+            total = sum(counts.values())
+            files = sum(1 for v in counts.values() if v)
+            print(f"binpath baseline written: {total} literal(s) across {files} files")
+        return 0
+
+    exit_code = 0
+    if run_paths and _run_paths(args):
+        exit_code = 1
+    if run_blind and _run_blind(args):
+        exit_code = 1
+    if run_repo and _run_repo(args):
+        exit_code = 1
+    if run_binpath and _run_binpath(args):
+        exit_code = 1
+
+    if exit_code == 0:
+        print("platform-path-lint: OK")
+    return exit_code
+
+
+if __name__ == "__main__":
+    sys.exit(main())

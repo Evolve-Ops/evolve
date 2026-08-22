@@ -1,0 +1,198 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://evolve.openclaw/manifest-v7-lessons.schema.json",
+  "title": "AppLessons",
+  "description": "Schema v7-arc — App Lessons: the shareable distillation of an Instance's change log + usage. Evidence-cited, redacted on share. See docs/spec-manifest-v7-2026-05-20.md §6.",
+  "type": "object",
+  "required": [
+    "lessons_id",
+    "spec_id",
+    "spec_version_observed",
+    "source_pod_id",
+    "source_bot_id",
+    "observation_window",
+    "lessons",
+    "redaction_applied"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "lessons_id": {
+      "type": "string",
+      "pattern": "^l-[a-f0-9]{8}$"
+    },
+    "spec_id": {
+      "type": "string",
+      "pattern": "^p-[a-f0-9]{8}$",
+      "description": "Spec these Lessons pertain to."
+    },
+    "spec_version_observed": {
+      "type": "string",
+      "pattern": "^[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-[0-9]+\\.[0-9]+$",
+      "description": "Spec version under observation when these Lessons were compiled."
+    },
+    "source_pod_id": {
+      "type": "string",
+      "description": "Pod that produced these Lessons."
+    },
+    "source_bot_id": {
+      "type": "string",
+      "description": "Bot whose Instance these Lessons summarize."
+    },
+    "observation_window": {
+      "type": "object",
+      "required": ["start", "end", "instance_runs"],
+      "additionalProperties": false,
+      "properties": {
+        "start": { "type": "string", "format": "date-time" },
+        "end": { "type": "string", "format": "date-time" },
+        "instance_runs": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "lessons": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/lesson" }
+    },
+    "current_summary": {
+      "type": "string",
+      "description": "Derived narrative summary of the cited lessons[]. Not a Lesson itself; carries no separate evidence requirement, but must not introduce claims absent from the underlying Lessons."
+    },
+    "redaction_applied": {
+      "type": "boolean",
+      "description": "Must be true before publishing through the share gateway."
+    },
+    "redaction_kind": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Categories of redaction applied (e.g., user_quotes_paraphrased, timestamps_quantized_to_week)."
+    }
+  },
+  "definitions": {
+    "lesson": {
+      "type": "object",
+      "required": ["lesson_id", "kind", "summary", "evidence"],
+      "additionalProperties": false,
+      "properties": {
+        "lesson_id": { "type": "string" },
+        "kind": {
+          "type": "string",
+          "enum": ["worked_well", "failed", "new_capability", "blueprint_correction"]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Per-kind minimums enforced via allOf below. Each entry cites a concrete signal, count, or user statement.",
+          "items": { "$ref": "#/definitions/evidence" }
+        },
+        "proposed_spec_change": {
+          "type": "object",
+          "required": ["target", "kind", "description"],
+          "additionalProperties": false,
+          "description": "Advisory. Target is natural-language; Adopt phase shows to operator and re-runs full Forge pipeline.",
+          "properties": {
+            "target": { "type": "string", "minLength": 1, "description": "Natural-language description of what the proposed change affects." },
+            "kind": { "type": "string", "description": "Free-form change category (e.g., regex_extension, scope_expansion, threshold_tune)." },
+            "description": { "type": "string", "minLength": 1 }
+          }
+        },
+        "source_change_log_entry_id": {
+          "type": "string",
+          "description": "Audit link: which change_log entry on the source Instance produced this Lesson. Populated by Lessons compression (S4d); preserved across share so a downstream pod can trace the claim back."
+        },
+        "source_timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Audit link: timestamp of the source change_log entry."
+        }
+      },
+      "allOf": [
+        {
+          "description": "blueprint_correction, failed, and worked_well require at least one quantitative-metric evidence entry.",
+          "if": {
+            "properties": {
+              "kind": { "enum": ["blueprint_correction", "failed", "worked_well"] }
+            }
+          },
+          "then": {
+            "properties": {
+              "evidence": {
+                "contains": {
+                  "type": "object",
+                  "required": ["type"],
+                  "properties": {
+                    "type": {
+                      "enum": ["error_count", "completion_rate", "failure_rate", "success_rate", "metric"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "description": "new_capability requires at least one user_request or user_complaint evidence entry.",
+          "if": {
+            "properties": {
+              "kind": { "const": "new_capability" }
+            }
+          },
+          "then": {
+            "properties": {
+              "evidence": {
+                "contains": {
+                  "type": "object",
+                  "required": ["type"],
+                  "properties": {
+                    "type": {
+                      "enum": ["user_request", "user_complaint"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["type", "ref"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "error_count",
+            "completion_rate",
+            "failure_rate",
+            "success_rate",
+            "metric",
+            "user_request",
+            "user_complaint",
+            "signal_store_ref"
+          ]
+        },
+        "ref": {
+          "type": "string",
+          "description": "Reference to the underlying signal, log line, or (post-redaction) opaque token."
+        },
+        "value": {
+          "type": ["number", "string"],
+          "description": "Optional quantitative value for metric-type evidence."
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Optional count of underlying occurrences (e.g., 3 user_requests folded into one ref)."
+        },
+        "summary": {
+          "type": "string",
+          "description": "Optional human-readable summary; redacted at share-time."
+        }
+      }
+    }
+  }
+}

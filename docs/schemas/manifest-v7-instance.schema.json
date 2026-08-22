@@ -1,0 +1,451 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://evolve.openclaw/manifest-v7-instance.schema.json",
+  "title": "AppInstance",
+  "description": "Schema v7-arc — App Instance: local realization of a Spec on one specific bot. Never travels. See docs/spec-manifest-v7-2026-05-20.md §4.",
+  "type": "object",
+  "required": [
+    "instance_id",
+    "bot_id",
+    "schema_version",
+    "manifest_shape",
+    "provenance",
+    "realized_files",
+    "status"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "instance_id": {
+      "type": "string",
+      "pattern": "^(i-[a-f0-9]{8}|[a-z0-9][a-z0-9_-]*)$",
+      "description": "Stable Instance identifier on this bot. Distinct from spec_id. Migration mints i-<8hex>; native writes (Slice 3a) reuse the legacy app slug so the manifests/<id>.json filename, admin URLs, and load_manifest keys survive the shape flip unchanged."
+    },
+    "app_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,46}[a-z0-9]$",
+      "description": "AL-1.4a canonical identity. Populate-on-absent from the legacy chain (pkg_id > id > spec_id > instance_id), so in 1.4a it mirrors instance_id and no reader's answer changes. Optional: a scanner-born draft carries draft_id instead, and an id that is not a conforming slug is left unstamped rather than silently rewritten into one no marker/filename/coverage key uses. AL-1.5/1.4c collapse this onto provenance.spec_id (design §3: an instance is the pair (app_id, bot_id))."
+    },
+    "draft_id": {
+      "type": "string",
+      "pattern": "^draft-[a-f0-9]{12}$",
+      "description": "Scanner-assigned draft identity for a DISCOVERED app (design §3). Explicitly unstable — the scanner may merge, rename or drop the draft freely — and never appears in attribution, access or sharing. Mutually exclusive with app_id: identity is conferred by promotion, not by discovery."
+    },
+    "bot_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The bot that owns this Instance."
+    },
+    "schema_version": {
+      "type": "integer",
+      "const": 14
+    },
+    "manifest_shape": {
+      "type": "string",
+      "const": "v7-arc"
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["spec_id", "spec_version", "installed_at", "installed_by"],
+      "additionalProperties": false,
+      "properties": {
+        "spec_id": { "type": "string", "pattern": "^p-[a-f0-9]{8}$" },
+        "spec_version": { "type": "string", "pattern": "^[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-[0-9]+\\.[0-9]+$" },
+        "source_pod_id": {
+          "type": ["string", "null"],
+          "description": "Null if locally-original; non-null if imported from another pod."
+        },
+        "source_bot_id": {
+          "type": ["string", "null"],
+          "description": "Originating bot if shared from elsewhere."
+        },
+        "installed_at": { "type": "string", "format": "date-time" },
+        "installed_by": {
+          "type": "string",
+          "description": "Actor that performed the install (e.g., 'forge_engine', 'operator_manual', 'migration')."
+        },
+        "forked_from": {
+          "type": ["string", "null"],
+          "description": "instance_id of source if installed from a sibling Instance rather than a fresh Spec."
+        },
+        "prior_spec_ids": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^p-[a-f0-9]{8}$" },
+          "description": "Append-only supersession chain (oldest→newest), excluding the current spec_id. Populated when the app is rebuilt under a fresh spec_id (forge re-create / scanner re-discovery) so a marker carrying a retired id still resolves to this Instance. Absent reads as []. See spec §5."
+        }
+      }
+    },
+    "spec_version_history": {
+      "type": "array",
+      "description": "Updated by Adopt phase whenever Spec version changes affect this Instance.",
+      "items": {
+        "type": "object",
+        "required": ["version", "adopted_at", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "version": { "type": "string", "pattern": "^[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-[0-9]+\\.[0-9]+$" },
+          "adopted_at": { "type": "string", "format": "date-time" },
+          "reason": {
+            "type": "string",
+            "description": "Free-form: initial_install, lesson_adoption, blueprint_correction, etc."
+          }
+        }
+      }
+    },
+    "dependency_check_at_install": {
+      "type": "object",
+      "required": ["checked_at", "all_required_satisfied", "details"],
+      "additionalProperties": false,
+      "properties": {
+        "checked_at": { "type": "string", "format": "date-time" },
+        "all_required_satisfied": { "type": "boolean" },
+        "details": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["kind", "id", "required", "satisfied"],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["app", "python_package", "system_package", "oc_plugin", "oc_skill", "integration", "credential"]
+              },
+              "id": { "type": "string", "minLength": 1 },
+              "required": { "type": "boolean" },
+              "satisfied": { "type": "boolean" },
+              "version_seen": { "type": "string" },
+              "scopes_granted": { "type": "array", "items": { "type": "string" } },
+              "note": { "type": "string" }
+            }
+          }
+        },
+        "optional_missing": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "IDs of optional deps not satisfied at install; runtime may degrade for features that need them."
+        }
+      }
+    },
+    "realized_files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["logical_name", "path", "file_id", "marker_state"],
+        "additionalProperties": false,
+        "properties": {
+          "logical_name": {
+            "type": "string",
+            "description": "Matches Spec.blueprint.files[].logical_name."
+          },
+          "path": {
+            "type": "string",
+            "description": "Absolute filesystem path."
+          },
+          "file_id": {
+            "type": "string",
+            "pattern": "^f-[a-f0-9]{8}@[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-[0-9]+\\.[0-9]+$",
+            "description": "Marker file_id in '<id>@<version>' format (version is YYYY.MM.DD-major.minor)."
+          },
+          "marker_state": {
+            "type": "string",
+            "enum": ["OWNED", "SHARED", "ORPHANED", "UNOWNED", "deprecated"],
+            "description": "Lifecycle state per provenance.py taxonomy, plus 'deprecated' for uninstall."
+          },
+          "created_in_session": {
+            "type": "string",
+            "description": "Optional session ID that created this file."
+          },
+          "deprecated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Set when marker_state transitions to 'deprecated'."
+          }
+        }
+      }
+    },
+    "configured_schedules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["spec_schedule_id", "resolved_cron", "configured_at"],
+        "additionalProperties": false,
+        "properties": {
+          "spec_schedule_id": {
+            "type": "string",
+            "description": "References Spec.schedules[].id."
+          },
+          "resolved_cron": {
+            "type": "string",
+            "description": "Actual cron line in effect on this bot (may differ from Spec.cron_default per local timezone or user adjustment)."
+          },
+          "configured_at": { "type": "string", "format": "date-time" },
+          "user_adjustments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "at": { "type": "string", "format": "date-time" },
+                "from": { "type": "string" },
+                "to": { "type": "string" },
+                "reason": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "learned_config": {
+      "type": "object",
+      "description": "Free-form, LLM-managed configuration that has accumulated over the Instance's life.",
+      "additionalProperties": true
+    },
+    "usage_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "invocation_count": { "type": "integer", "minimum": 0 },
+        "last_run": { "type": "string", "format": "date-time" },
+        "error_count": { "type": "integer", "minimum": 0 },
+        "last_error_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "evidence_files": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Preserved-from-v13. Operator-curated paths to evidence files (logs / sample outputs / fixtures) for this Instance. 73% of real v13 manifests populate this; Tier-2 audit reads them."
+    },
+    "last_audit": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Preserved-from-v13 (schema v12). Tier-3 audit run stamp. Auto-populated by audit_runner.py; preserved here so the daemon's last-known state survives the v7 migration boundary."
+    },
+    "last_structural_verify": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Preserved-from-v13 (schema v11). Tier-2 structural-audit stamp. Auto-populated by audit_runner.py — preserved so the daemon doesn't need a forced re-run after migration."
+    },
+    "audit_trail_path": {
+      "type": "string",
+      "description": "Preserved-from-v13 (schema v11). Absolute path on the bot to the per-app rolling audit log JSONL. Bot-local — stays on Instance, not Spec."
+    },
+    "usage": {
+      "type": "object",
+      "description": "Native-write passthrough (Slice 3a). The bot-facing usage manual (trigger_recognition, how_to_use, model) — drives INSTALLED_APPS.md discoverability. Per-bot, so Instance-owned; the migration folded v13 usage into learned_config instead, but fresh apps must not lose the structured manual."
+    },
+    "improvement_history": {
+      "type": "array",
+      "items": { "type": "object" },
+      "description": "Native-write passthrough (Slice 3a). Forge build/approval records. The migration dropped this as a deliberate watermark; a freshly installed app has exactly one entry — the provenance of this very install — and keeps it."
+    },
+    "app_files_privacy": {
+      "type": "string",
+      "description": "Native-write passthrough (Slice 3a). v15 backup data-classification tier for app files. Bot-local paths posture, so Instance-owned."
+    },
+    "data_paths": {
+      "type": "array",
+      "items": { "type": "object" },
+      "description": "Native-write passthrough (Slice 3a). v15 backup data-classification path rules. Bot-local, so Instance-owned."
+    },
+    "default_for_unclassified": {
+      "type": "string",
+      "description": "Native-write passthrough (Slice 3a). v15 backup data-classification default for paths no rule matches."
+    },
+    "app_kind": {
+      "type": "string",
+      "enum": ["application", "capability", "system"],
+      "description": "Schema v25 (app-scan bite D1); v26 (Slice 2) added 'system'. Purpose/fit label: goal-application vs capability/skill vs pod-runtime infrastructure. Native-write passthrough — Instance-owned (the per-bot scanner reads/writes it and the Apps grid loads it). Inert default 'application' when absent (an un-classified Instance stays an app)."
+    },
+    "definition_status": {
+      "type": "string",
+      "enum": ["discovered", "defined"],
+      "description": "Schema v27 — the Defined/Discovered source-of-truth axis (docs/spec-apps-meta-2026-06-13.md §9). Distinct from 'status' (lifecycle) and the Spec's creation provenance. 'discovered' = scanner-owned churnable draft; 'defined' = operator-vouched contract (existence-shielded from L3 archival, anchored-identity fields marked authored). Native-write passthrough — Instance-owned (per-bot vouch; the scanner reads it and the archival shield keys on it). Absent reads as 'discovered' (the safe default)."
+    },
+    "classification": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Schema v25 (app-scan bite D1); v26 (Slice 2) added 'system' to the enums and 'classifier_version'. Audit/idempotency block the scanner's purpose/fit classifier writes. Its presence-and-currency means the Instance has been judged at the current classifier_version; absence or an older version means it will be (re)judged next scan. Native-write passthrough — Instance-owned.",
+      "properties": {
+        "kind": { "type": "string", "enum": ["application", "capability", "system"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "rationale": { "type": "string" },
+        "model_tier": { "type": "string" },
+        "classified_by": { "type": "string" },
+        "classifier_version": {
+          "type": "integer",
+          "description": "The classifier vocabulary/prompt version that produced this verdict (purpose_classifier.CLASSIFIER_VERSION). The reconcile pass re-judges any block stamped below the current version. Absent on v1/#2899 blocks (treated as version 0)."
+        },
+        "raw_kind": {
+          "type": "string",
+          "enum": ["application", "capability", "system"],
+          "description": "The model's raw verdict when it was overridden in the conservative direction (a 'capability' or 'system' verdict below its confidence threshold downgraded to 'application')."
+        }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Per-instance privacy overlay (same shape as the Spec's privacy block). Carries answers that belong to THIS install — e.g. the add-bot wizard's consent_notice/opt_out_command merged into the v24 manifest at install — whenever the bound Spec's block does not reproduce them. Hydration prefers this block over the Spec's.",
+      "properties": {
+        "user_data_collected": { "type": "array", "items": { "type": "string" } },
+        "opt_out_command": { "type": "string" },
+        "consent_notice": { "type": "string" },
+        "retention_days": { "type": "integer", "minimum": 1 },
+        "shareable_in_lessons": {
+          "type": "boolean",
+          "default": false,
+          "description": "Gates whether observations from this app may appear in shareable Lessons artifacts."
+        }
+      }
+    },
+    "audience_scoping": {
+      "type": "object",
+      "required": ["operator", "approved_surfaces", "role_capabilities"],
+      "additionalProperties": false,
+      "description": "Per-instance audience-scoping overlay (same shape as the Spec's audience_scoping block). Carries the boundary the install conversation decided (add-bot audience_scoping_seed) whenever it differs from the bound Spec's. Hydration prefers this block over the Spec's.",
+      "properties": {
+        "operator": {
+          "type": "string",
+          "enum": ["operator_only", "named_users", "open"],
+          "description": "Top-level audience class for the app."
+        },
+        "approved_surfaces": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Allowed surface IDs (e.g., 'telegram_dm', 'slack_channel'). Vocabulary is open in v1."
+        },
+        "role_capabilities": {
+          "type": "object",
+          "additionalProperties": { "type": "array", "items": { "type": "string" } },
+          "description": "Role name → capability list. Role names and capability vocabulary are open in v1."
+        },
+        "operator_bypasses": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Bypass identifiers permitting operator overrides. Vocabulary is open in v1."
+        }
+      }
+    },
+    "change_log": {
+      "type": "array",
+      "description": "Append-only audit trail. Never deleted; periodic compression rolls qualifying entries into Lessons.",
+      "items": {
+        "type": "object",
+        "required": ["entry_id", "timestamp", "kind", "who", "description"],
+        "additionalProperties": false,
+        "properties": {
+          "entry_id": { "type": "string" },
+          "timestamp": { "type": "string", "format": "date-time" },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "capability_added",
+              "blueprint_correction",
+              "config_tuning",
+              "data_refresh",
+              "user_redirect",
+              "scanner_inferred",
+              "forge_rebuild"
+            ]
+          },
+          "who": {
+            "type": "string",
+            "enum": ["bot", "user", "scanner", "forge"],
+            "description": "Actor that performed the change. When bot acts in response to user instruction, who='bot' with user_intent_quote set separately."
+          },
+          "session_id": { "type": "string" },
+          "description": { "type": "string", "minLength": 1 },
+          "user_intent_quote": {
+            "type": "string",
+            "description": "Verbatim or paraphrased user instruction when applicable."
+          },
+          "file_changes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["action", "path"],
+              "additionalProperties": false,
+              "properties": {
+                "action": { "type": "string", "enum": ["created", "modified", "deleted"] },
+                "path": { "type": "string" },
+                "file_id": { "type": "string" }
+              }
+            }
+          },
+          "reason_signals": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["signal_type", "ref"],
+              "additionalProperties": false,
+              "properties": {
+                "signal_type": {
+                  "type": "string",
+                  "description": "Vocabulary aligns with the signal store (e.g., user_request, error_threshold, scheduled)."
+                },
+                "ref": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "drift_log": {
+      "type": "array",
+      "description": "Schema v28 — drift-narrative log (docs/spec-apps-meta-2026-06-13.md §9.3). Append-only list of MAJOR scanner-observed drift the Phase-6 reconcile pass appends for a 'defined' Instance (a 'discovered' Instance is a churnable draft and gets no narrative). DISTINCT from 'change_log' above: change_log is the forge/capability audit trail compressed into Lessons; drift_log is the operator's post-hoc review of significant manifest-vs-reality drift. Native-write passthrough — Instance-owned. Inert default [] (absent = 'no major drift observed').",
+      "items": {
+        "type": "object",
+        "required": ["ts", "kind", "target_type", "target", "significance", "summary", "reviewed", "source"],
+        "additionalProperties": false,
+        "properties": {
+          "ts": { "type": "string", "format": "date-time" },
+          "kind": {
+            "type": "string",
+            "enum": ["add", "remove", "modify"],
+            "description": "The shape of the drift: a target appeared, disappeared, or meaningfully changed."
+          },
+          "target_type": {
+            "type": "string",
+            "enum": ["file", "cron", "action", "dependency"],
+            "description": "What kind of surface drifted."
+          },
+          "target": {
+            "type": "string",
+            "description": "The drifted surface's identity (file path, cron label, scheduled_action id, or dependency name)."
+          },
+          "significance": {
+            "type": "string",
+            "enum": ["major"],
+            "description": "Only 'major' drift is ever logged; minor (data/doc) drift is absorbed silently. The field is explicit for forward-compat."
+          },
+          "summary": {
+            "type": "string",
+            "description": "One-line human-readable narration of the change."
+          },
+          "reviewed": {
+            "type": "boolean",
+            "description": "False when first appended; the operator marks it true once reviewed (Bite 4). The count of reviewed:false entries is the tile badge's data source."
+          },
+          "source": {
+            "type": "string",
+            "enum": ["scanner_drift"],
+            "description": "Discriminator: this entry was minted by the scanner's drift classifier (vs any future producer)."
+          },
+          "classifier": {
+            "type": "string",
+            "enum": ["deterministic", "llm"],
+            "description": "Which classification path judged this drift major. Audit/idempotency aid."
+          }
+        }
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": ["active", "paused", "draft", "deprecated"]
+    },
+    "last_reflect_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Last time the Reflect phase ran against this Instance."
+    }
+  }
+}

@@ -1,0 +1,48 @@
+id: app_promotion
+schema_version: 1
+type: guardian
+dimension: applications
+bucket: extend
+# Surface routing: improvement. A promotion offer is "this draft could become a
+#   real app", not a firing problem — the same posture as app_birth_detector.
+# Spec: docs/spec-recommendations-rework-2026-06-02.md §"Generator routing".
+surface: improvement
+altitude: 2
+purpose: >
+  Offer the promotion of a discovered draft to a defined app, at most one
+  per bot per day, to the person who actually uses the bot. Scores each
+  draft with app_readiness, gates it with app_promotion.evaluate_offer
+  ("never" shield, live snooze, already-defined, cadence cap, readiness)
+  and mints a PromoteApp Proposal carrying approval_audience
+  bot_primary_user (pod_operator when the bot has no primary user, or when
+  the pod's promotion policy withholds self-promotion).
+  Design: design-app-spec-and-discovery-2026-08-15.md §7.2 / §10.
+cadence: daily
+# Deliberately NOT resolves_when_silent. A promotion offer is a question put to
+# a person, not a sensor reading: silence on the next sweep means the cadence
+# cap is doing its job, not that the question stopped applying. Auto-archiving
+# it would retract an offer the user has not answered yet.
+resolves_when_silent: false
+invariants:
+  - id: action_kind_allowed
+    description: >
+      This generator mints exactly one kind of action — the operator/primary
+      user's vouch that a draft is a real app.
+    check_kind: action_kind_allowed
+    params:
+      allowlist: [PromoteApp]
+  - id: promotion_is_never_autonomous
+    description: >
+      Promotion is a human vouch by definition (design §4). A promotion
+      Proposal must always name a human audience; an audience of "none" would
+      be the bulk auto-promote the apps spec forbids.
+    check_kind: human_approval_for
+    params:
+      action_kinds: [PromoteApp]
+  - id: touches_forbidden
+    description: >
+      Promotion records a vouch on an app definition. It must never be the
+      route by which auth, tools, channel config or the gateway core change.
+    check_kind: touches_forbidden
+    params:
+      forbidden: [auth, tools, channel_config, gateway_core]
