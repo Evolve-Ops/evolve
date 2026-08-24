@@ -29,7 +29,7 @@ dev = [
     # run the exact same versions; lint/type diagnostics drift across
     # releases. Bumping either means re-freezing its baseline in the
     # same PR (tools/ruff-baseline-lint / tools/pyright-baseline-lint).
-    "ruff==0.16.3",
+    "ruff==0.16.4",
     "pyright==1.1.411",
 ]
 # browser-smoke workflow only — heavy (downloads drivers), so not in dev.

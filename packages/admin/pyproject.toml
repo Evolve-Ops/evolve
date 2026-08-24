@@ -23,7 +23,7 @@ dependencies = [
     "PyYAML>=6.0",
     # MCP bridge dependencies
     "mcp>=1.0",
-    "starlette>=0.36",
+    "starlette>=1.6.0",
     "uvicorn>=0.27",
     # Anthropic SDK — used by profile_inferrer (Haiku-backed) and the
     # spec-routes app-spec generator. Optional at runtime: profile_inferrer
