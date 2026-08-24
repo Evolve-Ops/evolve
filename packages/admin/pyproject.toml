@@ -28,7 +28,7 @@ dependencies = [
     # Anthropic SDK — used by profile_inferrer (Haiku-backed) and the
     # spec-routes app-spec generator. Optional at runtime: profile_inferrer
     # falls back to its no-op stub if the SDK or API key is unavailable.
-    "anthropic>=0.40",
+    "anthropic>=1.0.0",
     # Host health metrics (CPU/memory/disk/load/uptime) for /api/host-health
     "psutil>=5.9",
     # PWA Phase 1.2 — per-pod VAPID keypair (cryptography) + Web Push
