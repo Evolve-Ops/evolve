@@ -1,0 +1,193 @@
+{
+  "schema_version": 5,
+  "manifest_type": "evolve_application",
+  "id": "app_morning_briefing",
+  "name": "Morning Briefing",
+  "display_name": "Morning Briefing",
+  "author": "evolve",
+  "description": "Delivers one morning message per day covering today's schedule, top emails, weather, and news headlines. Configurable delivery time (default 7 AM local). Based on admin_bot's daily briefing pattern.",
+  "status": "active",
+  "skill_deps": [
+    "gmail",
+    "calendar"
+  ],
+  "optional_skill_deps": [
+    "weather",
+    "news",
+    "obsidian"
+  ],
+  "dependencies": [],
+  "app_dependencies": [],
+  "requirements": {
+    "integrations": [
+      "gmail",
+      "calendar"
+    ],
+    "optional_integrations": [
+      "weather",
+      "news",
+      "obsidian"
+    ],
+    "secrets": [],
+    "system": [],
+    "python_packages": []
+  },
+  "interface_contract": {
+    "populated_by_forge": false,
+    "extracted_at": null,
+    "data_files": [
+      {
+        "path": "memory/YYYY-MM-DD.md",
+        "description": "Daily briefing log — sent time, event count, email count, weather, notes",
+        "schema": {
+          "storage_format": "Markdown with YAML-like structure",
+          "fields": {
+            "date": "ISO date YYYY-MM-DD (filename)",
+            "sent_at": "HH:MM local time",
+            "events": "count of calendar events surfaced today",
+            "emails": "count of emails surfaced",
+            "weather": "one-line weather summary or 'not configured'",
+            "notes": "optional — patterns worth remembering for next run"
+          }
+        }
+      },
+      {
+        "path": "memory/briefing-runs/YYYY-MM-DD.json",
+        "description": "Per-day delivery run record — written atomically only after the briefing reached the gateway; the delivery monitor's proof the user got it (spec-proactive-delivery-monitor-2026-06-10.md §5.4)",
+        "schema": {
+          "storage_format": "JSON",
+          "fields": {
+            "date": "ISO date YYYY-MM-DD",
+            "sent_at": "ISO timestamp with offset — the timeliness witness",
+            "events_count": "count of calendar events surfaced",
+            "emails_surfaced": "count of emails surfaced",
+            "partial": "true when one or more sections were unavailable"
+          }
+        }
+      }
+    ],
+    "cli": [
+      {
+        "command": "python3 scripts/briefing.py send",
+        "key_flags": [
+          "--user-name NAME",
+          "--time-zone TZ",
+          "--detail concise|standard|detailed",
+          "--location CITY",
+          "--news-sources URLS"
+        ],
+        "output_signals": [
+          "BRIEFING_SENT:",
+          "BRIEFING_FAILED:",
+          "BRIEFING_PARTIAL:"
+        ]
+      },
+      {
+        "command": "python3 scripts/briefing.py preview",
+        "key_flags": [
+          "--detail concise|standard|detailed"
+        ],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/briefing.py status",
+        "key_flags": [],
+        "output_signals": []
+      }
+    ],
+    "key_paths": {
+      "cli": "scripts/briefing.py",
+      "cron_trigger": "scripts/briefing-cron.sh",
+      "memory_dir": "memory/",
+      "launchd_plist": "/Library/LaunchDaemons/com.{bot_id}.morning-briefing.plist"
+    },
+    "signal_prefixes": [
+      "BRIEFING_SENT:",
+      "BRIEFING_FAILED:",
+      "BRIEFING_PARTIAL:"
+    ],
+    "cron_schedule": "{briefing_time} daily (local timezone)"
+  },
+  "identity": {
+    "purpose": "Deliver a single morning message that gives the operator a clear picture of their day — schedule, email highlights, conditions — without requiring them to open five apps.",
+    "scope_includes": [
+      "Fetch today's and tomorrow's calendar events via the calendar skill (calendar.readonly)",
+      "Fetch unread or recent emails via the gmail skill (gmail.readonly)",
+      "Surface the 2-5 most relevant emails (de-noise: skip newsletters, receipts, automated alerts unless specifically requested)",
+      "Fetch current conditions and today's forecast (if weather skill configured)",
+      "Fetch and filter news headlines (if news skill configured and news_sources set)",
+      "Compose and deliver the briefing to the operator's configured channel",
+      "Log briefing metadata to memory/YYYY-MM-DD.md and write the JSON run record memory/briefing-runs/YYYY-MM-DD.json after successful delivery",
+      "Emit BRIEFING_SENT: or BRIEFING_FAILED: signal for the delivery monitor"
+    ],
+    "scope_excludes": [
+      "Sending, forwarding, deleting, or labeling emails",
+      "Creating, editing, or deleting calendar events",
+      "Accessing files, documents, or services beyond Gmail, Calendar, weather, news",
+      "Multi-bot coordination or cross-bot data sharing",
+      "Storing email content (log metadata only: sender, subject)"
+    ],
+    "user": "The bot operator — delivered to their messaging channel (Signal, Telegram, Slack, or whatever is configured for this bot)."
+  },
+  "build_spec": "# Morning Briefing — Build Specification\n\n## Overview\n\nBuild a scheduled morning briefing system. The core deliverable is one message per day, composed from live data (calendar, email, weather, news) and sent to the operator's configured channel at a configured time.\n\nThis is data-assembly, not reasoning-heavy work. The bot's prompt + the skill tools + this app's structure combine to produce briefings. No custom LLM inference is needed at the app level.\n\n---\n\n## File Layout\n\n```\nscripts/\n  briefing.py          ← main CLI: send | preview | status\n  briefing-cron.sh     ← cron trigger (calls briefing.py send)\nmemory/                ← daily log files (created by the bot)\n  YYYY-MM-DD.md\n```\n\nAll paths are relative to the bot's workspace root.\n\n---\n\n## scripts/briefing.py — CLI\n\n### `send`\nCompose and send today's morning briefing.\n\n**Steps:**\n1. Fetch today's calendar events (calendar skill, calendar.readonly)\n2. Fetch recent unread emails (gmail skill, gmail.readonly) — last 12h or unread\n3. Fetch weather if skill is configured and location is set\n4. Fetch news headlines if skill is configured and news_sources is set\n5. Fetch recent vault notes if Obsidian skill is configured and vault_path is set\n6. Compose message (see format below)\n7. Send via the bot's configured messaging channel\n7. Write memory entry to `memory/YYYY-MM-DD.md`\n8. Emit `BRIEFING_SENT: {date} {event_count}ev {email_count}em` to stdout\n\n**On any fetch failure:**\n- Log the failure\n- Continue with available data\n- Note the missing section in the message: \"(weather unavailable)\"\n- If Gmail + Calendar both fail: emit `BRIEFING_FAILED: {date} {reason}` and send a short alert message\n\n### `preview`\nSame as send but print to stdout instead of sending. Useful for testing.\n\n### `status`\nPrint last-run info from today's memory file (or yesterday's if today hasn't run).\n\n---\n\n## Briefing message format\n\n### Concise\n```\nGood morning, {user_name}.\n\nToday — {weekday}, {date}\n• [Event 1 time] [Event name]\n• [Event 2 time] [Event name]\n(+ N more)\n\nEmail: N unread\n• [Sender] — [Subject]\n• [Sender] — [Subject]\n\n[Conditions], high [temp] — [location]\n```\n\n### Standard (default)\n```\nGood morning, {user_name}.\n\nToday — {weekday}, {date}\n• [HH:MM] [Event name] ([duration])\n• [HH:MM] [Event name] ([duration])\n(+ N more)\n\nEmail — N unread\n• [Sender] — [Subject]\n  [One-line snippet]\n• [Sender] — [Subject]\n  [One-line snippet]\n\n[Conditions], high [temp] — [location]\n\nNews\n• [Headline]\n• [Headline]\n• [Headline]\n\nNotes from your vault\n• [Note title]\n  [First line snippet]\n• [Note title]\n```\n\n### Detailed\nSame structure as standard but:\n- All events (no truncation)\n- Full email snippets (2-3 sentences)\n- Extended forecast (morning/afternoon/evening)\n- Up to 5 news items with source\n\n---\n\n## Email relevance scoring (simple)\n\nThe bot determines which emails to surface using these priority signals:\n1. Direct emails (To: the operator, not CC)\n2. From known senders (past interaction in last 30 days)\n3. Subject contains deadline/date keywords (due, deadline, by [date], urgent)\n4. De-prioritize: newsletters (List-Unsubscribe header), automated alerts, receipts\n\nFor standard/detailed: surface up to 5 emails. For concise: up to 2.\nIf no emails qualify: \"No email needs attention.\"\n\n---\n\n## Memory format\n\n```markdown\n# {YYYY-MM-DD}\n\n## Briefing\n- Sent at {HH:MM}\n- Events: {N} today ({first_event_name} at {time})\n- Emails: {N} unread, {N} surfaced\n- Weather: {summary} or not configured\n- News: {N} headlines or not configured\n\n## Notes\n- [anything worth remembering for next run]\n```\n\nNotes section is optional. Add it when the bot notices a pattern: \"Sender X's emails are always newsletters — skip next time.\"\n\n---\n\n## briefing-cron.sh — cron trigger\n\n```bash\n#!/bin/bash\n# briefing-cron.sh — morning briefing cron trigger\n# Runs daily at {briefing_time}. Silent on success; logs errors.\n\nWORKSPACE=\"/Users/{bot_id}/.openclaw/workspace\"\nLOGFILE=\"/tmp/{bot_id}-briefing.log\"\n\npython3 \"$WORKSPACE/scripts/briefing.py\" send \\\n  --user-name \"{user_name}\" \\\n  --time-zone \"{time_zone}\" \\\n  --detail \"{briefing_detail}\" \\\n  --location \"{location}\" \\\n  --news-sources \"{news_sources}\" \\\n  --vault-path \"{vault_path}\" \\\n  >> \"$LOGFILE\" 2>&1\n\nexit 0\n```\n\nMake executable. Register as a LaunchDaemon at {briefing_time} daily.\n\n---\n\n## LaunchDaemon plist\n\nWrite to `/Library/LaunchDaemons/com.{bot_id}.morning-briefing.plist`. System-context LaunchDaemons load at boot regardless of GUI session — required for headless bots on the mini, where ~/Library/LaunchAgents never load (no user session). Daemon runs as the bot user via `UserName`.\n\n```xml\n<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\"\n  \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key>\n  <string>com.{bot_id}.morning-briefing</string>\n  <key>UserName</key>\n  <string>{bot_id}</string>\n  <key>GroupName</key>\n  <string>staff</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>/bin/bash</string>\n    <string>/Users/{bot_id}/.openclaw/workspace/scripts/briefing-cron.sh</string>\n  </array>\n  <key>StartCalendarInterval</key>\n  <dict>\n    <key>Hour</key>\n    <integer>{briefing_hour}</integer>\n    <key>Minute</key>\n    <integer>{briefing_minute}</integer>\n  </dict>\n  <key>StandardOutPath</key>\n  <string>/tmp/{bot_id}-briefing-out.log</string>\n  <key>StandardErrorPath</key>\n  <string>/tmp/{bot_id}-briefing-err.log</string>\n  <key>RunAtLoad</key>\n  <false/>\n</dict>\n</plist>\n```\n\nNote: {briefing_hour} and {briefing_minute} are derived from {briefing_time} (\"07:00\" → Hour=7, Minute=0) by the provisioner at install time.\n\n---\n\n## Test sequence\n\nAfter building:\n\n```bash\n# 1. Syntax check\npython3 -m py_compile scripts/briefing.py\n\n# 2. Preview (dry-run, no send)\npython3 scripts/briefing.py preview --detail concise\n# Expected: a formatted morning message printed to stdout\n\n# 3. Status (before first send, should report 'no briefing today yet')\npython3 scripts/briefing.py status\n\n# 4. Executable\ntest -x scripts/briefing-cron.sh && echo 'OK: cron script executable'\n\n# 5. Memory dir exists\ntest -d memory && echo 'OK: memory dir'\n```\n\nAll steps must exit 0. Step 2 must produce a non-empty message.\n\n\n---\n\n## Rendered files\n\nThe provisioner materialises these files from the build_spec ## FILE: blocks below.\nTemplate vars ({bot_id}, {user_name}, {time_zone}, {briefing_time}, {briefing_hour},\n{briefing_minute}, {briefing_detail}, {location}, {news_sources}, {vault_path}, {briefing_tz_env})\nare substituted at install time.\n\n## FILE: scripts/briefing-cron.sh\n```bash\n#!/bin/bash\n# briefing-cron.sh -- morning briefing cron trigger\n# Installed by the morning-briefing template at {briefing_time} ({time_zone}).\n# LaunchDaemon fires at system-local hour {briefing_hour}:{briefing_minute}\n# (pre-computed from {briefing_time} in {time_zone} at provisioning time).\n\nWORKSPACE=\"/Users/{bot_id}/.openclaw/workspace\"\nLOGFILE=\"/tmp/{bot_id}-briefing.log\"\n\npython3 \"$WORKSPACE/scripts/briefing.py\" send \\\n  --user-name \"{user_name}\" \\\n  --time-zone \"{time_zone}\" \\\n  --detail \"{briefing_detail}\" \\\n  --location \"{location}\" \\\n  --news-sources \"{news_sources}\" \\\n  --vault-path \"{vault_path}\" \\\n  >> \"$LOGFILE\" 2>&1\n\nexit 0\n```\n\n## FILE: /Library/LaunchDaemons/com.{bot_id}.morning-briefing.plist\n```xml\n<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\"\n  \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key>\n  <string>com.{bot_id}.morning-briefing</string>\n  <key>UserName</key>\n  <string>{bot_id}</string>\n  <key>GroupName</key>\n  <string>staff</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>/bin/bash</string>\n    <string>/Users/{bot_id}/.openclaw/workspace/scripts/briefing-cron.sh</string>\n  </array>\n  <key>EnvironmentVariables</key>\n  <dict>\n    <key>TZ</key>\n    <string>{briefing_tz_env}</string>\n  </dict>\n  <key>StartCalendarInterval</key>\n  <dict>\n    <key>Hour</key>\n    <integer>{briefing_hour}</integer>\n    <key>Minute</key>\n    <integer>{briefing_minute}</integer>\n  </dict>\n  <key>StandardOutPath</key>\n  <string>/tmp/{bot_id}-briefing-out.log</string>\n  <key>StandardErrorPath</key>\n  <string>/tmp/{bot_id}-briefing-err.log</string>\n  <key>RunAtLoad</key>\n  <false/>\n</dict>\n</plist>\n```\n",
+  "example_triggers": [
+    "What's on my schedule today?",
+    "Any emails I need to deal with?",
+    "Preview today's briefing",
+    "How many events do I have today?",
+    "Did the briefing run this morning?",
+    "What's the weather today?"
+  ],
+  "test_cases": [
+    {
+      "trigger": "Preview today's briefing",
+      "expected": "Call briefing.py preview, return formatted morning message with at least a greeting and today's date"
+    },
+    {
+      "trigger": "Did the briefing run this morning?",
+      "expected": "Call briefing.py status, report sent time and counts from today's memory file, or 'not yet' if before scheduled time"
+    },
+    {
+      "trigger": "What emails need attention?",
+      "expected": "Surface the same prioritized email list the briefing would show — direct emails first, deadline keywords flagged"
+    }
+  ],
+  "success_criteria": {
+    "observable_outcomes": [
+      "Briefing arrives at configured time (within 2 min) every day",
+      "Message reads in under 30 seconds (concise and standard modes)",
+      "Emails surfaced are the ones actually worth reading — not newsletters or receipts",
+      "Memory file written daily with sent time and counts",
+      "Run record memory/briefing-runs/YYYY-MM-DD.json exists after each delivery (the delivery monitor's proof the user got it)",
+      "BRIEFING_SENT: signal emitted (parsed by the delivery monitor / reliability tile)"
+    ],
+    "failure_signals": [
+      "BRIEFING_FAILED: signal emitted — check Gmail/Calendar OAuth",
+      "BRIEFING_PARTIAL: signal — one data source failed; rest delivered",
+      "No memory file for today by 9 AM — cron may not have fired",
+      "Operator receives multiple briefings in one day (cron misconfigured)"
+    ],
+    "quality_bar": {
+      "minimum": "Operator gets a message at the configured time that correctly states how many events they have and surfaces at least the top unread email",
+      "excellent": "Operator opens the message and has everything they need to plan their morning without opening Gmail, Calendar, or a weather app"
+    }
+  },
+  "constraints": {
+    "safety": [
+      "Read-only Gmail and Calendar access only — no send, no delete, no edit",
+      "Email content stays in summaries; never logged to memory files",
+      "No cross-bot data sharing"
+    ],
+    "dependencies": [
+      "gmail (required)",
+      "calendar (required)",
+      "weather (optional)",
+      "news (optional)"
+    ],
+    "boundaries": [
+      "One briefing per day — cron idempotent after first send",
+      "Does not infer action items from emails; surfaces for operator to decide",
+      "Does not send the briefing to anyone except the bot's configured channel"
+    ]
+  }
+}

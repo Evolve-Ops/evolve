@@ -1,0 +1,55 @@
+id: security_warden
+schema_version: 1
+type: guardian
+dimension: safety
+bucket: operate
+# Surface routing: firing. Security_warden findings are top-of-list. Spec:
+# internal/spec-recommendations-rework-2026-06-02.md §"Generator routing".
+surface: firing
+purpose: >
+  Prevent behaviors that expose credentials, sensitive data, or unnecessary
+  permission scope. Evaluate every proposal that touches auth, tools, memory,
+  or channel configuration. Scan the observation stream for credential
+  exposure. Surface fleet-wide upstream-version drift so adoption of
+  upstream OpenClaw security primitives (e.g. ``openclaw exec-policy``,
+  shipped in v2026.4.12) can replace evolve's direct-config-edit
+  hardening pattern.
+cadence: hourly
+invariants:
+  - id: action_kind_allowed
+    description: Warden emits investigations and config patches for ACL/auth hygiene only.
+    check_kind: action_kind_allowed
+    params:
+      allowlist: [Investigation, ConfigPatch]
+  - id: claim_metric_known
+    description: Claims reference registered metrics.
+    check_kind: claim_metric_known
+  - id: injection_scanner_respects_consent
+    description: >
+      The prompt injection scanner does not block legitimate user requests
+      that happen to contain imperative language; it flags only patterns
+      clearly attempting to subvert system instructions.
+    check_kind: custom
+    params:
+      predicate: "scanner does not trigger on user messages without instruction-override patterns"
+posture_checks:
+  # Posture checks emit Signals (not Proposals) via observe_signals.
+  # Listed here to document the public set; runtime behavior lives in
+  # generators/security_warden/posture.py.
+  - id: multi_user_no_pod_admins
+    severity: alert
+    summary: Multi-user bot has no admin in any channel.
+  - id: multi_user_no_primary_recorded
+    severity: warn
+    summary: Multi-user bot has no primary user recorded.
+  - id: multi_user_exec_full_unscoped
+    severity: alert
+    summary: Multi-user bot has tools.exec.security=full with no allowlist.
+  - id: openclaw_version_below_floor
+    severity: warn
+    summary: >
+      Bot is running an OpenClaw version older than the configured
+      floor (default 2026.4.12 — the release that shipped openclaw
+      exec-policy). Surfaced fleet-wide so the operator can plan a
+      rolling update before V1.5-3 retires the direct-edit pattern
+      on team_bot_c + security_bot.

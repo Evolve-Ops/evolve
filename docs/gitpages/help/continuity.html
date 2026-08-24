@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Continuity Engine · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">continuity-engine</span><span class="chip">defer-tool</span><span class="chip">defer-queue</span><span class="chip">defer-runner</span></div><div class="reviewed">Last reviewed 2026-07-31</div></div><h1 id="help-continuity-engine">Continuity Engine</h1>
+<p>The Continuity Engine (CE) is the background system that makes bots follow
+through on commitments across sessions. When a bot says "remind me in 20
+minutes" or "I'll check the build and let you know," CE is what makes that
+follow-up actually happen — a bot session has no persistence of its own.</p>
+<p>There is no dedicated Continuity page anymore. The engine is designed to be
+invisible; its only dashboard surface is a one-line runner health summary on
+the <strong>Maintenance</strong> page.</p>
+<hr>
+<h2 id="how-it-works">How it works</h2>
+<ol>
+<li><strong>The bot schedules its own follow-ups.</strong> During a normal conversation,
+   when a bot commits to acting later, it calls its <code>defer</code> tool with an
+   absolute fire time and either a literal <strong>message</strong> to deliver, or an
+   <strong>action</strong> — an instruction for a follow-up turn.</li>
+<li><strong>The commitment is stored in the bot's own queue</strong> — a small JSONL file in
+   the bot's workspace (<code>~/.openclaw/workspace/evolve/defer-queue.jsonl</code>).</li>
+<li><strong>A pod-wide runner fires due rows.</strong> Every 2 minutes, the defer runner
+   checks each bot's queue and fires anything due by starting a short agent
+   turn in the original conversation: a <code>message</code> defer delivers the stored
+   text; an <code>action</code> defer does the stored instruction and replies.</li>
+</ol>
+<p>Earlier versions of the engine tried to <em>extract</em> commitments from session
+transcripts after the fact and ran them through an approval queue. That
+design is gone — the bot now schedules explicitly at the moment it commits,
+which is both more reliable (single-turn commitments aren't missed) and safer
+(nothing is inferred from transcripts, and there is no CE-owned code
+execution path at all).</p>
+<hr>
+<h2 id="common-questions">Common questions</h2>
+<p><strong>Why is there no approval queue?</strong>
+A fired defer is just a normal agent turn in the bot's own session — the same
+tool gates and permissions as any other turn, delivering a follow-up the bot
+promised you out loud. There's no extracted code to review, so there's
+nothing to approve.</p>
+<p><strong>What does a fired defer cost?</strong>
+One short agent turn per fire (for a <code>message</code> defer, a very cheap one).</p>
+<p><strong>How precise is the timing?</strong>
+The runner cycles every 2 minutes, so a fire lands within about ±2 minutes of
+the scheduled time.</p>
+<p><strong>Can I turn it off for a bot?</strong>
+Yes, two ways:
+- Toggle the <strong>Continuity Engine</strong> switch on the bot's card on the Bot Config
+  page (stored as <code>bots.&lt;id&gt;.continuity_engine.enabled</code> in <code>network.json</code>,
+  default on) — the runner then skips that bot's queue.
+- Lower the bot's Evolve integration <code>tier</code> below <code>full</code> — the <code>defer</code> tool
+  is then not offered to the bot at all.</p>
+<p><strong>How do I see what a bot has scheduled?</strong>
+Ask the bot — it can tell you what it deferred. On the pod host, the queue is
+plain JSONL:</p>
+<pre><code class="language-bash">cat /Users/&lt;bot-id&gt;/.openclaw/workspace/evolve/defer-queue.jsonl    # pending
+cat /Users/&lt;bot-id&gt;/.openclaw/workspace/evolve/defer-archive.jsonl  # fired/failed
+</code></pre>
+<p><strong>A follow-up never arrived — where do I look?</strong>
+1. The Maintenance page's defer-runner health line (is the runner alive and
+   cycling?).
+2. The bot's archive file (did the row fire and fail? the <code>result</code> field has
+   the error).
+3. The runner log at <code>/Users/evolve/.openclaw/logs/evolve-defer-runner.log</code>.
+4. Whether the bot actually called <code>defer</code> at all — if it just <em>said</em> "I'll
+   remind you" without scheduling, nothing was queued. Bots at tier <code>full</code>
+   are instructed to always schedule, but it's worth checking the queue.</p>
+<p>For the full architecture (row schema, locking, permissions, runner
+dispatch), see <a href="../continuity-engine.md">docs/continuity-engine.md</a>.</p>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/continuity.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>

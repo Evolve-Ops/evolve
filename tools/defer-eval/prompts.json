@@ -1,0 +1,499 @@
+{
+  "version": 1,
+  "description": "Defer-tool reliability eval set. Each prompt records expected bot behavior so we can measure the bot's defer-call rate (true positives), false-positive rate (defer called when it shouldn't be), and time-accuracy (due_at within tolerance of expected). Re-run after system-prompt changes to track regressions/improvements.",
+  "schema": {
+    "id": "stable identifier — never change for an existing prompt; used in result diffs across runs",
+    "category": "'should_defer' | 'should_not_defer'",
+    "subcategory": "loose grouping for analyzing failure modes (time-anchored, event-anchored, recurring, advice, completed-task, etc.)",
+    "text": "the user message sent to the bot",
+    "expected": {
+      "called_defer": "bool — whether the bot SHOULD call defer for this prompt",
+      "mode": "'message' | 'action' | null — only relevant when called_defer=true",
+      "due_at_offset_minutes": "expected offset from prompt time, in minutes; null when timing isn't asserted",
+      "due_at_tolerance_minutes": "± tolerance; bot's arithmetic isn't exact"
+    }
+  },
+  "prompts": [
+    {
+      "id": "should-defer-001",
+      "category": "should_defer",
+      "subcategory": "explicit-time-message",
+      "text": "tell me in 5 minutes what your favorite color is",
+      "expected": {
+        "called_defer": true,
+        "mode": "message",
+        "due_at_offset_minutes": 5,
+        "due_at_tolerance_minutes": 1
+      }
+    },
+    {
+      "id": "should-defer-002",
+      "category": "should_defer",
+      "subcategory": "explicit-time-message",
+      "text": "in 10 minutes, send me an interesting fact about octopuses",
+      "expected": {
+        "called_defer": true,
+        "mode": "message",
+        "due_at_offset_minutes": 10,
+        "due_at_tolerance_minutes": 2
+      }
+    },
+    {
+      "id": "should-defer-003",
+      "category": "should_defer",
+      "subcategory": "explicit-time-action",
+      "text": "in 15 minutes, check whether example.com is responding and let me know",
+      "expected": {
+        "called_defer": true,
+        "mode": "action",
+        "due_at_offset_minutes": 15,
+        "due_at_tolerance_minutes": 2
+      }
+    },
+    {
+      "id": "should-defer-004",
+      "category": "should_defer",
+      "subcategory": "remind-me",
+      "text": "remind me in 30 minutes to take my medication",
+      "expected": {
+        "called_defer": true,
+        "mode": "message",
+        "due_at_offset_minutes": 30,
+        "due_at_tolerance_minutes": 3
+      }
+    },
+    {
+      "id": "should-defer-005",
+      "category": "should_defer",
+      "subcategory": "remind-me",
+      "text": "ping me in an hour about the standup",
+      "expected": {
+        "called_defer": true,
+        "mode": "message",
+        "due_at_offset_minutes": 60,
+        "due_at_tolerance_minutes": 5
+      }
+    },
+    {
+      "id": "should-defer-006",
+      "category": "should_defer",
+      "subcategory": "absolute-time",
+      "text": "tell me at 4pm what the weather forecast looks like",
+      "expected": {
+        "called_defer": true,
+        "mode": "action",
+        "due_at_offset_minutes": null,
+        "due_at_tolerance_minutes": null
+      }
+    },
+    {
+      "id": "should-defer-007",
+      "category": "should_defer",
+      "subcategory": "absolute-time",
+      "text": "remind me tomorrow morning to email Sarah back",
+      "expected": {
+        "called_defer": true,
+        "mode": "message",
+        "due_at_offset_minutes": null,
+        "due_at_tolerance_minutes": null
+      }
+    },
+    {
+      "id": "should-defer-008",
+      "category": "should_defer",
+      "subcategory": "delayed-followup",
+      "text": "I'm starting a 25-minute pomodoro now. Let me know when it's done.",
+      "expected": {
+        "called_defer": true,
+        "mode": "message",
+        "due_at_offset_minutes": 25,
+        "due_at_tolerance_minutes": 2
+      }
+    },
+    {
+      "id": "should-defer-009",
+      "category": "should_defer",
+      "subcategory": "delayed-followup",
+      "text": "Order placed. Check the delivery status in 2 hours.",
+      "expected": {
+        "called_defer": true,
+        "mode": "action",
+        "due_at_offset_minutes": 120,
+        "due_at_tolerance_minutes": 10
+      }
+    },
+    {
+      "id": "should-defer-010",
+      "category": "should_defer",
+      "subcategory": "interval-loop",
+      "text": "Every 10 minutes for the next half hour, tell me if I have any new emails.",
+      "expected": {
+        "called_defer": true,
+        "mode": "action",
+        "due_at_offset_minutes": 10,
+        "due_at_tolerance_minutes": 2
+      }
+    },
+    {
+      "id": "should-defer-011",
+      "category": "should_defer",
+      "subcategory": "deadline-checkin",
+      "text": "I have to be ready to leave by 6:30 PM. Remind me 15 minutes before.",
+      "expected": {
+        "called_defer": true,
+        "mode": "message",
+        "due_at_offset_minutes": null,
+        "due_at_tolerance_minutes": null
+      }
+    },
+    {
+      "id": "should-defer-012",
+      "category": "should_defer",
+      "subcategory": "wait-then-message",
+      "text": "Wait 12 minutes and then say 'hi'.",
+      "expected": {
+        "called_defer": true,
+        "mode": "message",
+        "due_at_offset_minutes": 12,
+        "due_at_tolerance_minutes": 1
+      }
+    },
+    {
+      "id": "should-defer-013",
+      "category": "should_defer",
+      "subcategory": "schedule-summary",
+      "text": "At end of day (10pm), give me a summary of what I asked you about today.",
+      "expected": {
+        "called_defer": true,
+        "mode": "action",
+        "due_at_offset_minutes": null,
+        "due_at_tolerance_minutes": null
+      }
+    },
+    {
+      "id": "should-defer-014",
+      "category": "should_defer",
+      "subcategory": "polite-defer",
+      "text": "Could you please tell me in 7 minutes who won the 2014 World Cup?",
+      "expected": {
+        "called_defer": true,
+        "mode": "message",
+        "due_at_offset_minutes": 7,
+        "due_at_tolerance_minutes": 1
+      }
+    },
+    {
+      "id": "should-defer-015",
+      "category": "should_defer",
+      "subcategory": "indirect",
+      "text": "I'm heading into a meeting. Check in with me in 45 minutes to see if I'm done.",
+      "expected": {
+        "called_defer": true,
+        "mode": "action",
+        "due_at_offset_minutes": 45,
+        "due_at_tolerance_minutes": 5
+      }
+    },
+    {
+      "id": "should-defer-016",
+      "category": "should_defer",
+      "subcategory": "self-anchored-time",
+      "text": "Twenty minutes from now, send me a motivational quote.",
+      "expected": {
+        "called_defer": true,
+        "mode": "message",
+        "due_at_offset_minutes": 20,
+        "due_at_tolerance_minutes": 2
+      }
+    },
+    {
+      "id": "should-defer-017",
+      "category": "should_defer",
+      "subcategory": "build-watch",
+      "text": "I just kicked off a deploy that takes about 8 minutes. Let me know when it's done with a summary.",
+      "expected": {
+        "called_defer": true,
+        "mode": "action",
+        "due_at_offset_minutes": 8,
+        "due_at_tolerance_minutes": 2
+      }
+    },
+    {
+      "id": "should-defer-018",
+      "category": "should_defer",
+      "subcategory": "morning-checkin",
+      "text": "Tomorrow at 9am, send me my schedule for the day.",
+      "expected": {
+        "called_defer": true,
+        "mode": "action",
+        "due_at_offset_minutes": null,
+        "due_at_tolerance_minutes": null
+      }
+    },
+    {
+      "id": "should-defer-019",
+      "category": "should_defer",
+      "subcategory": "delayed-content",
+      "text": "Tell me in 4 minutes the capital of Mongolia.",
+      "expected": {
+        "called_defer": true,
+        "mode": "message",
+        "due_at_offset_minutes": 4,
+        "due_at_tolerance_minutes": 1
+      }
+    },
+    {
+      "id": "should-defer-020",
+      "category": "should_defer",
+      "subcategory": "checkup-call",
+      "text": "I'm trying to focus for the next 50 minutes. Don't bother me until then, but ping me when 50 minutes is up.",
+      "expected": {
+        "called_defer": true,
+        "mode": "message",
+        "due_at_offset_minutes": 50,
+        "due_at_tolerance_minutes": 5
+      }
+    },
+
+    {
+      "id": "shouldnt-defer-001",
+      "category": "should_not_defer",
+      "subcategory": "info-request",
+      "text": "what's the capital of France?",
+      "expected": {
+        "called_defer": false,
+        "mode": null,
+        "due_at_offset_minutes": null,
+        "due_at_tolerance_minutes": null
+      }
+    },
+    {
+      "id": "shouldnt-defer-002",
+      "category": "should_not_defer",
+      "subcategory": "info-request",
+      "text": "explain how mitochondria work",
+      "expected": {
+        "called_defer": false,
+        "mode": null,
+        "due_at_offset_minutes": null,
+        "due_at_tolerance_minutes": null
+      }
+    },
+    {
+      "id": "shouldnt-defer-003",
+      "category": "should_not_defer",
+      "subcategory": "completed-task",
+      "text": "I just fixed the bug — the api was returning the wrong content type",
+      "expected": {
+        "called_defer": false,
+        "mode": null,
+        "due_at_offset_minutes": null,
+        "due_at_tolerance_minutes": null
+      }
+    },
+    {
+      "id": "shouldnt-defer-004",
+      "category": "should_not_defer",
+      "subcategory": "advice",
+      "text": "if i wanted to learn rust, what would you recommend i start with?",
+      "expected": {
+        "called_defer": false,
+        "mode": null,
+        "due_at_offset_minutes": null,
+        "due_at_tolerance_minutes": null
+      }
+    },
+    {
+      "id": "shouldnt-defer-005",
+      "category": "should_not_defer",
+      "subcategory": "speculative-future",
+      "text": "you could check the logs tomorrow if you want, but no rush",
+      "expected": {
+        "called_defer": false,
+        "mode": null,
+        "due_at_offset_minutes": null,
+        "due_at_tolerance_minutes": null
+      }
+    },
+    {
+      "id": "shouldnt-defer-006",
+      "category": "should_not_defer",
+      "subcategory": "conversational",
+      "text": "thanks!",
+      "expected": {
+        "called_defer": false,
+        "mode": null,
+        "due_at_offset_minutes": null,
+        "due_at_tolerance_minutes": null
+      }
+    },
+    {
+      "id": "shouldnt-defer-007",
+      "category": "should_not_defer",
+      "subcategory": "conversational",
+      "text": "interesting, hadn't thought of it that way",
+      "expected": {
+        "called_defer": false,
+        "mode": null,
+        "due_at_offset_minutes": null,
+        "due_at_tolerance_minutes": null
+      }
+    },
+    {
+      "id": "shouldnt-defer-008",
+      "category": "should_not_defer",
+      "subcategory": "calculation",
+      "text": "what's 374 * 28?",
+      "expected": {
+        "called_defer": false,
+        "mode": null,
+        "due_at_offset_minutes": null,
+        "due_at_tolerance_minutes": null
+      }
+    },
+    {
+      "id": "shouldnt-defer-009",
+      "category": "should_not_defer",
+      "subcategory": "code-help",
+      "text": "what does the python `walrus operator` do? give me an example.",
+      "expected": {
+        "called_defer": false,
+        "mode": null,
+        "due_at_offset_minutes": null,
+        "due_at_tolerance_minutes": null
+      }
+    },
+    {
+      "id": "shouldnt-defer-010",
+      "category": "should_not_defer",
+      "subcategory": "narrative-future",
+      "text": "in 10 years AI agents will probably do all this stuff for us",
+      "expected": {
+        "called_defer": false,
+        "mode": null,
+        "due_at_offset_minutes": null,
+        "due_at_tolerance_minutes": null
+      }
+    },
+    {
+      "id": "shouldnt-defer-011",
+      "category": "should_not_defer",
+      "subcategory": "completed-task",
+      "text": "I just sent the email, you don't need to do anything",
+      "expected": {
+        "called_defer": false,
+        "mode": null,
+        "due_at_offset_minutes": null,
+        "due_at_tolerance_minutes": null
+      }
+    },
+    {
+      "id": "shouldnt-defer-012",
+      "category": "should_not_defer",
+      "subcategory": "open-ended-question",
+      "text": "do you have any opinions on how I should architect this thing?",
+      "expected": {
+        "called_defer": false,
+        "mode": null,
+        "due_at_offset_minutes": null,
+        "due_at_tolerance_minutes": null
+      }
+    },
+    {
+      "id": "shouldnt-defer-013",
+      "category": "should_not_defer",
+      "subcategory": "small-talk",
+      "text": "morning! how's it going?",
+      "expected": {
+        "called_defer": false,
+        "mode": null,
+        "due_at_offset_minutes": null,
+        "due_at_tolerance_minutes": null
+      }
+    },
+    {
+      "id": "shouldnt-defer-014",
+      "category": "should_not_defer",
+      "subcategory": "factual-time",
+      "text": "what time is the eclipse on April 8?",
+      "expected": {
+        "called_defer": false,
+        "mode": null,
+        "due_at_offset_minutes": null,
+        "due_at_tolerance_minutes": null
+      }
+    },
+    {
+      "id": "shouldnt-defer-015",
+      "category": "should_not_defer",
+      "subcategory": "speculative-time",
+      "text": "if i had 30 minutes free, what would you do for me first?",
+      "expected": {
+        "called_defer": false,
+        "mode": null,
+        "due_at_offset_minutes": null,
+        "due_at_tolerance_minutes": null
+      }
+    },
+    {
+      "id": "shouldnt-defer-016",
+      "category": "should_not_defer",
+      "subcategory": "instruction-now",
+      "text": "give me three ideas for what to make for dinner tonight",
+      "expected": {
+        "called_defer": false,
+        "mode": null,
+        "due_at_offset_minutes": null,
+        "due_at_tolerance_minutes": null
+      }
+    },
+    {
+      "id": "shouldnt-defer-017",
+      "category": "should_not_defer",
+      "subcategory": "vague-future-no-defer",
+      "text": "let me know if you think of anything",
+      "expected": {
+        "called_defer": false,
+        "mode": null,
+        "due_at_offset_minutes": null,
+        "due_at_tolerance_minutes": null
+      }
+    },
+    {
+      "id": "shouldnt-defer-018",
+      "category": "should_not_defer",
+      "subcategory": "information-about-time",
+      "text": "remind me what i was working on five minutes ago",
+      "expected": {
+        "called_defer": false,
+        "mode": null,
+        "due_at_offset_minutes": null,
+        "due_at_tolerance_minutes": null
+      }
+    },
+    {
+      "id": "shouldnt-defer-019",
+      "category": "should_not_defer",
+      "subcategory": "history-question",
+      "text": "what happened in tech 5 years ago today?",
+      "expected": {
+        "called_defer": false,
+        "mode": null,
+        "due_at_offset_minutes": null,
+        "due_at_tolerance_minutes": null
+      }
+    },
+    {
+      "id": "shouldnt-defer-020",
+      "category": "should_not_defer",
+      "subcategory": "casual-affirmation",
+      "text": "okay sounds good",
+      "expected": {
+        "called_defer": false,
+        "mode": null,
+        "due_at_offset_minutes": null,
+        "due_at_tolerance_minutes": null
+      }
+    }
+  ]
+}

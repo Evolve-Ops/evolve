@@ -1,0 +1,38 @@
+{
+  "_comment": "Community defaults for LLM prompts used in Evolve's analysis pipeline. Prompt overrides learned via audit feedback live in /Users/Shared/evolve/calibration/prompts.json. Each prompt entry includes the prompt text, a version string, and tracked performance statistics.",
+  "schema_version": 1,
+  "prompts": {
+    "behavioral_test_judge": {
+      "_comment": "Used by test_runner.py to judge whether a behavioral test passed. Overriding this prompt is how the RSI loop improves test judgment accuracy.",
+      "system": null,
+      "version": "1.0",
+      "performance": null
+    },
+    "manifest_enrichment": {
+      "_comment": "Used by reviewer.py when enriching a capability manifest with LLM-generated context.",
+      "system": null,
+      "version": "1.0",
+      "performance": null
+    },
+    "forge_builder": {
+      "_comment": "System prompt for the forge engine builder phase. Loaded by forge_engine.py to generate initial implementations and refinements. When null, the built-in prompt in forge_engine.py is used. The RSI loop can write an improved prompt here after observing high approval rates on variants.",
+      "system": null,
+      "version": "1.0",
+      "performance": {
+        "approval_rate": null,
+        "issue_resolution_rate": null,
+        "sample_size": 0
+      }
+    },
+    "forge_critic": {
+      "_comment": "System prompt for the forge engine critic phase. Loaded by forge_engine.py for the critique cycle. When null, the built-in critic prompt is used. The RSI loop evolves this prompt based on whether critique rounds catch real problems (measured by operator-reported issues post-approval).",
+      "system": null,
+      "version": "1.0",
+      "performance": {
+        "issues_caught_rate": null,
+        "false_positive_rate": null,
+        "sample_size": 0
+      }
+    }
+  }
+}

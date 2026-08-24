@@ -1,0 +1,560 @@
+#!/usr/bin/env python3
+"""help-refresh — the weekly knowledge-refresh routine for docs/help/.
+
+docs/help/README.md §"Weekly knowledge-refresh routine" specifies a routine that
+keeps the public help corpus from drifting away from what users actually see: every
+week, look at what merged, figure out which user-facing help docs are implicated,
+and re-surface them for a human to verify. The spec was written long before any
+code existed; this tool implements it.
+
+This is **meta/dev tooling** — it never ships to pods and has no pod-install path.
+It is deterministic and cheap: pure Python, no LLM call (drafting accurate
+user-facing prose is a human/LLM judgment call, deliberately out of scope for v1;
+see the LLM note at the bottom of README.md §Weekly knowledge-refresh routine).
+
+What it does (mirrors the six numbered README steps):
+
+  1. COLLECT the prior week's merged PRs to main via `gh pr list`.
+  2. TRIAGE: skip internal-only PRs (those touching ONLY evolve_admin/, tests/,
+     internal/spec-*, internal/incident-*, internal/diagnosis-*, internal/audit-*). Everything
+     else is a candidate.
+  3. MATCH concepts: extract concept terms (the controlled vocabulary in
+     docs/help/_index.yaml) from each candidate PR's title/body/changed-files and
+     map them to the help files that own them.
+  4. STALE-DETECT: flag a help doc whose `last_reviewed` is >30 days before the
+     run date AND that owns a concept appearing in this week's candidate PRs.
+  5. PRODUCE a human-gated review PR: bump `last_reviewed` on the stale-flagged
+     docs and (re)write docs/help/REVIEW-QUEUE.md listing, per affected doc, the
+     merged PRs that touched its concepts — so a human knows exactly what to
+     verify. It does NOT rewrite prose (that's the human's job).
+  6. HUMAN GATE: the PR is reviewed and merged like any code change. No auto-merge.
+
+The pure logic (triage / concept-match / stale-detect / rendering) takes the run
+date and PR list as arguments and never touches the wall clock or the network, so
+it is unit-testable with fixture data (see tools/test_help_refresh.py). Wall-clock
+and `gh` live only in `main()` / the I/O helpers at the bottom.
+
+Usage:
+  python3 tools/help-refresh                       # default: PRs merged in the last
+                                                   #   7 days; write changes to disk
+  python3 tools/help-refresh --since 2026-06-01    # explicit cutoff
+  python3 tools/help-refresh --run-date 2026-06-23 # pin "today" (repro / CI)
+  python3 tools/help-refresh --dry-run             # compute + print the plan only
+  python3 tools/help-refresh --json                # emit the plan as JSON (no writes)
+
+Exit code is 0 on success (it is a producer, not a gate). When there are no
+candidate PRs — or no affected docs — it makes ZERO file changes, so the calling
+workflow can use a plain `git status` check to avoid opening an empty PR.
+
+Wired into .github/workflows/help-refresh.yml (weekly cron, Mondays).
+"""
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import re
+import subprocess
+import sys
+from dataclasses import dataclass, field
+from pathlib import Path
+
+try:
+    import yaml  # type: ignore
+except ImportError as exc:  # pragma: no cover — surfaced to operator/CI
+    sys.stderr.write(
+        f"help-refresh: missing dependency: {exc.name}\n"
+        f"  install with: pip install pyyaml\n"
+    )
+    sys.exit(1)
+
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+HELP_DIR_REL = "docs/help"
+INDEX_REL = f"{HELP_DIR_REL}/_index.yaml"
+REVIEW_QUEUE_REL = f"{HELP_DIR_REL}/REVIEW-QUEUE.md"
+
+STALE_THRESHOLD_DAYS = 30
+DEFAULT_LOOKBACK_DAYS = 7
+DEFAULT_PR_LIMIT = 300
+
+# ── Triage: internal-only path patterns (README step 2) ──────────────────────
+# A PR that touches ONLY internal paths is skipped. A path is "internal" when it
+# matches one of these. evolve_admin/ (the admin server, incl. its web/ SPA) is
+# treated as internal per the README spec — the concept-match + stale-detect
+# steps below are what actually narrow to user-facing help docs, so a UI change
+# that also touches docs/help/ or a capability still surfaces as a candidate.
+_INTERNAL_PATTERNS = (
+    re.compile(r"(^|/)evolve_admin/"),     # admin server python + its web SPA
+    re.compile(r"(^|/)tests?/"),           # any tests/ dir (root, packages, edr)
+    re.compile(r"^internal/spec-"),
+    re.compile(r"^internal/incident-"),
+    re.compile(r"^internal/diagnosis-"),
+    re.compile(r"^internal/audit-"),
+)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pure logic — no wall clock, no network. Unit-tested with fixtures.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def is_internal_path(path: str) -> bool:
+    """True if a single changed-file path is internal-only (triage skip set)."""
+    return any(p.search(path) for p in _INTERNAL_PATTERNS)
+
+
+def is_internal_only_pr(pr: dict) -> bool:
+    """True if a PR should be SKIPPED — it touches only internal paths.
+
+    A PR with no recorded file changes is also skipped: there is nothing for the
+    knowledge corpus to reflect.
+    """
+    files = pr.get("files") or []
+    if not files:
+        return True
+    return all(is_internal_path(f) for f in files)
+
+
+def vocabulary_terms(index: dict) -> list[str]:
+    """The controlled concept vocabulary — the keys of _index.yaml's `concepts:`."""
+    concepts = (index or {}).get("concepts") or {}
+    return sorted(concepts.keys())
+
+
+def concept_owner_map(index: dict) -> dict[str, list[str]]:
+    """concept -> [owning doc slug], derived from _index.yaml.
+
+    _index.yaml lists owners as filenames (``overview.md``); we key everything by
+    slug (the filename stem, ``overview``) to line up with how docs are loaded.
+    The primary owner stays first (insertion order preserved).
+    """
+    concepts = (index or {}).get("concepts") or {}
+    out: dict[str, list[str]] = {}
+    for concept, files in concepts.items():
+        slugs: list[str] = []
+        for fname in files or []:
+            stem = fname[:-3] if isinstance(fname, str) and fname.endswith(".md") else str(fname)
+            if stem not in slugs:
+                slugs.append(stem)
+        out[concept] = slugs
+    return out
+
+
+def _term_regex(term: str) -> re.Pattern:
+    """A case-insensitive matcher for a kebab-case concept term.
+
+    Hyphens in the term match a hyphen, underscore, space, or slash so that
+    ``model-tiers`` is found whether a PR wrote "model-tiers", "model tiers",
+    "model_tiers", or it appears in a path like ``.../model/tiers``. Boundaries
+    treat ``_`` `/` `-` and whitespace as separators (unlike ``\\b``), so a term
+    is found inside a path segment but never as a sub-word of a longer word
+    (``evo`` does not match inside ``evolve``).
+    """
+    body = re.escape(term).replace(r"\-", r"[-_/ ]")
+    return re.compile(rf"(?<![a-z0-9]){body}(?![a-z0-9])", re.IGNORECASE)
+
+
+def build_term_matchers(terms: list[str]) -> dict[str, re.Pattern]:
+    return {t: _term_regex(t) for t in terms}
+
+
+def _pr_strong_text(pr: dict) -> str:
+    """High-signal surface: the PR title + its changed file paths."""
+    parts = [str(pr.get("title") or "")]
+    parts.extend(pr.get("files") or [])
+    return "\n".join(parts)
+
+
+def match_concepts(pr: dict, matchers: dict[str, re.Pattern]) -> set[str]:
+    """The set of vocabulary concepts a PR mentions.
+
+    Precision rule: a concept matches if its term appears in the PR **title or any
+    changed file path** (the structured, high-signal fields). The free-prose
+    **body** is matched ONLY for *specific* concepts — those that are multi-word
+    (contain a hyphen), e.g. ``model-tiers``, ``app-audit``, ``daily-cap``. Those
+    are unambiguous in prose; bare single tokens (``cost``, ``apps``, ``install``,
+    ``security``) flood from incidental body mentions, so for them we require the
+    stronger title/path signal. An area-relevant PR nearly always names the
+    concept in its title or touches a matching path, so recall stays high while
+    the review queue stays legible. Deterministic and cheap (no LLM).
+    """
+    strong = _pr_strong_text(pr)
+    body = str(pr.get("body") or "")
+    matched: set[str] = set()
+    for term, rx in matchers.items():
+        if rx.search(strong) or ("-" in term and rx.search(body)):
+            matched.add(term)
+    return matched
+
+
+def parse_iso_date(value) -> dt.date | None:
+    """Parse a YYYY-MM-DD string (or pass through a date) — None if unparseable."""
+    if value is None:
+        return None
+    if isinstance(value, dt.date):
+        return value
+    try:
+        return dt.date.fromisoformat(str(value).strip())
+    except ValueError:
+        return None
+
+
+def doc_age_days(last_reviewed, run_date: dt.date) -> int | None:
+    """Days between a doc's last_reviewed and the run date; None if no/bad date."""
+    d = parse_iso_date(last_reviewed)
+    if d is None:
+        return None
+    return (run_date - d).days
+
+
+@dataclass
+class DocEntry:
+    """An affected help doc: it owns ≥1 concept touched by a candidate PR."""
+    slug: str
+    last_reviewed: str | None
+    exists: bool
+    stale: bool
+    concepts: list[str]
+    prs: list[tuple[int, str]]  # (number, title), first-seen order
+
+
+@dataclass
+class RefreshPlan:
+    run_date: str          # ISO
+    since_date: str        # ISO
+    candidates: list[dict] = field(default_factory=list)  # {number,title,concepts}
+    skipped: list[int] = field(default_factory=list)
+    docs: list[DocEntry] = field(default_factory=list)    # affected, sorted by slug
+
+    @property
+    def stale_docs(self) -> list[DocEntry]:
+        """Docs to bump: stale-flagged AND present on disk (can't bump a gap)."""
+        return [d for d in self.docs if d.stale and d.exists]
+
+    @property
+    def has_changes(self) -> bool:
+        """Whether this run would touch any file (REVIEW-QUEUE or a bump)."""
+        return bool(self.docs)
+
+    def to_json(self) -> dict:
+        return {
+            "run_date": self.run_date,
+            "since_date": self.since_date,
+            "candidates": self.candidates,
+            "skipped": self.skipped,
+            "affected_docs": [
+                {
+                    "slug": d.slug,
+                    "last_reviewed": d.last_reviewed,
+                    "exists": d.exists,
+                    "stale": d.stale,
+                    "concepts": d.concepts,
+                    "prs": [{"number": n, "title": t} for n, t in d.prs],
+                }
+                for d in self.docs
+            ],
+            "stale_bumped": [d.slug for d in self.stale_docs],
+        }
+
+
+def build_plan(
+    prs: list[dict],
+    index: dict,
+    docs: dict[str, dict],
+    run_date: dt.date,
+    *,
+    since_date: dt.date,
+    stale_threshold_days: int = STALE_THRESHOLD_DAYS,
+) -> RefreshPlan:
+    """The heart of the routine — pure, deterministic, fixture-testable.
+
+    ``docs`` maps slug -> {"last_reviewed": "YYYY-MM-DD"|None}. ``index`` is the
+    parsed _index.yaml. Returns a RefreshPlan describing the triage outcome, the
+    affected docs, and which of them are stale (to bump).
+    """
+    matchers = build_term_matchers(vocabulary_terms(index))
+    owners = concept_owner_map(index)
+
+    candidates: list[dict] = []
+    skipped: list[int] = []
+    # slug -> {"concepts": set, "prs": [(num, title)]}
+    affected: dict[str, dict] = {}
+
+    for pr in prs:
+        number = pr.get("number")
+        title = str(pr.get("title") or "")
+        if is_internal_only_pr(pr):
+            if number is not None:
+                skipped.append(number)
+            continue
+        matched = match_concepts(pr, matchers)
+        candidates.append({"number": number, "title": title, "concepts": sorted(matched)})
+        for concept in matched:
+            for slug in owners.get(concept, []):
+                entry = affected.setdefault(slug, {"concepts": set(), "prs": []})
+                entry["concepts"].add(concept)
+                if (number, title) not in entry["prs"]:
+                    entry["prs"].append((number, title))
+
+    doc_entries: list[DocEntry] = []
+    for slug in sorted(affected):
+        entry = affected[slug]
+        meta = docs.get(slug)
+        exists = meta is not None
+        last_reviewed = None
+        if exists:
+            lr = meta.get("last_reviewed")
+            last_reviewed = lr if lr is None else str(lr)
+        age = doc_age_days(last_reviewed, run_date) if exists else None
+        # A missing/unparseable last_reviewed counts as stale (overdue by contract).
+        stale = exists and (age is None or age > stale_threshold_days)
+        doc_entries.append(
+            DocEntry(
+                slug=slug,
+                last_reviewed=last_reviewed,
+                exists=exists,
+                stale=stale,
+                concepts=sorted(entry["concepts"]),
+                prs=list(entry["prs"]),
+            )
+        )
+
+    return RefreshPlan(
+        run_date=run_date.isoformat(),
+        since_date=since_date.isoformat(),
+        candidates=candidates,
+        skipped=sorted(skipped),
+        docs=doc_entries,
+    )
+
+
+def render_review_queue(plan: RefreshPlan) -> str:
+    """Render docs/help/REVIEW-QUEUE.md from a plan. Deterministic for a fixed plan."""
+    lines: list[str] = []
+    lines.append("# docs/help — knowledge-refresh review queue")
+    lines.append("")
+    lines.append(
+        f"_Generated by `tools/help-refresh` on {plan.run_date}, covering PRs "
+        f"merged to `main` since {plan.since_date}._"
+    )
+    lines.append("")
+    lines.append(
+        "This file is regenerated by each weekly run. Every entry below is a help "
+        "doc whose **concepts** were touched by a merged PR in the window, paired "
+        "with the PRs to check it against."
+    )
+    lines.append("")
+    lines.append(
+        "**Bumping `last_reviewed` is mechanical; verifying the prose is a human "
+        "job.** For each doc: read the linked PRs, confirm the doc still matches "
+        "what a user sees, edit the prose if it drifted, then merge. A `STALE` doc "
+        "has already had its `last_reviewed` bumped to the run date in this PR — "
+        "that bump only \"counts\" once you've actually verified it."
+    )
+    lines.append("")
+
+    if not plan.docs:
+        lines.append("_No affected docs this week._")
+        lines.append("")
+        return "\n".join(lines)
+
+    for d in plan.docs:
+        if not d.exists:
+            status = "doc not yet written — see _pages.yaml backlog"
+        elif d.stale:
+            status = f"last_reviewed {d.last_reviewed} — STALE, bumped to {plan.run_date}"
+        else:
+            status = f"last_reviewed {d.last_reviewed} — current"
+        lines.append(f"## {d.slug}.md  _({status})_")
+        lines.append("")
+        lines.append(f"Concepts touched: {', '.join(f'`{c}`' for c in d.concepts)}")
+        lines.append("")
+        lines.append("PRs to verify against:")
+        for number, title in d.prs:
+            ref = f"#{number}" if number is not None else "(unknown PR)"
+            lines.append(f"- {ref} — {title}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+_LAST_REVIEWED_LINE = re.compile(r"(?m)^(last_reviewed:[ \t]*).*$")
+
+
+def bump_last_reviewed(text: str, run_date: str) -> str:
+    """Rewrite the frontmatter ``last_reviewed:`` line to ``run_date``.
+
+    Only the first occurrence (the frontmatter line) is touched. If the doc has
+    no ``last_reviewed:`` line, the text is returned unchanged.
+    """
+    return _LAST_REVIEWED_LINE.sub(rf"\g<1>{run_date}", text, count=1)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Impure I/O — wall clock, filesystem, `gh`. Kept out of the tested core.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+_FM = re.compile(r"^---\n(.*?)\n---\n", re.DOTALL)
+
+
+def load_index(repo_root: Path) -> dict:
+    raw = (repo_root / INDEX_REL).read_text(encoding="utf-8")
+    return yaml.safe_load(raw) or {}
+
+
+def load_docs(repo_root: Path) -> dict[str, dict]:
+    """slug -> {"last_reviewed": str|None, "path": Path} for every docs/help/*.md.
+
+    Skips the registry/index YAML and REVIEW-QUEUE.md (not corpus docs).
+    """
+    help_dir = repo_root / HELP_DIR_REL
+    docs: dict[str, dict] = {}
+    for p in sorted(help_dir.glob("*.md")):
+        if p.name == "README.md" or p.name == Path(REVIEW_QUEUE_REL).name:
+            continue
+        text = p.read_text(encoding="utf-8")
+        m = _FM.match(text)
+        fm = (yaml.safe_load(m.group(1)) if m else None) or {}
+        lr = fm.get("last_reviewed")
+        docs[p.stem] = {
+            "last_reviewed": None if lr is None else str(lr),
+            "path": p,
+        }
+    return docs
+
+
+def fetch_merged_prs(since_date: dt.date, *, base: str = "main", limit: int = DEFAULT_PR_LIMIT) -> list[dict]:
+    """Collect merged PRs to ``base`` since ``since_date`` via the gh CLI.
+
+    Returns a list of {number, title, body, files:[path,...]} dicts — files
+    flattened from gh's [{path,additions,deletions}] shape to bare paths.
+    """
+    cmd = [
+        "gh", "pr", "list",
+        "--state", "merged",
+        "--base", base,
+        "--search", f"merged:>={since_date.isoformat()}",
+        "--json", "number,title,body,files",
+        "--limit", str(limit),
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    except FileNotFoundError as exc:  # pragma: no cover — gh not installed
+        raise RuntimeError("help-refresh: the `gh` CLI is required but was not found on PATH") from exc
+    except subprocess.CalledProcessError as exc:  # pragma: no cover — auth/network
+        raise RuntimeError(f"help-refresh: `gh pr list` failed:\n{exc.stderr.strip()}") from exc
+    data = json.loads(proc.stdout or "[]")
+    for pr in data:
+        pr["files"] = [f.get("path", "") for f in (pr.get("files") or [])]
+    return data
+
+
+def apply_plan(plan: RefreshPlan, repo_root: Path, *, dry_run: bool) -> list[Path]:
+    """Bump last_reviewed on stale docs and (re)write REVIEW-QUEUE.md.
+
+    Returns the list of files that were (or, under --dry-run, would be) changed.
+    Writes NOTHING when the plan has no affected docs, so a zero-candidate run
+    leaves the tree clean.
+    """
+    changed: list[Path] = []
+    if not plan.has_changes:
+        return changed
+
+    help_dir = repo_root / HELP_DIR_REL
+    for d in plan.stale_docs:
+        path = help_dir / f"{d.slug}.md"
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        bumped = bump_last_reviewed(text, plan.run_date)
+        if bumped != text:
+            changed.append(path)
+            if not dry_run:
+                path.write_text(bumped, encoding="utf-8")
+
+    queue_path = repo_root / REVIEW_QUEUE_REL
+    new_queue = render_review_queue(plan)
+    old_queue = queue_path.read_text(encoding="utf-8") if queue_path.exists() else None
+    if new_queue != old_queue:
+        changed.append(queue_path)
+        if not dry_run:
+            queue_path.write_text(new_queue, encoding="utf-8")
+
+    return changed
+
+
+def _print_summary(plan: RefreshPlan, changed: list[Path], repo_root: Path, *, dry_run: bool) -> None:
+    n_cand = len(plan.candidates)
+    n_skip = len(plan.skipped)
+    n_aff = len(plan.docs)
+    n_bump = len(plan.stale_docs)
+    print(
+        f"help-refresh: window {plan.since_date}..{plan.run_date} · "
+        f"{n_cand} candidate PR(s), {n_skip} skipped · "
+        f"{n_aff} affected doc(s), {n_bump} stale bump(s)."
+    )
+    if plan.docs:
+        for d in plan.docs:
+            tag = "STALE→bump" if (d.stale and d.exists) else ("gap" if not d.exists else "current")
+            print(f"  · {d.slug}.md [{tag}] — {len(d.prs)} PR(s), concepts: {', '.join(d.concepts)}")
+    verb = "would change" if dry_run else "changed"
+    if changed:
+        rels = sorted(str(p.relative_to(repo_root)) for p in changed)
+        print(f"help-refresh: {verb} {len(changed)} file(s): {', '.join(rels)}")
+    else:
+        print("help-refresh: no candidate-driven changes — nothing to refresh (clean tree, no PR).")
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(
+        description="Weekly knowledge-refresh routine for docs/help/ (README §Weekly knowledge-refresh).",
+    )
+    ap.add_argument(
+        "--since",
+        metavar="YYYY-MM-DD",
+        help="cutoff date for merged PRs (default: 7 days before --run-date).",
+    )
+    ap.add_argument(
+        "--run-date",
+        metavar="YYYY-MM-DD",
+        help="treat this date as 'today' for staleness + last_reviewed bumps (default: today).",
+    )
+    ap.add_argument("--base", default="main", help="base branch for merged PRs (default: main).")
+    ap.add_argument("--limit", type=int, default=DEFAULT_PR_LIMIT, help="max PRs to fetch (default: 300).")
+    ap.add_argument("--repo-root", default=str(REPO_ROOT), help="repo root (default: this tool's repo).")
+    ap.add_argument("--dry-run", action="store_true", help="compute + print the plan; write nothing.")
+    ap.add_argument("--json", action="store_true", help="print the plan as JSON and exit (implies --dry-run).")
+    args = ap.parse_args(argv)
+
+    repo_root = Path(args.repo_root).resolve()
+
+    # Wall clock lives HERE and nowhere else — the logic above takes dates as args.
+    run_date = parse_iso_date(args.run_date) or dt.date.today()
+    if args.run_date and parse_iso_date(args.run_date) is None:
+        ap.error(f"--run-date {args.run_date!r} is not a valid YYYY-MM-DD date")
+    if args.since:
+        since_date = parse_iso_date(args.since)
+        if since_date is None:
+            ap.error(f"--since {args.since!r} is not a valid YYYY-MM-DD date")
+    else:
+        since_date = run_date - dt.timedelta(days=DEFAULT_LOOKBACK_DAYS)
+
+    index = load_index(repo_root)
+    docs = load_docs(repo_root)
+    prs = fetch_merged_prs(since_date, base=args.base, limit=args.limit)
+
+    plan = build_plan(prs, index, docs, run_date, since_date=since_date)
+
+    if args.json:
+        print(json.dumps(plan.to_json(), indent=2))
+        return 0
+
+    changed = apply_plan(plan, repo_root, dry_run=args.dry_run)
+    _print_summary(plan, changed, repo_root, dry_run=args.dry_run)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

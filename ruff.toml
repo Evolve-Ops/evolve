@@ -1,0 +1,37 @@
+# ruff — Python lint for the Phase 6.3 toolchain ratchet.
+#
+# Rule selection is deliberately ruff's high-confidence default set
+# (E4xx import placement, E7xx statement shape, E9xx syntax, F pyflakes):
+# real-bug-adjacent, near-zero false positives. Style/opinion rule packs
+# (I, N, UP, B, ...) are NOT enabled — adding one means re-freezing the
+# baseline and reviewing the diff, do it deliberately.
+#
+# Enforcement is via tools/ruff-baseline-lint (same ratchet shape as
+# tools/except-pass-lint): legacy violations are frozen in
+# tools/ruff-baseline.txt, new code must be clean, the baseline only
+# shrinks. Plain `ruff check` still works for local exploration but is
+# not the gate.
+#
+# CI pins the ruff version (see .github/workflows/ci.yml) because rule
+# behavior drifts across releases; keep the pin and this comment in sync
+# when upgrading: ruff==0.15.16
+
+target-version = "py39"
+
+# The gate covers production code in both packages plus tools/.
+# Tests are excluded for now (same scope decision as except-pass-lint);
+# extending to tests is a deliberate later step with its own baseline.
+extend-exclude = [
+    "**/tests/**",
+    "**/test_*.py",
+    "**/conftest.py",
+    "packages/dashboard",
+    "packages/gallery",
+    "packages/plugin",
+    "packages/evolve-zoom-mcp",
+]
+
+[lint]
+# Defaults: E4, E7, E9, F. Stated explicitly so an upstream default
+# change can't silently widen or narrow the gate.
+select = ["E4", "E7", "E9", "F"]

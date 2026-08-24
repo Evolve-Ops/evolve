@@ -1,0 +1,38 @@
+id: gateway_diagnostician
+schema_version: 1
+type: optimizer
+dimension: substrate_health
+bucket: operate
+# Surface routing: firing. Closes the heal.py alerts → proposals loop. Gateway-instability
+#   findings are urgent by definition — Firing-class.
+# Spec: internal/spec-recommendations-rework-2026-06-02.md §"Generator routing".
+surface: firing
+purpose: >
+  Close the alerts → proposals loop for heal.py. When gateway_instability
+  watchdog events keep firing for a bot, look at the underlying incident
+  stream and propose a specific heal configuration change (raise per-attempt
+  timeout, raise retry count, widen restart cooldown) that the evidence
+  supports. The aim is to graduate operator alerts into actionable
+  proposals rather than letting them sit on the Alerts page indefinitely.
+cadence: daily
+invariants:
+  - id: action_kind_allowed
+    description: >
+      Diagnostician emits workflow instructions (the operator applies the
+      config change) or escalates to a human investigation when the
+      evidence is ambiguous. No autonomous file edits in L1.
+    check_kind: action_kind_allowed
+    params:
+      allowlist: [WorkflowInstruction, Investigation]
+  - id: touches_forbidden
+    description: >
+      Diagnostician only tunes heal's own configuration knobs. It does not
+      touch auth, tools, channel config, or the gateway's core code.
+    check_kind: touches_forbidden
+    params:
+      forbidden: [auth, tools, channel_config, gateway_core]
+  - id: claim_metric_known
+    description: >
+      Every proposal must reference a registered metric so the verify
+      daemon can decide whether the change actually reduced incidents.
+    check_kind: claim_metric_known

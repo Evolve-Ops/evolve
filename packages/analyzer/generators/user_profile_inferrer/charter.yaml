@@ -1,0 +1,52 @@
+id: user_profile_inferrer
+schema_version: 1
+type: optimizer
+dimension: user_adjacency
+bucket: improve
+purpose: >
+  Maintain a per-user profile in each bot by extracting facts from the
+  bot's own session transcripts after each session ends. Runs siloed
+  per-bot using the bot's own LLM credentials — never as a centralized
+  service. Writes facts directly to ~/.openclaw/profiles/<user_key>.md
+  with no per-fact approval gate; users edit via `evo profile` or
+  conversational "remember/forget" patterns.
+
+# Per-bot, session-end hook. Not scheduled by the central arbiter — fired
+# by each bot's session_end OpenClaw hook. The arbiter never sees output
+# from this generator (no proposals emitted).
+cadence: per_session
+
+# This is an optimizer in name only — it does not emit ConfirmProfileField
+# proposals. Listed here so the Generators admin tab can render it; the
+# admin UI surfaces it as "runs per-bot at session end."
+emits_proposals: false
+
+# DNT (do-not-track) is honored at the hook layer: if the user's profile
+# has tracking_enabled=false, the hook short-circuits before the LLM call.
+# See internal/spec-user-profile-2026-05-07.md §D5b.
+honors_dnt: true
+
+# Per-section confidence thresholds (D4). Defaults below apply unless
+# overridden by per-bot config. Sensitive sections require multiple
+# observations across sessions before a fact lands.
+confidence_thresholds:
+  Goals: 0.70
+  Demographics: 0.85
+  Vocation: 0.70
+  Interests: 0.70
+  Family: 0.85
+  "Communication Preferences": 0.70
+  Values: 0.70
+  Constraints: 0.85
+
+# Privacy invariants. Enforced in hook.py + the user_profile module.
+invariants:
+  - id: no_cross_user_writes
+    description: Facts about user B (mentioned by user A) never land in user B's profile.
+    check_kind: custom
+  - id: no_admin_readable_content
+    description: Profile bodies stay mode 600 in the bot user's home; only .status.json is readable by evolve.
+    check_kind: custom
+  - id: dnt_short_circuits
+    description: tracking_enabled=false skips extraction entirely — no LLM call, no token spend.
+    check_kind: custom
