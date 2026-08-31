@@ -34,7 +34,7 @@ dependencies = [
     # PWA Phase 1.2 — per-pod VAPID keypair (cryptography) + Web Push
     # delivery (pywebpush). VAPID lives in evolve_admin/web/push_vapid.py,
     # delivery in evolve_admin/alerts/push_sender.py.
-    "cryptography>=42",
+    "cryptography>=50.0.1",
     "pywebpush>=2.0",
     # PWA Phase 3 — embedded mini terminal. flask-sock wraps the
     # WebSocket-to-PTY bridge in evolve_admin/web/terminal_routes.py;
