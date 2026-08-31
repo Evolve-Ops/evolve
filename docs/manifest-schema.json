@@ -1,0 +1,344 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://evolve.openclaw/manifest-schema.json",
+  "title": "ApplicationManifest",
+  "description": "Schema v4 — app manifest for an OpenClaw bot application registered with Evolve.",
+  "type": "object",
+  "required": ["id", "name", "bot_id", "description", "status"],
+  "additionalProperties": true,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*[a-z0-9]$",
+      "description": "Slug identifier. Used as the filename. Lowercase, hyphens only."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable name, e.g. 'Gmail Fetcher'."
+    },
+    "bot_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The bot account that owns this app, e.g. 'admin_bot'."
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "description": "One-paragraph description of what this app does."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["active", "paused", "draft", "deprecated"],
+      "description": "Lifecycle status of the app."
+    },
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Manifest schema version. Set automatically by Evolve."
+    },
+    "app_version": {
+      "type": "string",
+      "description": "Semver of the app itself, e.g. '0.1.0'."
+    },
+    "objective": {
+      "type": "string",
+      "description": "One-sentence goal statement."
+    },
+    "purpose": {
+      "type": "string",
+      "description": "2–3 sentence why-this-matters statement."
+    },
+    "owner": {
+      "type": "string",
+      "description": "Bot account that owns/runs this app."
+    },
+    "maintainers": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Human operators responsible for this app."
+    },
+    "source": {
+      "type": "string",
+      "enum": ["detected", "user-defined", "imported"],
+      "description": "How this manifest was created."
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "Discovery confidence score (0.0–1.0). Set by scanner."
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Free-form labels for filtering."
+    },
+    "last_reviewed": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "description": "ISO date of last human review, e.g. '2026-04-11'."
+    },
+    "created_at": {
+      "type": "string",
+      "description": "ISO datetime set on creation."
+    },
+    "updated_at": {
+      "type": "string",
+      "description": "ISO datetime updated on any change."
+    },
+    "identity": {
+      "type": "object",
+      "description": "What is this application and why does it exist?",
+      "properties": {
+        "purpose": { "type": "string" },
+        "scope_includes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "scope_excludes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "user": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "success_criteria": {
+      "type": "object",
+      "description": "How do we know this app is working?",
+      "properties": {
+        "observable_outcomes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Specific, verifiable behaviors you can observe."
+        },
+        "failure_signals": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Specific indicators that something is broken."
+        },
+        "quality_bar": {
+          "type": "string",
+          "description": "What minimum acceptable looks like vs excellent."
+        }
+      },
+      "additionalProperties": true
+    },
+    "constraints": {
+      "type": "object",
+      "description": "What must always be true?",
+      "properties": {
+        "privacy": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "safety": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "dependencies": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "boundaries": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "satisfaction": {
+      "type": "object",
+      "properties": {
+        "score": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1, "maximum": 10 },
+            { "type": "null" }
+          ]
+        },
+        "notes": {
+          "oneOf": [{ "type": "string" }, { "type": "null" }]
+        },
+        "rated_at": {
+          "oneOf": [{ "type": "string" }, { "type": "null" }]
+        }
+      },
+      "additionalProperties": false
+    },
+    "improvement_history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "date": { "type": "string" },
+          "change": { "type": "string" },
+          "why": { "type": "string" },
+          "outcome": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "goals": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "files": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Scripts, code files, and assets belonging to this app (relative to workspace root)."
+    },
+    "crons": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Cron entries belonging to this app (crontab format)."
+    },
+    "inputs": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "What the app consumes."
+    },
+    "outputs": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "What the app produces."
+    },
+    "exported_hooks": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Named functions/entry points other apps or bots can call."
+    },
+    "docs": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Paths to documentation files (relative to workspace root)."
+    },
+    "test_command": {
+      "type": "string",
+      "description": "Shell command to run the app's test suite from the workspace root as the bot user."
+    },
+    "test_cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "description": { "type": "string" },
+          "trigger": { "type": "string" },
+          "expected": { "type": "string" },
+          "last_run": {
+            "oneOf": [{ "type": "string" }, { "type": "null" }]
+          },
+          "last_result": {
+            "oneOf": [
+              { "type": "string", "enum": ["pass", "fail", "partial", "error"] },
+              { "type": "null" }
+            ],
+            "description": "Behavioural-run result. error means trigger or judge call itself failed (separated from fail for telemetry). See internal/spec-behavioral-runs-2026-05-07.md §2."
+          },
+          "last_notes": {
+            "oneOf": [{ "type": "string" }, { "type": "null" }],
+            "description": "One- or two-sentence judge explanation for the most recent run. Empty string when not yet judged."
+          },
+          "last_judge_model": {
+            "type": "string",
+            "description": "Resolved model id (e.g. claude-haiku-4-5-20251001) used for the most recent judge call. Empty string when the case has not run."
+          },
+          "last_judge_tokens": {
+            "oneOf": [{ "type": "integer" }, { "type": "null" }],
+            "description": "Combined input + output tokens for the most recent judge call. Powers the daily cost rollup."
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "last_tested": {
+      "oneOf": [{ "type": "string" }, { "type": "null" }],
+      "description": "ISO datetime of last test run."
+    },
+    "last_test_result": {
+      "oneOf": [
+        { "type": "string", "enum": ["pass", "fail", "partial"] },
+        { "type": "null" }
+      ]
+    },
+    "last_test_run": {
+      "oneOf": [{ "type": "string" }, { "type": "null" }],
+      "description": "ISO datetime of last test_command execution."
+    },
+    "last_test_output": {
+      "type": "string",
+      "description": "Truncated stdout/stderr from last test_command run."
+    },
+    "last_test_exit_code": {
+      "oneOf": [{ "type": "integer" }, { "type": "null" }],
+      "description": "Exit code from last test_command run."
+    },
+    "test_cadence": {
+      "oneOf": [
+        { "type": "string", "enum": ["off", "on_change", "light", "strict"] },
+        { "type": "null" }
+      ],
+      "description": "Per-app override of pod-wide app_testing.default_cadence in network.json. null means inherit pod default. See internal/spec-app-testing-2026-05-07.md §3."
+    },
+    "test_exemption_reason": {
+      "type": "string",
+      "description": "When set, forge enforcement accepts a manifest without test_command/test_cases. Operator-supplied reason; surfaced as audit trail on the Applications card. Empty string means tests are required."
+    },
+    "rsigrade_signals": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Named operational metrics tracked during normal operation. Labels for the RSI loop."
+    },
+    "evidence_files": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Files used to discover this app (set by scanner)."
+    },
+    "example_triggers": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "known_issues": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "open_questions": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "privacy_constraints": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Deprecated. Use constraints.privacy instead."
+    },
+    "compliance_suppressed": {
+      "type": "boolean",
+      "description": "If true, this app is intentionally exempt from unregistered-asset flagging."
+    },
+    "compliance_suppressed_reason": {
+      "type": "string",
+      "description": "Why this app is suppressed from compliance checks."
+    },
+    "satisfaction_score": {
+      "oneOf": [
+        { "type": "integer", "minimum": 1, "maximum": 10 },
+        { "type": "null" }
+      ],
+      "description": "Deprecated. Use satisfaction.score instead."
+    },
+    "satisfaction_notes": {
+      "oneOf": [{ "type": "string" }, { "type": "null" }],
+      "description": "Deprecated. Use satisfaction.notes instead."
+    },
+    "version": {
+      "type": "integer",
+      "description": "Legacy integer manifest version. Use app_version for semver."
+    },
+    "priority": {
+      "type": "string",
+      "enum": ["core", "feature", "optional"],
+      "description": "Deprecated. All apps are equally optional."
+    }
+  }
+}

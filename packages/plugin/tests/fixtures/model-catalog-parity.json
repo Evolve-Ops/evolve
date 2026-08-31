@@ -1,0 +1,112 @@
+{
+  "_comment": "Shared TS<->Python parity fixture for the keyed model-catalog merge (spec internal/spec-model-rungs-and-roles-2026-06-09.md Addendum 2). Both ModelRouter.ts (mergeModelCatalog) and primary_bot.py (merge_model_catalog) must resolve each scenario's five roles to the SAME primary model. The expected primaries below are the contract both sides are pinned to. 'judge' is provider-diversity-constrained: the parity helpers pick the first model in the judge rung whose provider differs from standard's resolved primary (mirrors ModelRouter._resolveJudgeModel), null when none exists. Legacy tiers-shaped layers are NOT parity material anymore: the TS runtime REFUSES them (LegacyTierShapeError, 2026-08-15) while Python's admin read side still normalizes them (_normalize_legacy_layer, covered by test_tier_shape_resolution.py) — so every scenario here must be rungs/roles-shaped. KEEP IN SYNC: edit this file once; both parity tests read it.",
+  "scenarios": [
+    {
+      "name": "bare pod — defaults only (Max ships armed)",
+      "_comment": "judge rides the default sonnet-class rung [anthropic/claude-sonnet-4-6, openai/gpt-4.1, google/gemini-2.5-pro, xai/grok-4]; standard resolves to anthropic, so the provider-diversity constraint picks the first non-anthropic member: openai/gpt-4.1.",
+      "pod": {},
+      "bot": {},
+      "expect": {
+        "fast": "anthropic/claude-haiku-4-5",
+        "standard": "anthropic/claude-sonnet-4-6",
+        "power": "anthropic/claude-opus-4-8",
+        "max": "anthropic/claude-fable-5",
+        "judge": "openai/gpt-4.1"
+      }
+    },
+    {
+      "name": "pod overrides standard rung — pod beats default",
+      "pod": {
+        "rungs": [
+          {
+            "id": "sonnet-class",
+            "models": [
+              "openai/gpt-4o",
+              "anthropic/claude-sonnet-4-6"
+            ],
+            "costClass": "medium"
+          }
+        ]
+      },
+      "bot": {},
+      "expect": {
+        "fast": "anthropic/claude-haiku-4-5",
+        "standard": "openai/gpt-4o",
+        "power": "anthropic/claude-opus-4-8",
+        "max": "anthropic/claude-fable-5",
+        "judge": "anthropic/claude-sonnet-4-6"
+      }
+    },
+    {
+      "name": "bot overrides power rung — bot beats pod beats default",
+      "pod": {
+        "rungs": [
+          {
+            "id": "opus-class",
+            "models": [
+              "anthropic/claude-opus-4-8"
+            ],
+            "costClass": "high"
+          }
+        ]
+      },
+      "bot": {
+        "rungs": [
+          {
+            "id": "opus-class",
+            "models": [
+              "google/gemini-pro-9"
+            ],
+            "costClass": "high"
+          }
+        ]
+      },
+      "expect": {
+        "fast": "anthropic/claude-haiku-4-5",
+        "standard": "anthropic/claude-sonnet-4-6",
+        "power": "google/gemini-pro-9",
+        "max": "anthropic/claude-fable-5",
+        "judge": "openai/gpt-4.1"
+      }
+    },
+    {
+      "name": "pod-only fable cap + max role still resolves from default fable rung",
+      "pod": {
+        "roleCaps": {
+          "max": {
+            "maxPerDayPerBot": 3
+          }
+        }
+      },
+      "bot": {},
+      "expect": {
+        "fast": "anthropic/claude-haiku-4-5",
+        "standard": "anthropic/claude-sonnet-4-6",
+        "power": "anthropic/claude-opus-4-8",
+        "max": "anthropic/claude-fable-5",
+        "judge": "openai/gpt-4.1"
+      }
+    },
+    {
+      "name": "bot empty sonnet-class rung is a no-op — does NOT brick standard",
+      "_comment": "An operator-written empty-models override rung must NOT shadow the base/default rung (mergeOneRung / _merge_one_rung): 'explicit config wins wherever it SPEAKS', and an empty models list does not speak. standard still resolves via the default sonnet-class cluster; judge stays provider-diverse against it. The Evolve admin onboarding/checklist surfaces flag this broken-but-defaulted config separately via tier_override_is_broken (Python-only since 2026-08-15; the TS mirror was removed with the legacy runtime fallback) — but the merge/routing here must keep the bot working (#2561 onboarding semantics).",
+      "pod": {},
+      "bot": {
+        "rungs": [
+          {
+            "id": "sonnet-class",
+            "models": [],
+            "costClass": "medium"
+          }
+        ]
+      },
+      "expect": {
+        "fast": "anthropic/claude-haiku-4-5",
+        "standard": "anthropic/claude-sonnet-4-6",
+        "power": "anthropic/claude-opus-4-8",
+        "max": "anthropic/claude-fable-5",
+        "judge": "openai/gpt-4.1"
+      }
+    }
+  ]
+}

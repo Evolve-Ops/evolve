@@ -1,0 +1,2298 @@
+"""Per-bot config file perm enforcement (mode for secrets, ownership for tiers).
+
+``openclaw.json`` (the gateway token + every messaging-channel bot token)
+and ``auth-profiles.json`` (LLM-provider API keys) must never be world-
+readable on a multi-user box. A bare ``sudo /bin/cp`` (no ``-p``) creates the
+destination at root's umask → 0644, so every config-write path must tighten
+the mode back to 0600 after the copy.
+
+``evolve-tiers.json`` (per-bot model-routing config) is the inverse problem:
+it is NOT a secret (0644 is correct), but a bare ``sudo /bin/cp`` to a *fresh*
+dest lands it ``root:wheel 0600`` — and then the bot user, which runs
+``oc_model.py`` to read/rewrite its OWN tier config, can no longer read it.
+``check_bot_tiers_ownership`` (also wired into ``ensure_pod_perms``) converges
+a drifted file back to bot-owned 0644.
+
+This lives in its own module (rather than inline in deploy.py) for two
+reasons: deploy.py is a frozen hot-hazard file under a no-growth cap, and the
+"what files are secret + how to enforce 0600" contract has one home that both
+the write paths (``chmod_secret_config``) and the deploy-time self-heal
+(``check_bot_secret_modes``, wired into ``ensure_pod_perms``) share.
+
+Why 0600 doesn't break the admin read path: on **macOS** ``chmod`` changes
+neither ownership nor ACLs, so the bot keeps owner-read and the ``evolve``
+admin user keeps the inherited read ACL that ``set_evolve_read_acl`` grants
+on ``.openclaw/``. Verified live 2026-06-12. On **Linux** the story differs:
+a POSIX ACL has a *mask* and ``chmod 600``'s zeroed group bits BECOME that
+mask, silently capping the inherited ``u:evolve`` read ACE to nothing — so
+admin daemons (e.g. ``pod_perms_drift_monitor``) hit EACCES reading
+``auth-profiles.json``. ``chmod_secret_config`` therefore re-grants the
+evolve read ACE on Linux (setfacl recalculates the mask), and
+``check_bot_secret_modes`` compares the perms-seam *effective* mode (which
+corrects the ACL-mask display) so the re-grant doesn't read as 0640 drift.
+(W10-G #2.)
+
+Sudoers: the ``chmod 600`` grants for these paths are rendered by
+``setup_wizard._render_evolve_sudoers`` (§4 for openclaw.json, §5 for
+auth-profiles.json). Changing those requires ``sudo evolve-admin
+refresh-sudoers``.
+"""
+
+from __future__ import annotations
+
+import os
+import pwd
+import stat
+import subprocess
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from evolve_config import user_home as _user_home
+from evolve_util import assert_safe_sudo_dest
+from platform_profile import get_profile as _get_profile
+
+from .runtime import get_perms as _get_perms
+from .runtime.perms import POD_READ_ACL_PERMS as _POD_READ_ACL_PERMS
+from .runtime.perms import Perms as _Perms
+from .telemetry import get_logger as _get_logger
+# Unix account-name shape, shared with the other sink in this package that
+# interpolates a bot account into a privileged argv (an ACE string there, a
+# ``chown <user>:staff`` argv here). Imported rather than re-declared so the two
+# sinks cannot drift apart. tier_prefs_acl only imports deploy lazily, so this
+# adds no cycle.
+from .tier_prefs_acl import _SAFE_UNIX_NAME_RE
+
+if TYPE_CHECKING:
+    from .deploy import _PermCheck
+
+_log = _get_logger("secret_config_perms")
+
+_EVOLVE_USER = "evolve"
+
+# The evo gateway account. Mirrors ``deploy.EVO_GATEWAY_USER``; kept as a local
+# literal because deploy.py imports THIS module at load time, so the dependency
+# only runs the other way (the lazy ``from .deploy import _PermCheck`` below is
+# the established shape for the few places that need it).
+_EVO_GATEWAY_USER = "evo"
+
+
+_OC_DIR_NAME = ".openclaw"
+
+
+def _bot_home_anchor(path: "Path") -> "Path | None":
+    """The bot home directory containing ``path``: the parent of its shallowest
+    ``.openclaw`` component. ``None`` when there is no such component.
+
+    This is the trust boundary the ancestor walk needs (#3566 audit D-2
+    residual). ``<home>`` is OWNED by the bot on both platforms, but the bot
+    cannot replace the home ENTRY itself — that needs write on ``/Users``
+    (``/home``), which is root's — so a symlink cannot appear at ``<home>``.
+    ``.openclaw`` and everything below it is a different matter: the bot has
+    write on the containing directory, so any of those components is plantable.
+    The anchor therefore goes one level ABOVE ``.openclaw`` and the walk starts
+    at ``.openclaw`` itself.
+
+    Derived from the path's own components rather than from
+    ``_get_profile().user_home_root``, deliberately. A profile-derived anchor
+    would make every repair in this module refuse whenever the profile is unset
+    or mismatched to the path — the exact silent-fleet-wide-no-op shape that
+    ``_bot_user_from_path``'s hardcoded ``/Users`` produced on the Linux pod
+    (#3566 audit B-1). ``.openclaw`` is spelled the same on both platforms, so
+    this needs no per-OS knowledge and cannot drift with the profile.
+
+    The SHALLOWEST component wins if a path somehow carries two (e.g. a
+    workspace containing its own ``.openclaw``): that anchors higher and so
+    walks strictly more components. All of this module's dests are built as
+    ``user_home(<validated account>) / ".openclaw" / <module-constant relpath>``,
+    so no attacker-controlled string reaches this parse.
+
+    Returns ``None`` — a refusal at the call site, never a fallback to the
+    weaker unanchored check — for a path with no ``.openclaw`` at all, and for a
+    RELATIVE path whose first component is ``.openclaw`` (nothing above it to
+    anchor on; the primitive requires an absolute path anyway). An absolute
+    ``/.openclaw/...`` anchors at ``/``, which walks strictly more.
+    """
+    parts = path.parts
+    try:
+        idx = parts.index(_OC_DIR_NAME)
+    except ValueError:
+        return None
+    if idx == 0:
+        return None
+    return Path(*parts[:idx])
+
+
+def _sudo_dest_ok(path: "str | Path", what: str) -> bool:
+    """``assert_safe_sudo_dest`` in bool form — the shape THIS module's sudo
+    helpers need (#3566 audit D-2).
+
+    Every ``sudo chown`` / ``sudo chmod`` below runs as ROOT against a path
+    inside a directory the BOT owns, and neither command is passed ``-h``, so
+    both FOLLOW a symlink planted at the destination. See
+    ``evolve_util.assert_safe_sudo_dest`` for the primitive and its TOCTOU
+    residual.
+
+    Why bool-and-log rather than letting the ``PermissionError`` propagate —
+    decided deliberately, and consistent with the two sibling call sites that
+    already resolved the same fork (``oc_model._restore_tiers_bot_ownership``
+    and ``migrate_model_roles._write_bot_tiers`` both catch, report to stderr,
+    and return):
+
+      * Every helper here already returns ``bool`` and every caller already
+        treats ``False`` as "repair did not happen" — ``chmod_secret_config``
+        in particular is called bare (return ignored) from ~8 deploy /
+        setup-wizard / route sites, so a raise would turn a planted link into
+        an aborted deploy or a 500 rather than a skipped repair.
+      * Loudness does not depend on raising. ``ensure_pod_perms``' apply loop
+        already catches (``deploy.py``: ``except Exception`` → ``result.errors``),
+        so a raise would surface as one error line — the same line ``False``
+        produces, minus the reason. The reason goes to the module logger here,
+        and the *persistent* plant (the actual attack shape) is reported as its
+        own drift finding by ``check_bot_tiers_ownership`` below, which is what
+        rides the hourly ``pod_perms_drift`` Signal to the operator.
+
+    ANCHORED at the bot home (``_bot_home_anchor``), which makes the gate walk
+    every directory component below it — ``.openclaw`` and everything nested
+    under it. That matters HERE and only here: this module is the one holding
+    NESTED relpaths (``agents/main/agent/auth-profiles.json``,
+    ``workspace/.git/config``), whose ``agents`` / ``agents/main`` /
+    ``workspace`` components sit inside the bot-owned tree and are therefore
+    plantable, while the gate's two unanchored lstats (dest + its parent) see
+    perfectly real objects. The two flat-relpath callers of the primitive
+    (``oc_model``, ``migrate_model_roles``) stay unanchored on purpose — see
+    ``assert_safe_sudo_dest``'s ``anchor`` section.
+
+    A path with no ``.openclaw`` component is REFUSED, not silently downgraded
+    to the weaker unanchored check. Every one of this helper's call sites is a
+    per-bot config path built from ``user_home(<account>) / ".openclaw" /
+    <relpath>``; anything else (a ``{shared_dir}`` dest, say — that is
+    ``chmod_shared_secret``'s territory) is a caller this helper does not know
+    the trust boundary for. It returns False and logs. Note what that costs and
+    what it does NOT buy: ``check_bot_secret_modes`` only enumerates
+    ``<oc_dir>/<rel>``, so an off-shape dest is refused AND invisible to the
+    drift surface — and ~8 of ``chmod_secret_config``'s callers ignore the bool.
+    A future caller off this shape gets a silent skip, so give it its own helper
+    with its own anchor rather than widening this one.
+
+    Returns True when the destination is safe to hand to a root command.
+    """
+    anchor = _bot_home_anchor(Path(path))
+    if anchor is None:
+        _log.error(
+            "%s refused: %s has no %r component — cannot establish the "
+            "trust boundary for an anchored ancestor walk",
+            what, path, _OC_DIR_NAME,
+        )
+        return False
+    try:
+        assert_safe_sudo_dest(path, anchor=anchor)
+    except PermissionError as e:
+        _log.error("%s refused: %s", what, e)
+        return False
+    return True
+
+
+# Per-bot config files that carry secrets and must be mode 0600. Paths are
+# relative to the bot's ``.openclaw/`` directory. ``openclaw.json.bak`` is the
+# pre-write backup safe_write_bot_config makes — a copy of the same token file,
+# so it carries the same exposure and is converged here too (it simply reads as
+# "not present" on bots that never went through safe_write_bot_config).
+BOT_SECRET_CONFIG_RELPATHS: tuple[str, ...] = (
+    "openclaw.json",
+    "openclaw.json.bak",
+    "agents/main/agent/auth-profiles.json",
+    # Under https_pat auth the backup remote URL embeds a GitHub PAT, so the
+    # workspace .git/config is token-bearing. 0600 is harmless on ssh/
+    # credhelper bots (bot keeps owner rw; evolve reads via ACL + the §11f
+    # sudo cat grant), and the deploy self-heal converges files that a
+    # pre-2026-07 rotate left at 644.
+    "workspace/.git/config",
+)
+BOT_SECRET_CONFIG_MODE = 0o600
+_MODE_ARG = oct(BOT_SECRET_CONFIG_MODE)[2:]  # "600"
+
+# Bot-PRIVATE secret files — the opposite contract from
+# ``BOT_SECRET_CONFIG_RELPATHS``: evolve must NEVER hold a read ACE on these
+# (threat-model §3.1 carve-out class, file-shaped — same as the credentials/
+# dir and profiles/*.md carve-outs). The scripts that use them run as the bot;
+# the admin daemon has no read path by design (spec-darwin-pm §10.b).
+#
+# Why the strip matters beyond least-privilege (#3452): the recursive
+# ``.openclaw`` read grant sweeps these files up, and on Linux a planted ACE
+# makes the stat group triad display the ACL MASK — a 0600 file reads as 640 —
+# so strict app-side ``mode == 0600`` gates (pm-inbox's tokens check) refuse
+# to run after every heal. Paths relative to the bot's ``.openclaw/``.
+# A new entry needs matching carve-out grants in ``_render_evolve_sudoers``
+# (Linux: ``setfacl -b`` + ``chmod 600``; macOS: ``chmod -N``) — the renderer
+# emits them from this tuple.
+BOT_PRIVATE_SECRET_RELPATHS: tuple[str, ...] = (
+    "pm-inbox-github-tokens.json",
+)
+
+
+def strip_bot_private_acl(oc_dir: "str | Path") -> bool:
+    """Remove any ACL (and restore 0600) on the bot-private secret files.
+
+    The file-shaped twin of the credentials/ + profiles carve-out: run after
+    any recursive ``.openclaw`` read grant so the sweep's collateral ACE comes
+    back off. Idempotent and best-effort (missing files are fine; a failed
+    strip returns False and the next deploy/heal converges it). macOS
+    ``clear_acl`` maps to ``chmod -N``; the 0600 restore is the same
+    ``sudo /bin/chmod`` shape as ``chmod_secret_config`` (no mask re-grant
+    afterwards — no ACE should remain on these files, that is the point).
+
+    Symlink gate (D-2): the root ``chmod`` follows a link at the destination,
+    and so does the ACL clear (``chmod -N`` / ``setfacl -b`` take the resolved
+    file) — so a planted link relabels an arbitrary root-owned file to 0600 and
+    strips its ACL. Gated per-entry rather than once for the dir so one planted
+    file doesn't skip the others' carve-out.
+    """
+    oc = Path(oc_dir)
+    perms = _get_perms()
+    ok = True
+    for rel in BOT_PRIVATE_SECRET_RELPATHS:
+        path = oc / rel
+        # Gate BEFORE the existence probe, not after: ``exists_or_unreachable``
+        # is ``Path.exists()``, which FOLLOWS — a dangling link at this path
+        # reads as "absent", so the plant was skipped silently, with no refusal
+        # logged and ``ok`` left True. The gate lstats, so it sees the link. An
+        # absent path passes the gate cleanly (nothing to follow) and is then
+        # skipped by the probe as before, so this costs no false refusals.
+        if not _sudo_dest_ok(path, f"bot-private ACL strip on {path}"):
+            ok = False
+            continue
+        if not exists_or_unreachable(path):
+            continue
+        if not perms.clear_acl(path):
+            ok = False
+        proc = subprocess.run(
+            ["sudo", "/bin/chmod", _MODE_ARG, str(path)],
+            capture_output=True, text=True, timeout=5,
+        )
+        if proc.returncode != 0:
+            ok = False
+    return ok
+
+
+def chmod_secret_config(path: "str | Path") -> bool:
+    """``sudo /bin/chmod 600`` a bot-owned secret config file.
+
+    Mode only on macOS — ownership and ACLs are untouched (``chmod`` changes
+    neither). On Linux the chmod clobbers the POSIX-ACL mask (group bits →
+    mask), so this re-grants the evolve read ACE afterwards to keep the admin
+    read path working (see module docstring; W10-G #2). Best-effort: returns
+    True on success, False on any non-zero exit. Callers treat a failure as
+    non-fatal (the deploy-time self-heal converges it on the next
+    ``ensure_pod_perms`` pass).
+
+    Symlink gate (D-2): ``chmod`` without ``-h`` follows a link at the
+    destination and this one runs as root, so a link planted in the bot-owned
+    ``.openclaw/`` would relabel an arbitrary root-owned file to 0600 (a
+    DoS-shaped primitive rather than the ownership transfer
+    ``chown_chmod_bot_config`` would hand over, but the same root-follows-link
+    mechanism). Refuse instead — a missing/unverifiable dest returns False for
+    the same reason the bare chmod would have failed anyway.
+
+    KNOWN, BOUNDED COST of that gate on Linux, stated rather than papered over.
+    The gate lstats as ``evolve``, and the OC gateway's 0700 re-harden of
+    ``.openclaw`` clamps evolve's traverse ACE mask to ``---`` — so under an
+    ACTIVE clamp this refuses ("cannot verify") where the pre-gate code issued a
+    ``chmod`` that root would have carried out regardless of the clamp. The
+    inline 0600 enforcement is then DEFERRED, not lost: ``check_bot_secret_modes``
+    classifies the same unreachable path as drift whose apply re-asserts the read
+    ACL (recomputing the clamped mask), and the following ``ensure_pod_perms``
+    pass converges the mode. Window is one deploy / one hour on a dest that was
+    already 0644 (a fresh ``cp`` lands 0600 at root's umask; only a
+    mode-preserving cp over an existing 0644 file is exposed).
+
+    Not softened to "proceed when unverifiable", deliberately: the bot controls
+    ``.openclaw``'s modes, so an EACCES that blinds the gate is itself something
+    the attacker can arrange — pairing a deliberate clamp with a planted link is
+    exactly how "proceed" would be turned back into the root-follows-link
+    primitive. Availability loss in the benign case, attack refused in the
+    adversarial one.
+
+    The one site where the clamp is GUARANTEED rather than ambient —
+    ``deploy.safe_write_bot_config``, whose ``openclaw config validate`` runs as
+    the bot user and re-clamps immediately before this call — orders its
+    ``reassert_mask`` BEFORE this helper for that reason.
+    """
+    if not _sudo_dest_ok(path, f"secret-config chmod on {path}"):
+        return False
+    proc = subprocess.run(
+        ["sudo", "/bin/chmod", _MODE_ARG, str(path)],
+        capture_output=True, text=True, timeout=5,
+    )
+    if proc.returncode != 0:
+        return False
+    # Linux only: re-widen the mask by re-granting evolve's read ACE (setfacl
+    # recomputes the mask to cover named entries). macOS has no ACL mask and a
+    # grant here with dir-shaped verbs would perturb the byte-exact golden —
+    # skip it (the inherited ACE already survives the chmod there).
+    if _get_profile().name != "macos":
+        _get_perms().grant(Path(path), _EVOLVE_USER, _POD_READ_ACL_PERMS)
+    return True
+
+
+def _reassert_evolve_read_acl(oc_dir: "str | Path") -> bool:
+    """Re-grant evolve's recursive read ACL on the bot's ``.openclaw`` tree.
+
+    ``grant_read_recursive`` is ``setfacl -R -m u:evolve:rX`` (sudo-granted) —
+    the ``-R`` walk recomputes every child's ACL mask to cover the named entry,
+    which re-widens a mask that an OC-created 0700 dir clamped to nothing. This
+    is the same operation ``set_evolve_read_acl`` runs on every deploy; offered
+    here as the drift apply so ``ensure-pod-perms`` clears the unreachable-secret
+    drift without a full redeploy. macOS: the inheritable +a ACE re-add, a no-op
+    when already present.
+
+    Deliberately WITHOUT ``restrict_group_other`` (the bot-private group/other
+    clamp): this is a narrow mask-repair, not the full deploy contract, and it
+    does NOT re-run the workspace/ ``share_group_other_read`` re-widen — so
+    clamping group/other here would starve the bot's read of evolve-written
+    workspace files until the next full deploy. The bare ``-m`` preserves any
+    existing ``group::---``/``other::---`` the last deploy set (setfacl only
+    touches the entries named in the spec), so this re-grant neither widens nor
+    breaks the clamp — it just recomputes the mask. The full bot-private clamp
+    lives on the deploy path (``set_evolve_read_acl``).
+
+    The recursive re-grant sweeps up the bot-private secret files (#3452), so
+    the file-shaped carve-out runs right after — same pairing as the deploy
+    path's credentials/profiles carve-out."""
+    ok = _get_perms().grant_read_recursive(Path(oc_dir), _EVOLVE_USER)
+    strip_bot_private_acl(oc_dir)
+    return ok
+
+
+# Dir whose write contract feeds the evolve daemons (defer-runner,
+# manifest-reflex-runner). Relative to ``.openclaw/``.
+_WORKSPACE_EVOLVE_RELPATH = "workspace/evolve"
+
+# The workspace ROOT — where the bot's instruction + identity docs (AGENTS.md,
+# the *.md identity files) live and where the content scanner reads them. evolve
+# must be able to TRAVERSE this dir to read those docs; a 0700-harden recompute
+# on it (the same shape the OC gateway does to ``.openclaw``) clamps the ACL mask
+# to ``---`` and caps evolve's traverse ACE, hiding every required doc at once.
+# Relative to ``.openclaw/``.
+_WORKSPACE_ROOT_RELPATH = "workspace"
+
+
+def _oc_relpath_ancestors(oc_dir: "Path", rel: str) -> "list[Path]":
+    """``oc_dir`` plus every intermediate dir down to ``rel``'s parent, shallow-first.
+
+    Named for ``.openclaw`` rather than for "secret": the component chain is a
+    property of the PATH, not of what lives at the leaf, and both relpath
+    constants route through here — ``BOT_SECRET_CONFIG_RELPATHS`` (0600
+    token-bearing) and ``BOT_OWNED_CONFIG_RELPATHS`` (``evolve-tiers.json``,
+    explicitly NOT a secret: 0644 is correct for it). The secret-only helper
+    below keeps the ``_secret_`` prefix because it really does iterate one
+    constant.
+
+    The ATTACKER-WRITABLE component chain for one secret relpath, and the reason
+    it starts at ``.openclaw`` rather than at its parent: ``<home>`` is bot-owned
+    but the bot cannot replace the home ENTRY (that needs write on ``/Users`` /
+    ``/home``, which is root's), while ``.openclaw`` itself sits in a directory
+    the bot DOES have write on — so ``.openclaw`` and everything below it is
+    plantable. Same boundary ``_bot_home_anchor`` establishes for the sudo gate;
+    that helper returns the anchor (one level ABOVE ``.openclaw``) and the walk
+    starts one below it, which is exactly this list.
+
+    For ``openclaw.json`` — and for the flat ``evolve-tiers.json`` — that is
+    just ``[<oc_dir>]``; for ``agents/main/agent/auth-profiles.json`` it is
+    ``<oc_dir>``, ``agents/``, ``agents/main/``, ``agents/main/agent/``.
+
+    ``rel`` MUST be relative and ``..``-free. Unlike the gate side
+    (``evolve_util._intermediates_below_anchor``, which raises on an absolute or
+    escaping relpath) this cannot fail closed — it feeds the ACL-reassert callers
+    too, where a raise would abort a deploy — so the contract is pinned on the
+    CONSTANTS instead: ``test_secret_relpaths_are_relative_and_dotdot_free`` for
+    the secrets, and ``test_owned_relpaths_stay_flat`` for the owned ones (a flat
+    filename cannot be absolute — it has no separator — and yields the single
+    ``[oc_dir]`` chain). An absolute entry would make this walk components
+    outside the bot tree while the gate refuses the same path: divergent
+    classifications, hence the pins.
+    """
+    out = [oc_dir]
+    cur = oc_dir
+    for part in Path(rel).parts[:-1]:
+        cur = cur / part
+        out.append(cur)
+    return out
+
+
+def _secret_relpath_parent_dirs(oc_dir: "Path") -> "list[Path]":
+    """Every intermediate dir between ``.openclaw`` and a secret relpath.
+
+    For ``agents/main/agent/auth-profiles.json`` that is ``agents/``,
+    ``agents/main/`` and ``agents/main/agent/``; for ``workspace/.git/config``
+    it is ``workspace/`` and ``workspace/.git/``. Deduped across relpaths and
+    sorted shallow-first — load-bearing for the reassert callers: the per-path
+    getfacl guard inside ``reassert_mask`` runs unprivileged, so a clamped
+    ancestor hides a clamped child until the ancestor is re-widened first.
+
+    The deduped UNION of ``_oc_relpath_ancestors`` minus ``oc_dir`` itself
+    (which the ACL callers handle separately, as facet (0) of
+    ``verify_evolve_access``). Expressed in terms of that helper so the
+    "what are this relpath's components" rule has one home — the symlink
+    detector in ``check_bot_secret_modes`` needs the PER-RELPATH chain and this
+    one needs the union, and the two must not drift.
+    """
+    out: "set[Path]" = set()
+    for rel in BOT_SECRET_CONFIG_RELPATHS:
+        out.update(_oc_relpath_ancestors(oc_dir, rel)[1:])
+    return sorted(out, key=lambda p: (len(p.parts), str(p)))
+
+
+def _planted_intermediate(oc_dir: "Path", rel: str) -> "tuple[Path, str] | None":
+    """The shallowest SYMLINKED component on the way to ``oc_dir / rel``, if any.
+
+    Shared by BOTH leaf detectors — ``check_bot_secret_modes`` (0600 secrets)
+    and ``check_bot_tiers_ownership`` (the flat, non-secret
+    ``evolve-tiers.json``, whose only intermediate is ``.openclaw`` itself, and
+    which the bot can plant because it owns its home). Same hazard, same
+    treatment: without the walk each detector reports the VICTIM's attribute
+    (mode / uid) as this bot's config drifting, with a repair the anchored sudo
+    gate can only ever refuse.
+
+    Returns ``(component, readlink target)``, or ``None`` when every component
+    is a real directory — and also ``None`` on ANY ``OSError`` during the walk,
+    deliberately: an absent or EACCES-clamped component is not a plant, and the
+    leaf ``lstat`` in either caller already classifies both of those into their
+    own findings (``not present`` / the self-healing ``unreachable`` branch).
+    Swallowing either here would replace a repairable finding with an
+    unrepairable one.
+
+    ACCEPTED consequence of that choice: a bot that chmods ``agents`` to 0000 and
+    plants ``agents/main`` under it gets the ``unreachable`` finding instead of
+    the plant finding — the deeper plant is hidden while the clamp holds. Not
+    silent (``unreachable`` is itself ``ok=False`` drift), not new (this is
+    byte-identical to the pre-#3603 behaviour), and self-limiting: that finding's
+    apply re-asserts the read ACL, which recomputes the clamp, so the next pass
+    walks through and names the plant. The alternative — reporting an EACCES
+    component as a plant — would strand the live Linux clamp with no repair.
+
+    Directories are not hard-linkable by an unprivileged user on either platform
+    (macOS's HFS+ directory hard links are a Time-Machine-only privileged
+    facility), so there is no ``st_nlink`` twin of this check the way there is at
+    the leaf.
+    """
+    for comp in _oc_relpath_ancestors(oc_dir, rel):
+        try:
+            st = comp.lstat()
+        except OSError:
+            return None
+        if not stat.S_ISLNK(st.st_mode):
+            continue
+        try:
+            aimed_at = os.readlink(comp)
+        except OSError as e:  # racing removal / unreadable — still a finding
+            aimed_at = f"<unreadable: {e}>"
+        return comp, aimed_at
+    return None
+
+
+def exists_or_unreachable(path: "Path") -> bool:
+    """``path.exists()`` that treats an EACCES on the parent as PRESENT.
+
+    On Linux a ``.openclaw`` (or ``agents/...``) dir the OC gateway hardened to
+    0700 clamps evolve's inherited traverse ACE's mask to ``---`` — so a plain
+    ``Path.exists()`` RAISES ``PermissionError`` (modern Python — 3.12 on the
+    Ubuntu/VPS pods — does not swallow EACCES the way 3.11 did, where it returned
+    False; ``feedback_exists_check_lies_under_0700_parents`` inverted). A clamped-
+    and-therefore-unreachable path is exactly the broken state the perms checks
+    must report, AND the state deploy/ACL-repair sites must keep WORKING under
+    (they re-grant the read ACL, which recomputes the clamped mask) — so classify
+    it as ``present`` rather than letting the raise crash the deploy / backstop.
+    Shared by ``set_evolve_read_acl``, ``ensure_pod_perms`` per-bot checks, and
+    the verify path below. (W10-G round-8; durable EACCES sweep 2026-06-23.)"""
+    try:
+        return path.exists()
+    except OSError:
+        return True
+
+
+# Back-compat private alias — internal callers below predate the public name.
+_exists_or_unreachable = exists_or_unreachable
+
+
+def verify_evolve_access(bot_user: str, perms: "_Perms | None" = None) -> list[str]:
+    """Assert the evolve read/write contract actually HOLDS after the grants ran.
+
+    The backstop for ``set_evolve_read_acl``. The W10-G round-6 EACCES failures
+    shipped silently because every ACL call is best-effort (``check=False``) and
+    a Linux ``chmod 600`` on a secret file zeroes the POSIX-ACL **mask**, capping
+    evolve's inherited read ACE to ``#effective:---``. Nothing re-read the
+    contract, so the breakage only surfaced when a daemon hit EACCES on the live
+    pod (``pod_perms_drift_monitor`` couldn't read ``auth-profiles.json``;
+    ``defer-runner`` couldn't append its queue). This re-checks the EFFECTIVE
+    perms through the Perms seam (``getfacl`` honours the mask) and logs at ERROR
+    on any gap — naming the file and the ``refresh-sudoers`` remedy — so this
+    class of mask-masking can never ship mute again.
+
+    Three facets, each a distinct mask-clamp the OC gateway introduces AFTER the
+    deploy-time grant (W10-G round-8 — the recurrence in two more places):
+      (0) **traverse** — the gateway re-hardens ``.openclaw`` itself to 0700 on
+          startup, clamping evolve's ``rX`` ACE so it cannot even reach
+          ``workspace/evolve`` (defer-runner / manifest-reflex-runner
+          ``PermissionError`` on the queue). Checked FIRST so the root cause is
+          named, not a misleading "cannot read <deep file>".
+      (0b) **parent-dir traverse** — the gateway re-hardens the secret files'
+          INTERMEDIATE parent dirs too (``agents/main/agent`` to 0700 on auth
+          writes), clamping THAT dir's mask. The file's own getfacl still looks
+          healthy, so facet (1) alone passes while the file is unreadable in
+          practice — ensure-pod-perms reported "canonical" on exactly this
+          state (the 2026-07-29 evolve-vps recurrence; same blind-spot class
+          as facet (3)'s workspace/ clamp).
+      (1) **read** — ``chmod 600`` on a token file clamps that file's mask.
+      (2) **write** — the queue dir's mask, clamped by a 0700-created parent.
+
+    Linux only: macOS mode bits and ACLs are orthogonal (no mask), so a chmod
+    can't cap the inherited ACE there (verified live 2026-06-12) — the contract
+    is structurally held and a check would only add golden churn + a needless
+    ``getfacl`` per deploy. Mirrors ``chmod_secret_config``'s own Linux key.
+
+    Returns the list of human-readable failure strings (empty == contract holds);
+    the caller logs are loud but non-fatal — the contract self-heals on the next
+    ``ensure_pod_perms`` pass (now via the first-class ``_check_evolve_access``
+    drift check) and the hourly ``pod_perms_drift_monitor`` turns a persistent
+    gap into a Signal. (W10-G round-7 / round-8.)
+    """
+    if _get_profile().name == "macos":
+        return []
+    perms = perms or _get_perms()
+    oc_dir = _user_home(bot_user) / ".openclaw"
+    if not _exists_or_unreachable(oc_dir):
+        return []  # bot not bootstrapped yet — nothing to enforce
+    failures: list[str] = []
+
+    # (0) evolve must TRAVERSE .openclaw to reach anything beneath it. The OC
+    #     gateway hardens .openclaw to 0700 on startup, clamping the mask → the
+    #     inherited rX ACE caps to ---. This is the round-8 root cause for the
+    #     primary (evo) bot's defer/manifest-reflex queue EACCES; name it first.
+    # "search" is the macOS ACL vocabulary for traverse/execute (what the read
+    # grant seeds); the Linux backend collapses it to the x bit the kernel checks.
+    if not perms.acl_user_effective(oc_dir, _EVOLVE_USER, "search"):
+        failures.append(f"evolve cannot TRAVERSE {oc_dir} (0700 clamps the ACL mask)")
+
+    # (0b) evolve must TRAVERSE every intermediate parent dir of the secret
+    #     relpaths (agents/, agents/main/, agents/main/agent/, workspace/.git/).
+    #     The OC gateway re-hardens agents/main/agent to 0700 on auth writes —
+    #     the dir's clamped mask makes auth-profiles.json unreachable while the
+    #     FILE's own getfacl (facet (1)) still reads healthy, so without this
+    #     facet the verify passed, ensure-pod-perms said "canonical", and the
+    #     hourly drift monitor never escalated (2026-07-29 evolve-vps). The
+    #     workspace/ root itself is excluded — facet (3) below reports it with
+    #     the content_scan context.
+    ws_root = oc_dir / _WORKSPACE_ROOT_RELPATH
+    for parent in _secret_relpath_parent_dirs(oc_dir):
+        if parent == ws_root:
+            continue
+        if _exists_or_unreachable(parent) and not perms.acl_user_effective(parent, _EVOLVE_USER, "search"):
+            failures.append(f"evolve cannot TRAVERSE {parent} (ACL mask clamp)")
+
+    # (1) evolve must READ every token-bearing secret file that exists. The
+    #     chmod-600 hardening clobbers the mask; chmod_secret_config re-grants —
+    #     but a MISSING sudoers grant (round-6's auth-profiles.json gap) makes
+    #     that re-grant fail silently. This is the check that catches it.
+    for rel in BOT_SECRET_CONFIG_RELPATHS:
+        path = oc_dir / rel
+        if _exists_or_unreachable(path) and not perms.acl_user_effective(path, _EVOLVE_USER, "read"):
+            failures.append(f"evolve cannot READ {path}")
+
+    # (2) evolve must WRITE the workspace/evolve queue dir. _ensure_evolve_write_dir
+    #     creates it under evolve's write ACL; a clobbered mask would cap that too.
+    ws_evolve = oc_dir / _WORKSPACE_EVOLVE_RELPATH
+    if _exists_or_unreachable(ws_evolve) and not perms.acl_user_effective(ws_evolve, _EVOLVE_USER, "write"):
+        failures.append(f"evolve cannot WRITE {ws_evolve}")
+
+    # (3) evolve must TRAVERSE the workspace/ ROOT to read the bot's instruction +
+    #     identity docs (AGENTS.md, the *.md identity files — all directly in
+    #     workspace/) that the content scanner checks each run. A 0700-harden
+    #     recompute on this dir clamps its mask exactly like it does .openclaw,
+    #     capping evolve's traverse ACE → the daily content_scan then fires
+    #     content_scan_file_disappeared for EVERY required workspace file in
+    #     LOCKSTEP (the 2026-06-29 evo-vps recurrence). This clamp was a blind spot:
+    #     facets (0)-(2) — .openclaw traverse, the secret reads, the workspace/evolve
+    #     write — all stay healthy while workspace/ itself is clamped, so the hourly
+    #     self-heal never saw a failure and never escalated; only a full redeploy's
+    #     recursive re-grant repaired it (the 9 min–2 h flap windows). "search" is
+    #     the macOS ACL verb for traverse/execute the read grant seeds.
+    #     (ws_root is bound in facet (0b) above.)
+    if _exists_or_unreachable(ws_root) and not perms.acl_user_effective(ws_root, _EVOLVE_USER, "search"):
+        failures.append(f"evolve cannot TRAVERSE {ws_root} (content_scan read path; ACL mask clamp)")
+
+    if failures:
+        _log.error(
+            "set_evolve_read_acl: evolve access contract NOT satisfied for "
+            "bot_user=%s after the ACL grants — %s. The Linux POSIX-ACL mask "
+            "likely clamps evolve's inherited ACE (a 0700 dir or chmod 600 zeroes "
+            "it). Run `sudo evolve-admin refresh-sudoers` then redeploy, or "
+            "`sudo evolve-admin ensure-pod-perms` to self-heal.",
+            bot_user, "; ".join(failures),
+        )
+    return failures
+
+
+def heal_evolve_access(bot_id: str, bot_user: str) -> bool:
+    """Re-assert + re-verify the evolve read/write contract; return whether it HOLDS.
+
+    The self-healing apply behind ``check_evolve_access`` AND the
+    wizard's final post-gateway pass (W10-G round-9). It does three things,
+    in order:
+
+      1. Re-runs ``set_evolve_read_acl(bot_id)`` — its recursive
+         ``grant_read_recursive`` recomputes every gateway-clamped child mask
+         and re-plants the default ACL.
+      2. **Explicitly re-widens the ``.openclaw`` mask** with the proven
+         ``setfacl -m m::rwX`` (``reassert_mask``). The OC gateway hardens
+         the top ``.openclaw`` dir to 0700 on startup — and again on every
+         ``openclaw`` invocation against it (the wizard's Telegram
+         channel-add + plugin-install steps both do) — and that chmod's
+         zeroed group bits BECOME the ACL mask, clamping evolve's inherited
+         ``rX`` traverse ACE to ``---``. A bare re-grant recomputes the mask
+         too, but the explicit re-widen is belt-and-suspenders so the heal is
+         deterministic regardless of grant ordering (round-9 root cause #1).
+      3. Re-verifies via ``verify_evolve_access`` (the perms-seam ``getfacl``
+         EFFECTIVE check) and returns ``True`` iff no gaps remain.
+
+    Returning a real bool also fixes the ``ensure_pod_perms`` apply-phase
+    false-failure: ``set_evolve_read_acl`` returns ``None``, so wiring it
+    directly as a ``_PermCheck.apply`` made ``bool(c.apply())`` always
+    ``False`` → "fix did not return success" even on a successful heal
+    (the round-8 ``evolve-access//home/<bot>/.openclaw`` deploy-log noise).
+
+    Linux-only signal: ``reassert_mask`` + ``verify_evolve_access`` are
+    structural no-ops on macOS (no ACL mask), so this is a re-grant + a
+    constant ``True`` there — byte-identical to the prior behaviour.
+    """
+    from .deploy import set_evolve_read_acl  # lazy: deploy imports us
+
+    try:
+        set_evolve_read_acl(bot_id)
+    except Exception as exc:  # noqa: BLE001 — best-effort; the re-verify below is authoritative
+        _log.warning(
+            "heal_evolve_access: set_evolve_read_acl(%s) raised %s; "
+            "continuing to the mask re-widen + re-verify (authoritative)",
+            bot_id, exc,
+        )
+    perms = _get_perms()
+    oc_dir = _user_home(bot_user) / ".openclaw"
+    perms.reassert_mask(oc_dir)  # `setfacl -m m::rwX .openclaw`; no-op on macOS / un-ACL'd
+    # The gateway also re-clamps the secret relpaths' PARENT dirs (it re-hardens
+    # agents/main/agent to 0700 on auth writes — verify facet (0b), the
+    # 2026-07-29 evolve-vps recurrence). Re-widen those explicitly too,
+    # shallow-first so each reassert's unprivileged getfacl guard runs under an
+    # already-re-widened ancestor. Same belt-and-suspenders rationale as the
+    # .openclaw re-widen above.
+    for parent in _secret_relpath_parent_dirs(oc_dir):
+        if _exists_or_unreachable(parent):
+            perms.reassert_mask(parent)
+    # Belt-and-suspenders (#3452): whichever grant path ran above, make sure
+    # the bot-private secret files come out of it ACE-free and 0600 — a
+    # planted ACE turns their stat group triad into the ACL mask and strict
+    # app-side 0600 gates (pm-inbox tokens) refuse until the next strip.
+    strip_bot_private_acl(oc_dir)
+    return not verify_evolve_access(bot_user, perms)
+
+
+def reassert_evolve_access(bot_id: str, bot_user: str) -> "tuple[bool, list[str]]":
+    """Light, frequent self-heal of the evolve read/traverse contract — the
+    RUNTIME counterpart to the deploy-time ``heal_evolve_access``.
+
+    The flap this exists to kill: the OC gateway re-hardens ``~/.openclaw`` to
+    ``0700`` on its own ops — gateway (re)start, and every ``openclaw``
+    invocation an hourly Evolve daemon makes against a bot (the Tier-3 app
+    audit's ``openclaw agent``, the security audit, digests). On Linux that
+    chmod's zeroed group bits BECOME the POSIX-ACL mask (``mask::---``),
+    clamping evolve's inherited ``user:evolve:r-x`` traverse ACE to
+    ``#effective:---`` — evolve loses read+traverse pod-wide until something
+    re-widens the mask. The re-harden lives inside the OC gateway (Node), fired
+    from several jobs plus the gateway's own lifecycle, so there is no single
+    Evolve-side trigger to couple a reassert to (the way deploy.py couples it to
+    ``safe_write_bot_config``'s ``openclaw config validate``). The robust fix is
+    a PERIODIC reassert: run it on the existing hourly perms-drift cadence so a
+    clamp is undone within ≤1 cycle and stops generating ACL-drift Signals +
+    Sysadmin-Watchdog restore Proposals (which previously healed it reactively,
+    one bounce per hour — the "same alert 5× in 24h" flurry).
+
+    Two tiers, cheapest first:
+
+      1. **Light** — ``reassert_mask`` on ``.openclaw`` (``setfacl -m m::rwX``)
+         AND, recursively, on the ``workspace/`` subtree, AND on each secret
+         relpath's intermediate parent dir (``agents/``, ``agents/main/``,
+         ``agents/main/agent/``, ``workspace/.git/``). The top-dir re-widen
+         repairs the common case (a 0700 chmod recomputed only the top
+         ``.openclaw`` dir's mask; the named ACEs and child masks survive); the
+         workspace re-widen repairs the INDEPENDENT clamp on the ``workspace/``
+         root that hid the bot's identity docs from the content scanner (verify
+         facet (3) — the 2026-06-29 evo-vps recurrence); the parent-dir
+         re-widen repairs the equally independent clamp the gateway puts on
+         ``agents/main/agent`` on auth writes (verify facet (0b) — the
+         2026-07-29 evolve-vps recurrence). It uses only evolve's existing
+         ``setfacl`` sudoers grants — no root chmod/chown — so it is safe
+         to run unattended every hour, unlike the pod-wide owner/mode apply
+         ``pod_perms_drift_monitor`` deliberately withholds.
+      2. **Escalate** — only if the post-reassert VERIFY still fails (a rarer
+         shape: a child secret's mask clamped too, or the named ACE itself was
+         stripped) fall back to the full ``heal_evolve_access`` (recursive
+         re-grant + default-ACL re-plant + reassert).
+
+    The access-VERIFY is the LAST step in each tier (the "false-green: passed
+    then re-hardened" lesson — never report success off a grant call's return,
+    only off a fresh effective-perm read).
+
+    Returns ``(ok, remaining_failures)``. macOS is a structural no-op (no ACL
+    mask) → always ``(True, [])``; un-bootstrapped bots → ``(True, [])``.
+    """
+    if _get_profile().name == "macos":
+        return True, []
+    perms = _get_perms()
+    oc_dir = _user_home(bot_user) / ".openclaw"
+    if not exists_or_unreachable(oc_dir):
+        return True, []  # bot not bootstrapped yet — nothing to reassert
+
+    # Tier 1: light re-widen, then VERIFY (last).
+    perms.reassert_mask(oc_dir)  # `setfacl -m m::rwX .openclaw`; no-op on un-ACL'd
+    # The SAME 0700-harden recompute also clamps the workspace/ ROOT dir's mask
+    # (the content_scan read path for the bot's identity docs). That clamp is
+    # independent of .openclaw's and was the blind spot behind the recurring
+    # content_scan_file_disappeared flap (evo-vps 2026-06-29): verify facets
+    # (0)-(2) never touched workspace/, so the hourly self-heal never escalated
+    # and only a full redeploy repaired it. Re-widen the workspace subtree's masks
+    # here in the SAME cheap Tier-1 pass — RECURSIVE so a dir-level chmod AND a
+    # ``chmod -R``-clamped identity doc both self-heal within ≤1 cycle. The
+    # recursive form is guarded to touch only paths that already carry an ACL
+    # (getfacl -R -s), so the credentials/ + profiles carve-outs are never widened.
+    ws_root = oc_dir / _WORKSPACE_ROOT_RELPATH
+    if exists_or_unreachable(ws_root):
+        perms.reassert_mask(ws_root, recursive=True)
+    # logs/ + cron/: the OC gateway mints its app log (logs/openclaw.log) and
+    # cron store (cron/jobs.json) mode 0600 — on Linux the create-mode group
+    # bits become the file's ACL mask at birth, so every rewrite/rotation
+    # re-clamps evolve's inherited read ACE (VPS 2026-07-29: openclaw.log at
+    # mask::--- with a healthy-looking user:evolve:r-x ACE). Neither subtree
+    # was in this Tier-1 pass, so the clamp never self-healed and the readers
+    # (cost watchdog log-tail, cron-health audit) lived on their sudo-cat
+    # fallbacks. Small bounded dirs — the recursive form only touches paths
+    # whose mask actually caps an entry.
+    for rel in ("logs", "cron"):
+        sub = oc_dir / rel
+        if exists_or_unreachable(sub):
+            perms.reassert_mask(sub, recursive=True)
+    # The auth-write re-clamp on agents/main/agent (verify facet (0b), the
+    # 2026-07-29 evolve-vps recurrence) is OUTSIDE workspace/, so neither
+    # re-widen above reaches it. Re-widen every intermediate parent of the
+    # secret relpaths in the same cheap Tier-1 pass, shallow-first — the
+    # per-path getfacl guard inside reassert_mask is unprivileged, so an
+    # ancestor must be re-widened before its clamped child becomes visible.
+    for parent in _secret_relpath_parent_dirs(oc_dir):
+        if exists_or_unreachable(parent):
+            perms.reassert_mask(parent)
+    failures = verify_evolve_access(bot_user, perms)
+    if not failures:
+        return True, []
+
+    # Tier 2: the light pass didn't fully restore — escalate to the full
+    # re-grant. heal_evolve_access re-verifies internally and returns the bool.
+    if heal_evolve_access(bot_id, bot_user):
+        return True, []
+    return False, verify_evolve_access(bot_user, perms)
+
+
+def reassert_pod_evolve_access(
+    bot_pairs: "list[tuple[str, str]]",
+) -> "dict[str, tuple[bool, list[str]]]":
+    """Run :func:`reassert_evolve_access` for every ``(bot_id, bot_user)`` pair.
+
+    The pod-wide driver the hourly ``pod_perms_drift_monitor`` calls. Each bot
+    is independent and best-effort: a raise on one bot becomes that bot's
+    ``(False, [...])`` result and never aborts the sweep. Returns
+    ``{bot_id: (ok, remaining_failures)}`` so the caller can fold only the
+    genuinely-unhealable bots into a Signal (the self-healed ones stay silent —
+    that silence is the whole point).
+    """
+    out: "dict[str, tuple[bool, list[str]]]" = {}
+    for bot_id, bot_user in bot_pairs:
+        try:
+            out[bot_id] = reassert_evolve_access(bot_id, bot_user)
+        except Exception as exc:  # noqa: BLE001 — one bad bot must not stop the sweep
+            _log.warning(
+                "reassert_pod_evolve_access: %s (%s) raised %s",
+                bot_id, bot_user, exc,
+            )
+            out[bot_id] = (False, [f"reassert raised: {exc}"])
+    return out
+
+
+def check_evolve_access(bot_id: str, bot_user: str) -> "_PermCheck":
+    """The evolve read/write contract as a FIRST-CLASS, self-healing drift check.
+
+    This is the architectural fix that ends the round-6/7/8 whack-a-mole. Every
+    prior round patched one more file: ``set_evolve_read_acl`` grants the
+    contract ONCE at deploy time, *before* the OC gateway starts — but the
+    gateway then disturbs it in ways that only surface as a daemon EACCES:
+
+      - it re-hardens ``.openclaw`` to 0700 → the POSIX-ACL mask clamps evolve's
+        inherited ``rX`` to ``---`` and it loses *traverse* (round-8 facet 1:
+        defer-runner / manifest-reflex-runner can't reach the queue);
+      - it creates ``agents/main/agent/auth-profiles.json`` + the queue files
+        mode 0700/0600 — each clamps its OWN mask, and a ``.openclaw`` that lost
+        its default ACL leaves them with no inherited ACE at all (round-8
+        facet 2: evolve can't read auth-profiles).
+
+    A fire-once grant + a log-only backstop cannot fix a disturbance that
+    happens *after* it runs. So the contract is promoted to the same shape as
+    every other pod perm invariant — a drift check with an apply — enforced
+    where it actually needs to be: the **final health scan** at the end of
+    ``setup --fresh`` (post-gateway), **every deploy** (``ensure_pod_perms``),
+    and **hourly** via ``pod_perms_drift_monitor`` (``check_only=True``), which
+    escalates a persistent gap to a Signal.
+
+    The apply is ``heal_evolve_access`` — re-runs ``set_evolve_read_acl``
+    (recursive ``grant_read_recursive`` recomputes every gateway-clamped
+    child mask + re-plants the default ACL), explicitly re-widens the
+    ``.openclaw`` mask (``setfacl -m m::rwX``), and RE-VERIFIES, returning a
+    real bool so the ``ensure_pod_perms`` apply phase reports true success
+    (``set_evolve_read_acl`` returns ``None`` → ``bool(None)`` was a
+    perpetual "fix did not return success" false-failure). Detection rides
+    ``verify_evolve_access`` (Linux EFFECTIVE-perm check via the seam); macOS
+    returns no failures (no mask), so this is a structural no-op there.
+
+    Returns a ``deploy._PermCheck`` (imported lazily to avoid the import cycle —
+    deploy imports this module at module load).
+    """
+    from .deploy import _PermCheck  # lazy: deploy imports us
+
+    oc_dir = _user_home(bot_user) / ".openclaw"
+    if not _exists_or_unreachable(oc_dir):
+        return _PermCheck(
+            category="evolve-access", target=str(oc_dir), ok=True,
+            detail="(bot not yet bootstrapped — skipping)",
+        )
+    failures = verify_evolve_access(bot_user)
+    ok = not failures
+    return _PermCheck(
+        category="evolve-access", target=str(oc_dir), ok=ok,
+        detail="contract satisfied" if ok else "; ".join(failures),
+        fix_description="" if ok else f"re-assert evolve read/write ACL (recompute clamped masks) on {oc_dir}",
+        apply=None if ok else (lambda b=bot_id, u=bot_user: heal_evolve_access(b, u)),
+    )
+
+
+def check_bot_secret_modes(bot_user: str) -> list:
+    """One ``_PermCheck`` per token-bearing config file for ``bot_user``.
+
+    Asserts mode 0600; offers a ``chmod 600`` repair when drifted. ``os.stat``
+    needs only traverse on the parent dirs (granted by ``set_evolve_read_acl``),
+    so observing the mode needs no sudo — only the repair does. A drifted file
+    converges on every deploy, and the hourly ``pod_perms_drift_monitor`` turns
+    a regression into a Signal between deploys.
+
+    Three shapes are classified as their own report-only findings rather than as
+    the mode drift they otherwise impersonate, because the ``chmod 600`` repair
+    would be aimed through them: a symlink at the LEAF, a hard link at the leaf,
+    and a symlink at any INTERMEDIATE component below ``.openclaw`` (which
+    ``lstat`` cannot see — the kernel resolves everything above the final
+    component). All three have ``apply=None``; see the comments at each branch.
+
+    Returns ``deploy._PermCheck`` instances (imported lazily to avoid an
+    import cycle — deploy.py imports this module at load time).
+    """
+    from .deploy import _PermCheck  # lazy: deploy imports us at module load
+
+    oc_dir = _user_home(bot_user) / ".openclaw"
+    checks: list = []
+    for rel in BOT_SECRET_CONFIG_RELPATHS:
+        path = oc_dir / rel
+        # The INTERMEDIATE-component leg, checked BEFORE the leaf stat (#3566
+        # audit D-2 residual — the detector-side twin of the anchored gate
+        # ``_sudo_dest_ok`` supplies for the repair). ``lstat`` does not follow a
+        # link at the LEAF, but the kernel resolves every component ABOVE it — so
+        # with ``.openclaw/workspace`` planted at a victim tree, the lstat below
+        # reads the VICTIM's ``.git/config`` and reports the victim's mode as this
+        # bot's token file drifting. The repair is correctly refused by the
+        # anchored gate, which leaves the check permanently ``ok=False`` with an
+        # apply that can never succeed: ``ensure_pod_perms`` logs "fix did not
+        # return success" every deploy, the hourly ``pod_perms_drift`` Signal
+        # never ``sweep_resolve``s, and the ``detail`` names the wrong cause
+        # (the real one went only to the module logger).
+        #
+        # Report-only, ``apply=None`` — the same contract as the leaf-symlink and
+        # hard-link branches below and as ``check_shared_secret_modes``: every
+        # repair this module offers is a root command that would follow the link
+        # (that IS the D-2 primitive), and unlinking is a destructive act in a
+        # bot-owned dir evolve holds no sudo grant for.
+        planted = _planted_intermediate(oc_dir, rel)
+        if planted is not None:
+            comp, aimed_at = planted
+            checks.append(_PermCheck(
+                category="config-mode", target=str(path), ok=False,
+                detail=f"unexpected SYMLINK at intermediate component {comp} → "
+                       f"{aimed_at!r}: every component below .openclaw on the way "
+                       "to a token-bearing config path must be a real directory. "
+                       "The bot owns .openclaw/ and can plant this; it redirects "
+                       "the whole path out of tree, so the mode observed here "
+                       "would be the LINK TARGET's and the root chmod 600 repair "
+                       "is refused by the anchored sudo gate (#3566 audit D-2 "
+                       "residual) — no repair is offered; inspect and remove by "
+                       "hand.",
+            ))
+            continue
+        # NB: a plain ``path.exists()`` RAISES PermissionError (it doesn't
+        # swallow EACCES on modern Python) when a parent dir is non-traversable
+        # for evolve — which happens on Linux when the OC gateway creates
+        # ``agents/main/agent/`` mode 0700 AFTER deploy's read-ACL grant: the
+        # 0700 creation clamps the inherited ``u:evolve`` traverse ACE's mask to
+        # nothing. That unhandled raise crashed pod_perms_drift_monitor (W10-G
+        # round-6). Classify present / absent / unreachable explicitly so the
+        # daemon never dies, and turn "unreachable" into an actionable,
+        # self-healing-on-apply drift (re-asserting the read ACL recomputes the
+        # clamped mask — the granted ``setfacl -R -m u:evolve:rX``).
+        #
+        # lstat, NOT stat (#3566 audit D-2), for the same reason
+        # ``check_bot_tiers_ownership`` lstats and ``check_shared_secret_modes``
+        # already did: the bot owns ``.openclaw/`` and can plant a link here. A
+        # FOLLOWING stat reported the VICTIM's mode — a root-owned 0644 file read
+        # as this bot's token file drifting, naming the wrong path with no
+        # symlink wording — and a DANGLING link raised FileNotFoundError and was
+        # reported as "not present — nothing to enforce", i.e. the plant was
+        # completely silent. The ``chmod 600`` repair is gated now, so leaving
+        # this following would also mean a finding whose repair can only refuse.
+        # Identical for a regular file.
+        try:
+            st = path.lstat()
+        except FileNotFoundError:
+            checks.append(_PermCheck(
+                category="config-mode", target=str(path), ok=True,
+                detail="(not present — nothing to enforce)",
+            ))
+            continue
+        except PermissionError:
+            checks.append(_PermCheck(
+                category="config-mode", target=str(path), ok=False,
+                detail="unreachable: a parent dir's ACL mask clamps evolve's "
+                       "traverse ACE (OC created it 0700 post-deploy)",
+                fix_description=f"re-assert evolve read ACL on {oc_dir}",
+                apply=(lambda p=oc_dir: _reassert_evolve_read_acl(p)),
+            ))
+            continue
+        except OSError as e:
+            checks.append(_PermCheck(
+                category="config-mode", target=str(path), ok=False,
+                detail=f"stat failed: {e}",
+            ))
+            continue
+        if stat.S_ISLNK(st.st_mode):
+            # Report-only, same contract as the tiers check and
+            # ``check_shared_secret_modes``: the ``chmod 600`` repair follows a
+            # link (that is the D-2 primitive) and unlinking is a destructive
+            # act in a bot-owned dir evolve holds no grant for.
+            try:
+                aimed_at = os.readlink(path)
+            except OSError as e:  # racing removal / unreadable — still a finding
+                aimed_at = f"<unreadable: {e}>"
+            checks.append(_PermCheck(
+                category="config-mode", target=str(path), ok=False,
+                detail=f"unexpected SYMLINK → {aimed_at!r}: a token-bearing "
+                       "config path must be a real file. The bot owns "
+                       ".openclaw/ and can plant this; the root chmod 600 "
+                       "repair would follow it (#3566 audit D-2), so no repair "
+                       "is offered — inspect and remove by hand.",
+            ))
+            continue
+        if st.st_nlink != 1:
+            # See the twin in check_bot_tiers_ownership: a hard link is a real
+            # regular file whose lstat reports the VICTIM's mode, so it would
+            # otherwise read as this bot's token file drifting and summon the
+            # root chmod onto the other name. Report-only.
+            checks.append(_PermCheck(
+                category="config-mode", target=str(path), ok=False,
+                detail=f"unexpected HARD LINK (st_nlink={st.st_nlink}) at a "
+                       "token-bearing config path: the inode is reachable under "
+                       "another name, so the chmod 600 repair would relabel "
+                       "whatever that other name is (#3566 audit D-2) — no "
+                       "repair is offered; inspect and remove by hand.",
+            ))
+            continue
+        try:
+            # effective_mode (not raw stat): on Linux a file carrying the
+            # evolve read ACL shows the ACL *mask* in its group triad, so raw
+            # stat reads 0640 even though group:: is --- and the file is
+            # effectively 0600. The perms seam substitutes the real group::
+            # bits; on macOS it's a plain stat. Without this the W10-G #2
+            # re-grant would read as perpetual 0640 drift. (W10-G #2.)
+            mode = _get_perms().effective_mode(path) & 0o777
+        except OSError as e:
+            checks.append(_PermCheck(
+                category="config-mode", target=str(path), ok=False,
+                detail=f"stat failed: {e}",
+            ))
+            continue
+        ok = mode == BOT_SECRET_CONFIG_MODE
+        checks.append(_PermCheck(
+            category="config-mode", target=str(path), ok=ok,
+            detail=(f"mode={oct(mode)}" if ok
+                    else f"mode={oct(mode)} (token-bearing; expected {oct(BOT_SECRET_CONFIG_MODE)})"),
+            fix_description="" if ok else f"chmod {_MODE_ARG} {path}",
+            apply=None if ok else (lambda p=path: chmod_secret_config(p)),
+        ))
+    return checks
+
+
+# ── Bot-OWNED (non-secret) config: ownership enforcement ─────────────────────
+#
+# evolve-tiers.json is per-bot model-ROUTING config — NOT a secret, so mode
+# 0644 (world-readable) is correct, unlike the 0600 secrets above. The
+# invariant here is OWNERSHIP, not a tight mode: a bare ``sudo /bin/cp`` (no
+# ``-p``) to a *fresh* dest creates it ``root:wheel 0600`` (cp runs as root).
+# The bot user — which runs ``oc_model.py`` to read/rewrite its own tiers —
+# then can't read its own file, so every tier read/write 500s with
+# ``[Errno 13] Permission denied: .../evolve-tiers.json`` until repaired (the
+# 2026-06-16 fleet-wide repo-puller heal failure). Existing dests are preserved
+# by cp, so only first-creation (new bot, post-migration recreate) drifts.
+#
+# Kept separate from BOT_SECRET_CONFIG_RELPATHS because the repair is
+# chown-back-to-bot + chmod 644, NOT chmod 600.
+#
+# Entries must stay FLAT filenames (no ``sub/dir/file.json``):
+# ``_bot_user_from_path`` pins the exact ``<home_root>/<user>/.openclaw/<file>``
+# shape, so a nested relpath would silently derive no bot user and the repair
+# would no-op.
+BOT_OWNED_CONFIG_RELPATHS: tuple[str, ...] = (
+    "evolve-tiers.json",
+)
+BOT_OWNED_CONFIG_MODE = 0o644
+_OWNED_MODE_ARG = oct(BOT_OWNED_CONFIG_MODE)[2:]  # "644"
+
+
+def _bot_user_from_path(path: "str | Path") -> "str | None":
+    """Derive the owning bot user from a ``<home_root>/<user>/.openclaw/<file>`` path.
+
+    ``<home_root>`` comes from the platform profile — ``/Users`` on macOS,
+    ``/home`` on Linux. This is path PARSING, not the path CONSTRUCTION that
+    ``platform_profile.user_home_root``'s docstring warns against: the path was
+    produced by ``pwd``'s home for an account on this same host (see
+    ``check_bot_tiers_ownership``'s ``_user_home``), and the account name is read
+    back out of it rather than interpolated into a new one.
+
+    A hardcoded ``/Users`` here was the whole repair's Linux kill switch (#3566
+    audit B-1, the twin of the ``oc_model`` bug #3587 fixed): on the Linux VPS
+    pod every bot path is ``/home/<user>/…``, so this returned ``None``, so
+    ``chown_chmod_bot_config`` returned False without issuing any argv — and
+    BOTH the deploy-time self-heal (``ensure_pod_perms`` →
+    ``check_bot_tiers_ownership``) and ``migrate_model_roles``' post-``cp``
+    repair were silent no-ops. A freshly ``cp``-ed ``evolve-tiers.json`` stayed
+    ``root:wheel 0600`` and the bot could not read its own routing config.
+
+    Returns ``None`` for anything else (test tmpdirs, homes outside the
+    profile's root) — callers no-op rather than chown an unrelated file.
+    """
+    parts = Path(path).parts
+    home_root = Path(_get_profile().user_home_root).parts
+    idx = len(home_root)
+    # EXACT shape ``<home_root>/<user>/.openclaw/<file>``. Anything looser lets
+    # a shorter path (``<home_root>/.openclaw/<file>``) hand back ".openclaw" as
+    # the account name, or a deeper one (``/Users/bots/<user>/.openclaw/<file>``)
+    # name the wrong account — the old ``parts[1] == "Users"`` test returned
+    # "bots" there and would have chowned the file to it.
+    if len(parts) != idx + 3:
+        return None
+    if parts[:idx] != home_root or parts[idx + 1] != ".openclaw":
+        return None
+    bot_user = parts[idx]
+    # The name is interpolated into a sudo argv (``<user>:staff``); re-assert a
+    # strict account shape at the sink, as tier_prefs_acl does (#3565 audit).
+    if not _SAFE_UNIX_NAME_RE.fullmatch(bot_user):
+        return None
+    return bot_user
+
+
+def chown_chmod_bot_config(path: "str | Path") -> bool:
+    """``sudo chown <bot>:staff`` + ``sudo /bin/chmod 644`` a bot-owned
+    (non-secret) config file that a root ``cp`` may have left root-owned.
+
+    The bot user is derived from the path, so this is correct no matter which
+    user the caller runs as (the AI-Optimization writer runs as the bot; the
+    deploy self-heal runs as evolve). Best-effort: returns True only when BOTH
+    the chown and the chmod succeed. Sudoers grants: setup_wizard §4b.
+
+    Symlink gate (D-2) — the LAST unguarded leg of the #3566 audit finding, and
+    the strongest one. Neither command is passed ``-h``, both run as root, and
+    the destination lives in ``.openclaw/``, which the BOT owns and can replace
+    with a symlink at will. Through a planted link the chown hands the bot
+    OWNERSHIP of whatever the link names, and the chmod then makes it 0644.
+
+    What makes it worse than the sibling ``cp``-content leg: this repair is not
+    merely reachable, it is *summoned*. ``check_bot_tiers_ownership`` below
+    detects drift by ``owner_uid != bot_uid``, so a link aimed at any
+    root-owned file reports ``owner_uid = 0`` — indistinguishable from the
+    fresh-``cp`` drift this repair exists to fix — and gets the repair attached
+    automatically. ``ensure_pod_perms`` runs it on every deploy and the hourly
+    ``pod_perms_drift_monitor`` re-checks between them, so the plant is
+    persistent, the trigger is automatic, and there is no race to win.
+    (The detector now lstats and classifies a link as its own finding, so the
+    repair is no longer OFFERED for one — this gate is what covers the residual
+    TOCTOU window and the direct callers, e.g. ``migrate_model_roles``'
+    post-``cp`` repair.)
+
+    Ordered AFTER the ``_bot_user_from_path`` early-return deliberately: an
+    unrecognised path issues no argv at all, so there is nothing to gate and no
+    reason to log a refusal for every tmpdir a test hands us.
+    """
+    bot_user = _bot_user_from_path(path)
+    if not bot_user:
+        return False
+    if not _sudo_dest_ok(path, f"tiers ownership repair on {path}"):
+        return False
+    # Route chown/chmod through the platform profile so the INVOKED binary
+    # matches the path the evolve sudoers grant was rendered with (W7). On
+    # Linux chown is /usr/bin/chown, not the macOS /usr/sbin/chown — a
+    # hardcoded macOS path is absent from the Linux NOPASSWD allowlist, so
+    # sudo would fall to a password prompt and the TTY-less admin daemon
+    # fails ("sudo: a terminal is required"). The ``:staff`` primary group
+    # stays literal (staff exists on Ubuntu, gid 50; per-OS primary-group
+    # resolution is a separate platform-wide sweep — see deploy.py W7).
+    prof = _get_profile()
+    chown = subprocess.run(
+        ["sudo", prof.chown, f"{bot_user}:staff", str(path)],
+        capture_output=True, text=True, timeout=5,
+    )
+    # Re-assert BETWEEN the two commands — the advice ``assert_safe_sudo_dest``
+    # gives its callers, and load-bearing here for a reason peculiar to this
+    # pair: a successful chown just handed the file to the BOT, so from this
+    # instant the attacker owns the very path the chmod is about to take. A swap
+    # landing in that window would put the root ``chmod 644`` on a target the
+    # first check never saw.
+    if not _sudo_dest_ok(path, f"tiers mode repair on {path} (post-chown)"):
+        return False
+    chmod = subprocess.run(
+        ["sudo", prof.chmod, _OWNED_MODE_ARG, str(path)],
+        capture_output=True, text=True, timeout=5,
+    )
+    return chown.returncode == 0 and chmod.returncode == 0
+
+
+def check_bot_tiers_ownership(bot_user: str) -> list:
+    """One ``_PermCheck`` per bot-owned (non-secret) config file for
+    ``bot_user``.
+
+    Asserts the file is owned by the bot user (so the bot can read its own
+    tier config) and offers a chown+chmod repair when a root-owned file is
+    found — the fresh-``cp`` drift described on BOT_OWNED_CONFIG_RELPATHS.
+    ``os.stat`` needs only traverse on the parent dirs (granted by
+    ``set_evolve_read_acl``) and works even on a ``root:0600`` file, so the
+    detection needs no sudo; only the repair does. Wired into
+    ``ensure_pod_perms`` ahead of the deploy's tier heal, so a drifted file is
+    converged before anything tries to read it; the hourly
+    ``pod_perms_drift_monitor`` catches a regression between deploys.
+
+    Three shapes are classified as their own report-only findings rather than as
+    the ownership drift they otherwise perfectly impersonate, because the
+    chown+chmod repair would be aimed through them: a symlink at the LEAF (which
+    the ``lstat`` below sees), a hard link at the leaf, and a symlink at the one
+    INTERMEDIATE component this flat relpath has — ``.openclaw`` itself, which
+    ``lstat`` cannot see because the kernel resolves every component above the
+    final one. All three have ``apply=None``; see the comments at each branch.
+
+    Returns ``deploy._PermCheck`` instances (imported lazily to avoid an
+    import cycle — deploy.py imports this module at load time).
+    """
+    from .deploy import _PermCheck  # lazy: deploy imports us at module load
+
+    try:
+        bot_uid = pwd.getpwnam(bot_user).pw_uid
+    except KeyError:
+        return []  # unknown user (dev box / tests without bot accounts)
+
+    oc_dir = _user_home(bot_user) / ".openclaw"
+    checks: list = []
+    for rel in BOT_OWNED_CONFIG_RELPATHS:
+        path = oc_dir / rel
+        # The INTERMEDIATE-component leg, checked BEFORE the leaf stat (#3566
+        # audit D-2 residual — the twin of the branch ``check_bot_secret_modes``
+        # grew for the same shape). ``lstat`` does not follow a link at the LEAF,
+        # but the kernel resolves every component ABOVE it. These relpaths are
+        # FLAT by contract (``_bot_user_from_path`` pins the exact
+        # ``<home_root>/<user>/.openclaw/<file>`` shape), so the ONLY intermediate
+        # is ``.openclaw`` — and it IS plantable: the bot owns its home and can
+        # replace that entry. That is precisely the boundary ``_bot_home_anchor``
+        # draws, anchoring one level ABOVE ``.openclaw`` so the walk starts AT it.
+        #
+        # With ``.openclaw`` planted at a victim tree the lstat below reads the
+        # VICTIM's ``evolve-tiers.json`` and reports its uid as this bot's tier
+        # config drifting. The repair side needs nothing, and gets nothing:
+        # because the relpath is flat, ``.openclaw`` IS ``path.parent``, and
+        # "the parent must be a real directory" is one of ``assert_safe_sudo_dest``'s
+        # BASE lstats — it holds with or without the anchor ``_sudo_dest_ok``
+        # adds, refusing with "…/.openclaw is a symlink or not a directory". No
+        # argv is issued and the victim is never relabelled. What is broken is
+        # only what the check REPORTS: permanently ``ok=False`` with an apply
+        # that can never succeed, so ``ensure_pod_perms`` logs "fix did not
+        # return success" every deploy, the hourly ``pod_perms_drift`` Signal
+        # never ``sweep_resolve``s, and the detail asserts a root-owned tier
+        # config — routine, benign-looking drift — when the truth is a planted
+        # symlink. The real reason went only to the module logger.
+        #
+        # Report-only, ``apply=None`` — the same contract as the leaf-symlink and
+        # hard-link branches below: the chown+chmod follows a link (that IS the
+        # D-2 primitive) and unlinking is a destructive act in a bot-owned dir
+        # evolve holds no sudo grant for.
+        planted = _planted_intermediate(oc_dir, rel)
+        if planted is not None:
+            comp, aimed_at = planted
+            checks.append(_PermCheck(
+                category="config-owner", target=str(path), ok=False,
+                detail=f"unexpected SYMLINK at intermediate component {comp} → "
+                       f"{aimed_at!r}: every component below the bot home on the "
+                       "way to a bot-owned config path must be a real directory. "
+                       "The bot owns its home and can plant this; it redirects "
+                       "the whole path out of tree, so the owner observed here "
+                       "would be the LINK TARGET's and the root chown+chmod "
+                       "repair is refused by the sudo gate (#3566 audit D-2 "
+                       "residual) — no repair is offered; inspect and remove by "
+                       "hand.",
+            ))
+            continue
+        # A bare path.exists()/path.stat() RAISES PermissionError (it doesn't
+        # swallow EACCES on modern Python) when a parent dir is non-traversable
+        # for evolve — the OC gateway hardens .openclaw to 0700 AFTER deploy's
+        # read-ACL grant, clamping the inherited ``u:evolve`` traverse ACE's mask
+        # to nothing. That unhandled raise would crash this deploy check /
+        # pod_perms_drift_monitor (the W10-G round-6 class). Classify present /
+        # absent / unreachable in one stat (mirrors ``check_bot_secret_modes``),
+        # turning "unreachable" into a self-healing-on-apply drift — re-asserting
+        # the read ACL recomputes the clamped mask (granted ``setfacl -R -m
+        # u:evolve:rX``). The stat result feeds the ownership check below, so this
+        # also drops the redundant second stat.
+        # lstat, NOT stat (#3566 audit D-2): the bot owns ``.openclaw/`` and can
+        # replace this file with a symlink. A FOLLOWING stat reports the
+        # TARGET's uid, so a link aimed at any root-owned file reads as exactly
+        # the ownership drift below — and gets handed the root chown+chmod
+        # repair, every deploy and every hourly monitor pass. Detecting the link
+        # here is what stops the finding being reported as a bogus (and
+        # now permanently unrepairable) ownership drift forever; a following
+        # stat also swallowed a DANGLING link as "not present — nothing to
+        # enforce". For a regular file lstat and stat are identical, so nothing
+        # about the normal path changes.
+        try:
+            st = path.lstat()
+        except FileNotFoundError:
+            checks.append(_PermCheck(
+                category="config-owner", target=str(path), ok=True,
+                detail="(not present — nothing to enforce)",
+            ))
+            continue
+        except PermissionError:
+            checks.append(_PermCheck(
+                category="config-owner", target=str(path), ok=False,
+                detail="unreachable: a parent dir's ACL mask clamps evolve's "
+                       "traverse ACE (OC created it 0700 post-deploy)",
+                fix_description=f"re-assert evolve read ACL on {oc_dir}",
+                apply=(lambda p=oc_dir: _reassert_evolve_read_acl(p)),
+            ))
+            continue
+        except OSError as e:
+            checks.append(_PermCheck(
+                category="config-owner", target=str(path), ok=False,
+                detail=f"stat failed: {e}",
+            ))
+            continue
+        if stat.S_ISLNK(st.st_mode):
+            # Its own finding, NOT ownership drift — and deliberately with NO
+            # repair. Nothing here may act on the link: the chown/chmod repair
+            # follows it (that is the D-2 primitive), and unlinking it is a
+            # destructive act on a bot-owned dir that evolve holds no sudo
+            # grant for. Report it and let an operator look; the hourly
+            # ``pod_perms_drift`` Signal carries this detail line verbatim.
+            try:
+                aimed_at = os.readlink(path)
+            except OSError as e:  # racing removal / unreadable — still a finding
+                aimed_at = f"<unreadable: {e}>"
+            checks.append(_PermCheck(
+                category="config-owner", target=str(path), ok=False,
+                detail=f"unexpected SYMLINK → {aimed_at!r}: a bot-owned config "
+                       "path must be a real file. The bot owns .openclaw/ and "
+                       "can plant this; the root chown+chmod repair would "
+                       "follow it (#3566 audit D-2), so no repair is offered — "
+                       "inspect and remove by hand.",
+            ))
+            continue
+        if st.st_nlink != 1:
+            # The nastier variant, and invisible to the lstat above: a HARD link
+            # IS a real regular file, and lstat reports the VICTIM inode's uid —
+            # so a link to any root-owned file lands in the ownership-drift
+            # branch below and summons the root chown, which would transfer that
+            # inode to the bot permanently. macOS lets an unprivileged user
+            # create one against a file it cannot even read; Linux blocks it via
+            # fs.protected_hardlinks. Report-only, same reasoning as the symlink.
+            checks.append(_PermCheck(
+                category="config-owner", target=str(path), ok=False,
+                detail=f"unexpected HARD LINK (st_nlink={st.st_nlink}) at a "
+                       "bot-owned config path: the inode is reachable under "
+                       "another name, so the chown repair would transfer "
+                       "ownership of whatever that other name is (#3566 audit "
+                       "D-2) — no repair is offered; inspect and remove by hand.",
+            ))
+            continue
+        owner_uid = st.st_uid
+        ok = owner_uid == bot_uid
+        checks.append(_PermCheck(
+            category="config-owner", target=str(path), ok=ok,
+            detail=(f"owner uid={owner_uid}" if ok
+                    else f"owner uid={owner_uid} (expected bot uid={bot_uid}; "
+                         "root-owned → bot can't read its own tier config)"),
+            fix_description="" if ok else f"chown {bot_user}:staff + chmod {_OWNED_MODE_ARG} {path}",
+            apply=None if ok else (lambda p=path: chown_chmod_bot_config(p)),
+        ))
+    return checks
+
+
+# ── Shared evolve-OWNED secret key files: 0600 enforcement ───────────────────
+#
+# Google Path-C service-account JSON keys + Path-A OAuth-token records live
+# POD-WIDE under ``{shared_dir}/secrets/`` (NOT per-bot), owned by
+# ``evolve:wheel`` mode 0600. An SA key with domain-wide delegation is
+# password-equivalent for every Workspace user it can impersonate, so a
+# world-readable (0644) key exposes the whole domain to every local/bot user on
+# the multi-user box. (Live finding 2026-06-20: ``google-sa-prime-…json`` —
+# a DwD key actively used by a bot — was found at 0644, installed 2026-06-03 by
+# the OLD ``sudo-cp-then-chmod`` flow whose ``check=False`` chmod silently
+# swallowed failures; see the comment in
+# ``web/wizard_google_routes._install_sa_file``. The current installers all use
+# ``O_NOFOLLOW`` + 0600 from inception — what was missing was a deploy-time
+# self-heal for a PRE-fix key or any later drift, the way per-bot secrets get
+# one via ``check_bot_secret_modes``.)
+#
+# Why this is the SIBLING of, not a reuse of, ``check_bot_secret_modes``:
+#   • Ownership — per-bot secrets are owned by the BOT and evolve reads them via
+#     an inherited ACL; these are evolve-OWNED, so evolve reads via the owner
+#     bits and is itself the chmod-er. The repair is therefore a PLAIN
+#     ``os.chmod`` — NO sudo grant and NO ACL re-grant. (Verified: ``secrets``
+#     is not in EVOLVE_OWNED/EVO_WRITE_SHARED_SUBDIRS and the evo ACLs are
+#     applied per-subdir, not at the shared-dir root, so these files carry no
+#     inherited named ACE.)
+#   • Detection reads the RAW stat mode (not the perms-seam ``effective_mode``
+#     the per-bot check uses): for an evolve-OWNED secret the contract is
+#     "raw 0600 — no group/other/named-ACE read." ``effective_mode`` would
+#     substitute the real ``group::`` bits and HIDE a stray inherited read ACE
+#     (reporting 0600-effective and skipping the chmod). Raw stat instead treats
+#     an ACL-mask-inflated group triad as drift → chmod 600 → the mask is zeroed
+#     → any stray named read ACE is neutered. That is the security-correct
+#     outcome for a key that must be evolve-only.
+#
+# Relative to ``{shared_dir}``. A ``*.json`` match also covers the
+# ``*.meta.json`` sidecars (the wizard now writes those 0600 too — the
+# client_id is mildly sensitive) and the per-bot ``<bot>.json`` token records.
+SHARED_SECRET_SUBDIRS: tuple[str, ...] = (
+    "secrets/google_service_accounts",
+    "secrets/google_oauth_tokens",
+)
+SHARED_SECRET_MODE = 0o600
+_SHARED_MODE_ARG = oct(SHARED_SECRET_MODE)[2:]  # "600"
+
+
+def chmod_shared_secret(path: "str | Path", mode: int = SHARED_SECRET_MODE) -> bool:
+    """Re-assert *mode* (default 0600) on an evolve-OWNED shared-secret key file.
+
+    A plain chmod (no sudo) because evolve owns these files — but routed
+    through an ``O_NOFOLLOW`` open + ``os.fchmod`` rather than ``os.chmod`` for
+    two privileged-path safety properties:
+
+      • **O_NOFOLLOW** — a symlink at ``path`` fails the open with ``ELOOP``
+        instead of letting us chmod through to an attacker-chosen target. (A
+        symlink in a 0700 evolve-owned dir can only be planted by evolve/root,
+        but a privileged path defends in depth anyway.)
+      • **fchmod on the opened fd** — closes the check→chmod TOCTOU window: we
+        chmod the exact inode we opened, so a dir-entry swap between detection
+        and repair can't redirect the chmod.
+
+    Owner-read survives the chmod and chmod 600 zeroes any POSIX-ACL mask
+    (neutering a stray inherited read ACE), so no ACL re-grant is needed.
+
+    *mode* exists for the keystore callers below, whose contract is 0640 rather
+    than 0600 — see ``KEYSTORE_PROTECTED_MODES``. On Linux the group triad IS
+    the POSIX-ACL mask, so a 0640 target deliberately leaves the mask at ``r--``
+    to keep the ``user:evo`` read ACE alive; passing 0600 there would zero the
+    mask and strand evo with ``no token in keystore slot``. Callers pick the
+    mode from the contract table, never ad-hoc.
+
+    Returns True on success; False on any ``OSError`` — ``ELOOP`` (symlink),
+    ``ENOENT`` (race), or ``EPERM`` (a root-owned residual from the legacy
+    manual-runbook install, which evolve can't chmod without sudo). A False
+    surfaces as a LOUD fix-failure in the ``ensure_pod_perms`` result rather
+    than being swallowed — the explicit opposite of the bug that created this
+    exposure.
+    """
+    try:
+        fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError:
+        return False
+    try:
+        os.fchmod(fd, mode)
+        return True
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+
+
+def check_shared_secret_modes(shared_dir: "str | Path") -> list:
+    """One ``_PermCheck`` per evolve-owned shared-secret key file under
+    ``{shared_dir}/secrets/``; asserts mode 0600, offers a plain-chmod repair.
+
+    POD-WIDE (not per-bot) — wired into ``ensure_pod_perms``'s pod-wide phase
+    alongside the other shared-dir checks, so every ``evolve-admin deploy``
+    re-asserts 0600 and the hourly ``pod_perms_drift_monitor`` turns a
+    regression into a Signal between deploys. Idempotent and cheap: a stat per
+    file, a chmod only when the mode is wrong.
+
+    No-op (produces no checks) on pods that never configured Google integration
+    — the ``secrets/`` subdirs simply don't exist.
+
+    Returns ``deploy._PermCheck`` instances (imported lazily to avoid the
+    import cycle — deploy.py imports this module at load time).
+    """
+    from .deploy import _PermCheck  # lazy: deploy imports us at module load
+
+    base = Path(shared_dir)
+    checks: list = []
+    for subdir in SHARED_SECRET_SUBDIRS:
+        d = base / subdir
+        try:
+            entries = sorted(d.iterdir())
+        except FileNotFoundError:
+            continue  # Google integration never configured on this pod
+        except OSError as e:
+            checks.append(_PermCheck(
+                category="shared-secret-mode", target=str(d), ok=False,
+                detail=f"cannot list secrets dir: {e}",
+            ))
+            continue
+        for path in entries:
+            # ``.tmp`` staging files (the installers' same-dir rename) and any
+            # stray non-JSON are not the secret payload — skip them.
+            if not path.name.endswith(".json"):
+                continue
+            # lstat (no symlink follow): a symlink in a 0700 evolve-owned
+            # secrets dir is anomalous. Flag it for operator review; DON'T
+            # auto-chmod through it (and chmod_shared_secret would ELOOP anyway).
+            try:
+                st = path.lstat()
+            except OSError as e:
+                checks.append(_PermCheck(
+                    category="shared-secret-mode", target=str(path), ok=False,
+                    detail=f"lstat failed: {e}",
+                ))
+                continue
+            if stat.S_ISLNK(st.st_mode):
+                checks.append(_PermCheck(
+                    category="shared-secret-mode", target=str(path), ok=False,
+                    detail="unexpected symlink in evolve-owned secrets dir "
+                           "(not auto-repaired — review for tampering)",
+                ))
+                continue
+            if not stat.S_ISREG(st.st_mode):
+                continue  # subdirs / sockets — not secret key files
+            # RAW mode (see the section docstring on why NOT effective_mode).
+            mode = st.st_mode & 0o777
+            ok = mode == SHARED_SECRET_MODE
+            checks.append(_PermCheck(
+                category="shared-secret-mode", target=str(path), ok=ok,
+                detail=(f"mode={oct(mode)}" if ok
+                        else f"mode={oct(mode)} (DwD-capable secret; "
+                             f"expected {oct(SHARED_SECRET_MODE)})"),
+                fix_description="" if ok else f"chmod {_SHARED_MODE_ARG} {path}",
+                apply=None if ok else (lambda p=path: chmod_shared_secret(p)),
+            ))
+    return checks
+
+
+def shared_dir_targets_excluding_checkout(shared_dir, *, profile=None):
+    """Yield ``(path, recursive)`` targets that together cover *shared_dir* for
+    a recursive perms pass, EXCEPT they never descend into a nested deploy
+    checkout (the Linux layout ``{shared_dir}/repo``).
+
+    - Non-nested layout (macOS sibling checkout; unknown→macOS): yields exactly
+      ``(shared_dir, True)`` — byte-identical to a single ``-R`` over the root,
+      and it never enumerates children, so the macOS path is unchanged.
+    - Nested layout (Linux): yields ``(shared_dir, False)`` then ``(child,
+      True)`` for every direct child of *shared_dir* except the deploy
+      checkout. Widening the root non-recursively + each non-checkout child
+      recursively reaches the same inode set as ``-R`` over the root, minus the
+      pruned git tree.
+
+    Why prune: a recursive widen that descends into the checkout flips its
+    tracked files 100644→100755; with ``core.fileMode=true`` git reports them
+    modified and ``git pull --ff-only`` refuses — the 2026-06-23 Linux freeze.
+    """
+    prof = profile or _get_profile()
+    base = Path(shared_dir)
+    checkout = prof.nested_deploy_checkout(base)
+    if checkout is None:
+        yield base, True
+        return
+    yield base, False
+    try:
+        children = sorted(base.iterdir())
+    except OSError:
+        # Can't enumerate (should not happen — the daemon owns shared_dir). We
+        # already yielded the root non-recursively; stop rather than fall back
+        # to a recursive pass that would re-enter the pruned checkout.
+        return
+    for child in children:
+        if child == checkout:
+            continue
+        yield child, True
+
+
+def widen_shared_dir_world_read(shared_dir, *, chmod, sudo_fallback=None, profile=None):
+    """``chmod -R a+rX {shared_dir}`` that never descends into a nested deploy
+    checkout — the prune-aware replacement for ``deploy_shared_dir``'s blanket
+    recursive widen (the 2026-06-23 Linux freeze; see
+    :func:`shared_dir_targets_excluding_checkout`).
+
+    Best-effort, mirroring the original pass: runs the unprivileged ``chmod``
+    and, only if it fails to even spawn, retries via *sudo_fallback* (a callable
+    taking an argv that begins with ``"chmod"``). On the non-nested (macOS)
+    layout this is exactly one ``chmod -R a+rX {shared_dir}`` — byte-identical
+    to the pre-fix behavior."""
+    for path, recursive in shared_dir_targets_excluding_checkout(shared_dir, profile=profile):
+        flags = ["-R"] if recursive else []
+        try:
+            subprocess.run([chmod, *flags, "a+rX", str(path)], capture_output=True)
+        except Exception:
+            if sudo_fallback is not None:
+                sudo_fallback(["chmod", *flags, "a+rX", str(path)])
+
+
+def tighten_shared_secret_tree(shared_dir: "str | Path") -> bool:
+    """Strip group/other access from the whole ``{shared_dir}/secrets/`` subtree.
+
+    THE deploy-time re-exposer this whole fix exists for: ``deploy_shared_dir``
+    runs ``chmod -R a+rX {shared_dir}`` so bots can read each other's output —
+    but that recursion ALSO adds ``o+r`` to the 0600 secret keys under
+    ``secrets/`` (Google SA/DwD keys + OAuth token records), re-widening a
+    correctly-installed 0600 key back to 0644 on EVERY deploy. That is almost
+    certainly the real cause of the 2026-06-20 live 0644 finding — not just the
+    long-gone install flow. ``check_shared_secret_modes`` runs BEFORE
+    ``deploy_shared_dir`` in ``deploy_bot``, so the self-heal alone is undone
+    within the same deploy; this re-tightens the subtree immediately AFTER the
+    ``a+rX`` pass to close the window.
+
+    ``chmod -R go-rwx`` is the exact inverse of the ``a+rX`` widen: it zeroes
+    the group/other bits (the only exposure dimension) and leaves owner bits
+    untouched. On the a+rX-widened tree that means 0644 files → 0600 and 0705
+    dirs → 0700. (Strictly it strips group/other rather than forcing an exact
+    0600 — an owner-exec file would land 0700 — but secret keys are never
+    owner-exec, and ``check_shared_secret_modes`` enforces the exact 0600
+    per-file afterward.) ``-R`` does not follow symlinks on either macOS
+    (default ``-P``) or GNU chmod, so a stray link can't redirect the change.
+    The files are uniformly evolve-owned, so a plain chmod works as the evolve
+    service user (and as root from the CLI) — NO sudo grant needed, matching the
+    sibling ``a+rX`` line which also runs sudo-less on the happy path.
+
+    Best-effort: returns True on a 0 exit (or when ``secrets/`` doesn't exist —
+    non-Google pods), False otherwise. ``chmod -R`` does not abort on the first
+    error, so a single unreachable file (e.g. a legacy root-owned residual)
+    still leaves every other key tightened. A False is backstopped by the
+    ``check_shared_secret_modes`` self-heal, which ``deploy_shared_dir`` runs in
+    its trailing ``ensure_pod_perms`` pass (surfacing any per-file failure in
+    the deploy log) and which the hourly ``pod_perms_drift_monitor`` re-runs.
+    """
+    root = Path(shared_dir) / "secrets"
+    if not root.exists():
+        return True
+    proc = subprocess.run(
+        ["/bin/chmod", "-R", "go-rwx", str(root)],
+        capture_output=True, text=True, timeout=10,
+    )
+    return proc.returncode == 0
+
+
+# ── Shared evolve-OWNED directory store (contact PII): 0600 enforcement ───────
+#
+# ``{shared_dir}/directory/{bot_id}.json`` (spec-user-directory-2026-06-22 §4) is
+# the FIRST shared store to hold real contact emails (PII). Phase 1's
+# ``user_directory.storage.save_directory`` writes it 0600 from inception — but
+# the deploy-time ``chmod -R a+rX {shared_dir}`` pass (``deploy_shared_dir``)
+# re-widens every file to 0644, so without a compensating re-tighten the PII rows
+# land world-readable on the multi-user box after each deploy. This is the EXACT
+# shape already solved for ``{shared_dir}/secrets/`` (Google SA/DwD keys) above;
+# ``directory/`` gets the same treatment — a post-``a+rX`` subtree re-tighten
+# (``tighten_shared_directory_tree``, composed into ``tighten_shared_protected_trees``)
+# plus a per-file 0600 self-heal (``check_shared_directory_modes``) wired into
+# ``ensure_pod_perms``.
+#
+# Why mirror ``secrets/`` and NOT the sibling ``{shared_dir}/rosters/`` store
+# (the Phase-2 task's "mirror rosters/'s treatment" prompt): the roster overlay
+# is *deliberately* world-readable 0644 (``roster_overlay.save_overlay`` forces
+# it) for two reasons that BOTH invert for the directory store —
+#   • the bot's TS ``roleResolver`` reads ``rosters/{bot}.json`` DIRECTLY per
+#     turn, so it must be bot-readable; the directory store is NEVER read by the
+#     bot directly (Phase 3's bot path goes through the server-side resolver), so
+#     nothing needs to read it but the ``evolve`` admin (owner bits suffice); and
+#   • the overlay carries NO PII — only roles, block/ignore indices, notes,
+#     engagement surfaces; the directory store carries contact emails (PII).
+# So the correct sibling to mirror is ``secrets/`` (the other evolve-owned
+# PII-at-rest tree), NOT ``rosters/`` — matching the explicit Phase-2
+# prerequisite called out in ``user_directory.storage.save_directory``'s
+# docstring. Enforced PII-at-rest hardening (encryption / key custody) remains
+# roadmap R3 (spec §8); 0600 is the conservative local-mode default.
+#
+# Like ``secrets/``: files are uniformly evolve-OWNED (the admin server writes
+# them as ``evolve`` under ``{shared_dir}``'s ACL), so the repair is a PLAIN
+# chmod — NO sudo grant, NO ACL re-grant — reusing ``chmod_shared_secret``
+# (``O_NOFOLLOW`` + ``fchmod`` 0600, the same mode + the same TOCTOU/symlink
+# safety). Detection reads the RAW stat mode (the contract is exactly "raw
+# 0600 — no group/other/named-ACE read"; ``effective_mode`` would hide a stray
+# inherited read ACE). The ``log/`` audit JSONL is swept too — it records email
+# values in its ``from``/``to``/``after`` payloads, so it is PII at rest as well.
+DIRECTORY_STORE_SUBDIR = "directory"
+DIRECTORY_STORE_MODE = 0o600
+_DIRECTORY_MODE_ARG = oct(DIRECTORY_STORE_MODE)[2:]  # "600"
+
+
+def tighten_shared_directory_tree(shared_dir: "str | Path") -> bool:
+    """Strip group/other access from the whole ``{shared_dir}/directory/`` subtree.
+
+    The directory-store analogue of ``tighten_shared_secret_tree``:
+    ``deploy_shared_dir``'s ``chmod -R a+rX {shared_dir}`` adds ``o+r`` to the
+    0600 directory rows (and the ``log/`` audit JSONL, which also carries email
+    values), re-widening contact PII to 0644 on EVERY deploy. This re-tightens
+    the subtree immediately AFTER the ``a+rX`` pass to close that window;
+    ``check_shared_directory_modes`` then enforces the exact 0600 per file in the
+    trailing ``ensure_pod_perms`` pass.
+
+    ``chmod -R go-rwx`` is the exact inverse of the ``a+rX`` widen (zeroes
+    group/other, leaves owner bits) and ``-R`` follows no symlinks on macOS
+    (default ``-P``) or GNU chmod, so a stray link can't redirect the change. The
+    files are uniformly evolve-owned, so a plain chmod works sudo-less as the
+    evolve service user (and as root from the CLI). Best-effort: True on a 0 exit
+    (or when ``directory/`` doesn't exist — pods with no directory writes yet);
+    ``chmod -R`` does not abort on the first error, so one unreachable file still
+    leaves every other row tightened, and ``check_shared_directory_modes``
+    backstops any per-file failure.
+    """
+    root = Path(shared_dir) / DIRECTORY_STORE_SUBDIR
+    if not root.exists():
+        return True
+    proc = subprocess.run(
+        ["/bin/chmod", "-R", "go-rwx", str(root)],
+        capture_output=True, text=True, timeout=10,
+    )
+    return proc.returncode == 0
+
+
+# ── Keystore: the pod's OWN key material — 0640 / 0600 enforcement ───────────
+#
+# ``{shared_dir}/keystore/`` holds the keys that protect everything else:
+#
+#   • ``.machine-key``   — the Fernet key for the file vault. Decrypts
+#     ``vault/github_pat.enc`` (the pod-wide GitHub PAT), ``github_intake.enc``,
+#     and every future vault entry. Readable == the vault is not encrypted.
+#   • ``admin-auth.key`` — the HMAC key behind admin device tokens
+#     (``web/admin_auth``). Readable == any local account can mint a valid
+#     admin session cookie and drive the control plane.
+#   • ``vault/*.enc``    — the ciphertexts themselves. Defence in depth: with
+#     the machine key restored to 0640 these are already unreadable-in-practice,
+#     but a ciphertext handed to an offline attacker alongside a future key
+#     leak is strictly worse than one that was never readable.
+#
+# THE EXPOSURE THIS FIXES (measured live on the reference pod 2026-08-18):
+# ``.machine-key`` was mode 0644, ``evolve:wheel`` — ``sudo -u <bot> cat``
+# succeeded from an ordinary bot account, so any compromised or prompt-injected
+# bot could decrypt the stored GitHub PAT. ``admin-auth.key`` was 0644 too.
+#
+# ROOT CAUSE — the third instance of one recurring class, not a one-off:
+# ``deploy_shared_dir`` runs ``chmod -R a+rX {shared_dir}`` so bots can read
+# each other's output. That recursion adds ``o+r`` to every 0640/0600 file
+# under the tree, including ``keystore/``. ``_write_shared_vault_key`` creates
+# the key 0640 (correct, and it lands 0640) — and the NEXT ``evolve-admin
+# deploy`` widens it to 0644. Timeline: the ``a+rX`` pass dates to 2026-04-05;
+# the canonical shared ``.machine-key`` was created 2026-06-04 (PR #2106); the
+# file has been world-readable from the first deploy after that until this fix.
+# ``secrets/`` (Google SA/DwD keys, 2026-06-20) and ``directory/`` (contact
+# PII) each hit the SAME re-exposer and each got a post-widen re-tighten;
+# ``keystore/`` — the tree holding the pod's own key material — was never
+# added. Hence: same fix shape, wired into the same two seams (the post-``a+rX``
+# re-tighten in ``deploy_shared_dir`` + the ``ensure_pod_perms`` per-file
+# self-heal, which the hourly ``pod_perms_drift_monitor`` re-runs between
+# deploys). ``installer.py``'s ``chmod -R 755`` setup pass is the second
+# re-exposer and gets the same re-tighten call.
+#
+# WHY AN EXPLICIT PER-FILE TABLE AND *NOT* A ``chmod -R go-rwx keystore/``
+# SUBTREE SWEEP (the shape ``secrets/`` and ``directory/`` use):
+# ``keystore/`` is NOT uniformly evolve-only. Some of its files are read by
+# OTHER accounts by design, and a blanket sweep would break live paths:
+#   • ``security-alert-token`` / ``watchdog-alert-token`` (+ their chat-ids) —
+#     read by ``evolve_apps/security-cve-scan/finalize.py``, which runs in a
+#     bot's app context, and by ``scripts/evolve_liveness_external.py``. Both
+#     of those run as a BOT user, not as ``evolve``, so a 0600 clamp would take
+#     the CVE-scan finalizer's alert channel and the external liveness probe
+#     offline. These stay out of the table deliberately: they are alert-delivery
+#     credentials whose blast radius is "can post to the operator's alert
+#     channel", not pod key material.
+# So the contract is a NAMED table, not a tree walk. A new keystore file is
+# opt-IN to protection: add it here, or it stays at whatever the ``a+rX`` pass
+# leaves it.
+#
+# ``evolve-signing.key`` — WHY IT IS *IN* THE TABLE AS OF 2026-08-18:
+# It used to be the fourth exception, on the reasoning that the HMAC secret is
+# symmetric so every verifier needs it and the verifier — the per-bot
+# ``analyzer/apply.py`` daemon — ran as the BOT user. That reasoning died with
+# the daemon: ``apply.py``, the sign/verify surface in ``evolve_config.py``, and
+# the ``setup-evolve-user`` key generation step were all removed
+# (internal/design-proposal-signing-key-2026-08-18.md). **Nothing on any pod reads
+# this file any more** — a repo-wide grep for the path, ``SIGNING_KEY_PATH`` and
+# ``SIGNING_ENFORCED_MARKER`` returns no live reader — so a 0600 clamp cannot
+# break a reader, and the "fails CLOSED and stops the fleet" hazard the old
+# exception guarded against is unreachable by construction.
+# Pods deployed before that date still carry the file at its measured ``0755``,
+# world-readable state. Listing it here makes every such pod SELF-HEAL to 0600
+# on the next ``ensure_pod_perms`` pass (deploy, or the hourly
+# ``pod_perms_drift_monitor``) instead of depending on an operator remembering
+# the manual ``rm``. The operator ``rm`` named in the design doc is still the
+# right end state — this is the belt that does not need anyone to remember it.
+# 0600, not the 0640 the ``.machine-key`` uses: 0640's group bit exists to keep
+# the Linux POSIX-ACL mask open for the ``user:evo`` read ACE, and evo has no
+# reason to read a retired key either. Fresh pods never create the file, so the
+# ``path.exists()`` filter in ``keystore_protected_targets`` makes this entry a
+# no-op there.
+# No sudoers grant is involved: the repair is ``chmod_shared_secret``'s
+# unprivileged ``O_NOFOLLOW`` open + ``fchmod``, which works because the file is
+# evolve-OWNED (``evolve:wheel``) — same as the two entries beside it. An entry
+# here needs a grant only if it is ever bot-owned, which no keystore file is.
+#
+# THE DIRECTORY MODES — ``keystore/vault/`` goes to 0750; ``keystore/`` STAYS
+# 0755 (see the KEYSTORE_DIR_MODES block below for why the root must never be
+# tightened — it is a shared directory, and #3700 got this wrong for one day).
+# Both shipped ``drwxr-xr-x``. The file-mode PR left them there deliberately,
+# because tightening to 0750 on the ACL shape of the day would have locked
+# ``evo`` OUT of the vault it is explicitly granted: ``EVO_WRITE_ACL_PERMS``
+# was ``read,write,delete,append,readattr,…``,
+# which macOS maps on a DIRECTORY to ``list,add_file,delete,add_subdirectory,…``
+# — no ``search`` (the ACL equivalent of ``o+x``), so evo was traversing into
+# the vault on the WORLD-execute bit alone. Probed on the reference pod
+# 2026-08-18 with throwaway trees carrying the identical owner/ACE shape:
+#     dir 0750 + ACE without search → evo: "Permission denied"   ← the trap
+#     dir 0755 + ACE without search → evo: reads OK (world-x)    ← shipped state
+#     dir 0750 + ACE WITH search    → evo: reads OK              ← this contract
+#                                      an ordinary bot: denied, and cannot even
+#                                      ``ls`` the directory
+# That last row is the goal FOR THE VAULT and the bug FOR THE ROOT — the same
+# observation, opposite verdicts, which is exactly how #3700 shipped wrong.
+# So the prerequisite was ``execute`` on the evo ACE, which this change adds to
+# ``deploy.EVO_WRITE_ACL_PERMS``. It is added to the SHARED constant rather than
+# a keystore-private one for three reasons: (1) macOS ``chmod +a`` COMBINES
+# entries by identity, so the repair merges ``search`` into the ACE already
+# there — no second ACE, and the existing ``_check_evo_write_acl`` detection and
+# repair cover keystore/ unchanged; (2) on Linux it is a no-op in granted bits —
+# ``_linux_entry_bits`` already collapses any write verb set to ``rwX``, so evo
+# has held ``x`` on these directories all along, and a search-only extra entry
+# has no POSIX-ACL expression at all (setfacl is one entry per identity), so the
+# alternative would be macOS-only machinery in a seam whose whole point is
+# platform parity; (3) it leaves ``proposals/``/``signals/``/``config_intents/``
+# tightenable later without another ACL PR. The cost is that evo also picks up
+# ACL-``execute`` on FILES under those dirs via ``file_inherit`` — inert, since
+# evo already holds ``read``+``write`` on the same files and nothing execs a
+# ``.json``/``.enc`` blob.
+#
+# ORDERING IS LOAD-BEARING: the ACE must gain ``search`` BEFORE the directory
+# drops to 0750, or evo is stranded in the window between. ``deploy_shared_dir``
+# already runs ``_ensure_evo_write_acl`` ahead of the widen→re-tighten pair, but
+# ``ensure_pod_perms`` appends this check BEFORE its ``_check_evo_write_acl``
+# loop, and ``pod_perms_drift_monitor`` re-runs that hourly. Rather than depend
+# on check order, the tighten is GUARDED — see ``_evo_can_traverse``: a
+# directory whose evo ACE lacks ``search`` is reported as LOUD drift with the
+# ACL repair named, never auto-chmod'd. The guard makes the silent
+# ``no token in keystore slot`` failure mode unreachable by construction.
+#
+# The payoff is modest and worth stating honestly: a 0755 keystore directory
+# leaked FILE NAMES only, never contents, and those names are already public in
+# this source tree. This is defence in depth, not an exposure being closed.
+KEYSTORE_SUBDIR = "keystore"
+
+# ``{relative path under {shared_dir}}`` → ``(mode, why)``. ``vault/*.enc`` is
+# expanded by glob (entry names are per-key: ``github_pat``, ``github_intake``,
+# ``<key>__prev``, …). Modes mirror the writers' own contracts —
+# ``keystore._write_shared_vault_key`` / ``_file_store_set`` write 0640,
+# ``web.admin_auth.ensure_key`` writes 0600 — so this table re-asserts what the
+# code already intends rather than inventing a new policy.
+KEYSTORE_PROTECTED_MODES: tuple[tuple[str, int, str], ...] = (
+    (f"{KEYSTORE_SUBDIR}/.machine-key", 0o640,
+     "file-vault machine key — decrypts the stored GitHub PAT"),
+    (f"{KEYSTORE_SUBDIR}/admin-auth.key", 0o600,
+     "admin device-token HMAC key — mints admin session cookies"),
+    (f"{KEYSTORE_SUBDIR}/evolve-signing.key", 0o600,
+     "retired HMAC proposal-signing key — no reader survives; clamped so "
+     "pre-2026-08-18 pods stop carrying it world-readable"),
+)
+KEYSTORE_VAULT_GLOB = f"{KEYSTORE_SUBDIR}/vault/*.enc"
+KEYSTORE_VAULT_MODE = 0o640
+KEYSTORE_VAULT_REASON = "file-vault ciphertext"
+
+# The DIRECTORY half of the contract (see the ordering note above). 0750 is
+# what ``keystore.py`` itself already intends for the vault —
+# ``_file_store_set`` calls ``_ensure_dir_mode(vault_dir, 0o750)`` — so this
+# table re-asserts the writer's own policy against the same ``a+rX`` re-exposer
+# that widened the files, rather than inventing a new one. ``keystore/`` gets no
+# explicit mode from any writer (it is born from a bare ``mkdir -p``, i.e. 0755
+# under the daemon's umask), so the tight mode is stated here for both.
+#
+# ``keystore/`` ITSELF IS NOT IN THIS TABLE, AND MUST NEVER BE ADDED.
+# This was shipped wrong once (#3700, corrected the same day) — the mistake is
+# easy to make and silent, so the reasoning is recorded in full:
+#
+# The per-file table above is opt-IN precisely BECAUSE ``keystore/`` is a SHARED
+# directory. Five of its files are read by ORDINARY BOT accounts by design, and
+# every one of them is defeated by a 0750 on the directory, no matter what the
+# file modes say — traversal is checked before the file mode is ever consulted:
+#
+#   keys.json               0644  bot-side key lookups
+#   security-alert-token    0644  evolve_apps/security-cve-scan/finalize.py,
+#   security-alert-chat-id  0644  which runs in a bot's app context
+#   watchdog-alert-token    0644  scripts/evolve_liveness_external.py
+#   watchdog-alert-chat-id  0644
+#
+# Measured on the reference pod 2026-08-18 with ``keystore/`` at 0750: every one
+# of those reads returned "Permission denied" from an ordinary bot. The trap is
+# that "an ordinary bot is denied" READS LIKE THE GOAL — it is the success
+# criterion for the vault, and the FAILURE criterion for the root.
+#
+# ``evolve-signing.key`` WAS a sixth entry here when this was measured, on the
+# strength of ``analyzer/apply.py`` reading it as the bot user and failing
+# CLOSED. That premise is RETIRED: the daemon and its sign/verify surface were
+# removed (internal/design-proposal-signing-key-2026-08-18.md), the key is now in
+# ``KEYSTORE_PROTECTED_MODES`` at 0600 so pre-existing pods self-heal off their
+# measured 0755, and it is deliberately NOT bot-readable any more. It is named
+# here only so nobody re-derives the old rationale from the commit history. The
+# five above are the live readers, and each is on its own sufficient to keep the
+# root at 0755.
+#
+# ``keystore/vault/`` IS tightenable, and is the only part that ever was: it
+# holds nothing but the 0640 ciphertexts, whose sole readers are the admin
+# daemon (evolve) and evo's MCP tools via ``_file_store_get``. No bot-user
+# reader exists. Verified live at ``keystore/`` 0755 + ``vault/`` 0750: evo
+# reads the vault and the machine key, the bot-readable files above still
+# resolve, and a bot cannot list the vault.
+#
+# The rule for a future keystore file or subdir: adding it here is a claim that
+# NO bot account reads anything beneath it. Test that claim against a real bot
+# with ``sudo -u <bot>``, do not infer it from the file modes.
+KEYSTORE_DIR_MODE = 0o750
+KEYSTORE_DIR_MODES: tuple[tuple[str, int, str], ...] = (
+    (f"{KEYSTORE_SUBDIR}/vault", KEYSTORE_DIR_MODE,
+     "file vault — holds the encrypted GitHub PAT and every other entry"),
+)
+
+# The files under ``keystore/`` that ordinary bot accounts must be able to read.
+# Not a mode contract — a REACHABILITY contract, used by the regression test that
+# pins the mistake above shut. Modes here are deliberately left as the writers
+# set them; the point is only that a directory tighten must never strand them.
+KEYSTORE_BOT_READABLE_FILES: tuple[str, ...] = (
+    "keys.json",
+    "security-alert-token", "security-alert-chat-id",
+    "watchdog-alert-token", "watchdog-alert-chat-id",
+)
+
+_EVOLVE_UID_UNRESOLVED = -1
+
+
+def _evolve_uid() -> int:
+    """The ``evolve`` service account's uid, or ``-1`` when it doesn't exist.
+
+    ``-1`` (never a real uid) makes the owner assertion below skip rather than
+    false-fire on a dev box or a pre-``setup evolve-user`` pod.
+    """
+    try:
+        return pwd.getpwnam(_EVOLVE_USER).pw_uid
+    except KeyError:
+        return _EVOLVE_UID_UNRESOLVED
+
+
+def keystore_protected_targets(shared_dir: "str | Path") -> "list[tuple[Path, int, str]]":
+    """``(path, expected_mode, why)`` for every protected keystore file that
+    EXISTS on this pod.
+
+    Absent files are omitted, not reported as drift: a pod that never paired
+    has no ``admin-auth.key``, and one that never wrote a vault entry has no
+    ``.machine-key``. Both are legitimate states, and the writers create the
+    file at the right mode when the time comes.
+    """
+    base = Path(shared_dir)
+    out: list[tuple[Path, int, str]] = []
+    for relpath, mode, why in KEYSTORE_PROTECTED_MODES:
+        path = base / relpath
+        if path.exists():
+            out.append((path, mode, why))
+    out.extend(
+        (p, KEYSTORE_VAULT_MODE, KEYSTORE_VAULT_REASON)
+        for p in sorted(base.glob(KEYSTORE_VAULT_GLOB))
+    )
+    return out
+
+
+def keystore_protected_dirs(shared_dir: "str | Path") -> "list[tuple[Path, int, str]]":
+    """``(path, expected_mode, why)`` for every keystore DIRECTORY that exists.
+
+    Absent is not drift, for the same reason as the file table: a pod that has
+    never written a vault entry has no ``keystore/vault/``, and the writer
+    creates it at the contract mode when the time comes.
+    """
+    base = Path(shared_dir)
+    out: list[tuple[Path, int, str]] = []
+    for relpath, mode, why in KEYSTORE_DIR_MODES:
+        path = base / relpath
+        if path.is_dir():
+            out.append((path, mode, why))
+    return out
+
+
+def _evo_user_exists() -> bool:
+    """True when the ``evo`` gateway account is provisioned on this pod.
+
+    Mirrors ``deploy._evo_user_exists``; duplicated rather than imported for the
+    same reason as ``_EVO_GATEWAY_USER`` (deploy imports this module at load).
+    Its own function so the traverse guard has a single seam to patch in tests —
+    the result otherwise varies by host (the reference pod has ``evo``, CI and a
+    dev laptop do not).
+    """
+    try:
+        pwd.getpwnam(_EVO_GATEWAY_USER)
+        return True
+    except KeyError:
+        return False
+
+
+def _evo_can_traverse(path: Path) -> bool:
+    """True when dropping *path* to 0750 still leaves the evo gateway able to
+    reach the files inside it.
+
+    The guard behind every keystore directory tighten (see the ORDERING note in
+    the section docstring). Three outcomes, and the fail-safe direction matters:
+
+      * no ``evo`` account on this pod → True. Pre-separation pods have nothing
+        to strand, and the tighten is a pure win there.
+      * the evo ACE covers ``execute`` (macOS ``search``) → True. This is the
+        steady state once ``EVO_WRITE_ACL_PERMS`` has been applied by any
+        deploy.
+      * anything else, INCLUDING an unreadable ACL → False. We decline to
+        tighten rather than risk the silent ``no token in keystore slot``:
+        a directory left at 0755 leaks file names, a directory wrongly at 0750
+        breaks ``evo intake promote``. The asymmetry is deliberate.
+    """
+    if not _evo_user_exists():
+        return True
+    try:
+        return _get_perms().acl_user_effective(path, _EVO_GATEWAY_USER, "execute")
+    except Exception:
+        return False
+
+
+def tighten_keystore_dirs(shared_dir: "str | Path") -> bool:
+    """Re-assert 0750 on the keystore directories after a widening pass.
+
+    The directory analogue of :func:`tighten_keystore_secrets`, guarded by
+    :func:`_evo_can_traverse` so it can never be the thing that strands the
+    gateway. Reuses ``chmod_shared_secret``'s ``O_NOFOLLOW`` + ``fchmod``
+    primitive — it is inode-generic, so it applies to a directory unchanged and
+    brings the same symlink-redirect and TOCTOU protection with it.
+
+    Returns True iff every existing keystore directory reached 0750. A guarded
+    skip counts as False, so the caller's return value stays honest — and
+    ``check_keystore_dir_modes`` turns the same condition into a LOUD check with
+    the ACL repair named.
+    """
+    ok = True
+    for path, mode, _why in keystore_protected_dirs(shared_dir):
+        if not _evo_can_traverse(path):
+            ok = False
+            continue
+        if not chmod_shared_secret(path, mode):
+            ok = False
+    return ok
+
+
+def tighten_keystore_secrets(shared_dir: "str | Path") -> bool:
+    """Re-assert the keystore contract modes immediately after a widening pass.
+
+    The keystore analogue of ``tighten_shared_secret_tree`` — but a per-file
+    chmod over ``keystore_protected_targets`` rather than a ``chmod -R go-rwx``
+    subtree sweep, because ``keystore/`` also holds files other accounts read by
+    design (see the section docstring). Reuses ``chmod_shared_secret``'s
+    ``O_NOFOLLOW`` + ``fchmod`` primitive, so a symlink can't redirect the chmod
+    and there is no check→chmod TOCTOU window.
+
+    Best-effort and independent per file: one unreachable target (e.g. a
+    root-owned residual evolve can't chmod) still leaves every other target
+    tightened, and ``check_keystore_secret_modes`` surfaces the miss as LOUD
+    drift on the trailing ``ensure_pod_perms`` pass. Returns True iff every
+    existing target reached its contract mode.
+    """
+    ok = True
+    for path, mode, _why in keystore_protected_targets(shared_dir):
+        if not chmod_shared_secret(path, mode):
+            ok = False
+    return ok
+
+
+def check_keystore_secret_modes(shared_dir: "str | Path") -> list:
+    """One ``_PermCheck`` per protected keystore file; asserts the contract mode
+    (and evolve ownership), offers a plain-chmod repair.
+
+    Wired into ``ensure_pod_perms``'s pod-wide phase, so every ``evolve-admin
+    deploy`` re-asserts the modes and the hourly ``pod_perms_drift_monitor``
+    turns a regression between deploys into a Signal. Idempotent and cheap: an
+    lstat per file, a chmod only when the mode is wrong.
+
+    RAW stat mode, for the same reason as ``check_shared_secret_modes``: the
+    contract is about the literal bits an ``ls -l`` shows a bot user, and
+    ``effective_mode`` would substitute the real ``group::`` entry and hide a
+    mask-inflated triad. Note the raw reading is what makes 0640 legible here —
+    the group bit is the deliberate Linux ACL mask that keeps ``user:evo``
+    alive, and the group itself (``wheel`` on macOS via BSD directory-group
+    inheritance, ``root``/``evolve`` on Linux) contains no bot account.
+
+    Ownership drift is reported but NEVER auto-repaired: a 0640 file owned by
+    something other than ``evolve`` is not fixed by a chmod, and a
+    ``chown`` here would need a sudo grant this module deliberately does not
+    hold. It rides the drift Signal for operator review instead — same
+    treatment as the symlink branch.
+
+    Returns ``deploy._PermCheck`` instances (imported lazily to avoid the import
+    cycle — deploy.py imports this module at load time).
+    """
+    from .deploy import _PermCheck  # lazy: deploy imports us at module load
+
+    evolve_uid = _evolve_uid()
+    checks: list = []
+    for path, expected, why in keystore_protected_targets(shared_dir):
+        # lstat (no symlink follow): a symlink in the evolve-owned keystore is
+        # anomalous. Flag it; DON'T chmod through it (chmod_shared_secret would
+        # ELOOP anyway).
+        try:
+            st = path.lstat()
+        except OSError as e:
+            checks.append(_PermCheck(
+                category="keystore-mode", target=str(path), ok=False,
+                detail=f"lstat failed: {e}"))
+            continue
+        if stat.S_ISLNK(st.st_mode):
+            checks.append(_PermCheck(
+                category="keystore-mode", target=str(path), ok=False,
+                detail="unexpected symlink in the evolve-owned keystore "
+                       "(not auto-repaired — review for tampering)"))
+            continue
+        if not stat.S_ISREG(st.st_mode):
+            continue
+        if evolve_uid != _EVOLVE_UID_UNRESOLVED and st.st_uid != evolve_uid:
+            checks.append(_PermCheck(
+                category="keystore-mode", target=str(path), ok=False,
+                detail=(f"owner uid={st.st_uid} (expected {_EVOLVE_USER}="
+                        f"{evolve_uid}; {why}) — a mode fix alone would not "
+                        f"contain this, not auto-repaired"),
+                fix_description=(
+                    f"chown {_EVOLVE_USER} {path} (operator; needs sudo)")))
+            continue
+        mode = st.st_mode & 0o777  # RAW mode — see the docstring
+        ok = mode == expected
+        checks.append(_PermCheck(
+            category="keystore-mode", target=str(path), ok=ok,
+            detail=(f"mode={oct(mode)}" if ok
+                    else f"mode={oct(mode)} ({why}; expected {oct(expected)})"),
+            fix_description="" if ok else f"chmod {oct(expected)[2:]} {path}",
+            apply=None if ok else (
+                lambda p=path, m=expected: chmod_shared_secret(p, m))))
+    return checks
+
+
+def check_keystore_dir_modes(shared_dir: "str | Path") -> list:
+    """One ``_PermCheck`` per keystore DIRECTORY; asserts 0750 (and evolve
+    ownership), offers a guarded chmod repair.
+
+    The directory companion to :func:`check_keystore_secret_modes`, kept a
+    separate function — and a separate ``keystore-dir-mode`` category — because
+    the two have genuinely different repair semantics: a file's mode is
+    unconditionally evolve's to fix, a directory's is only safe to tighten once
+    the evo ACE carries ``search``.
+
+    Three failure shapes, all reported, only one auto-repaired:
+
+      * **mode drift, evo can traverse** → repaired by chmod, like the files.
+      * **mode drift, evo ACE lacks ``search``** → reported NOT ok with the ACL
+        grant named as the fix, and NO ``apply``. ``_check_evo_write_acl`` in
+        the same ``ensure_pod_perms`` pass repairs the ACE, and the NEXT pass
+        (or the hourly drift monitor) completes the tighten. Two passes to
+        converge is the deliberate price of never stranding the gateway.
+      * **owner drift / symlink** → reported, never auto-repaired, exactly as
+        the file check treats them.
+
+    RAW stat mode, matching the file check: the contract is the literal bits an
+    ``ls -ld`` shows a bot user.
+    """
+    from .deploy import _PermCheck  # lazy: deploy imports us at module load
+
+    evolve_uid = _evolve_uid()
+    checks: list = []
+    for path, expected, why in keystore_protected_dirs(shared_dir):
+        try:
+            st = path.lstat()
+        except OSError as e:
+            checks.append(_PermCheck(
+                category="keystore-dir-mode", target=str(path), ok=False,
+                detail=f"lstat failed: {e}"))
+            continue
+        if stat.S_ISLNK(st.st_mode):
+            checks.append(_PermCheck(
+                category="keystore-dir-mode", target=str(path), ok=False,
+                detail="unexpected symlink where the keystore directory should "
+                       "be (not auto-repaired — review for tampering)"))
+            continue
+        if evolve_uid != _EVOLVE_UID_UNRESOLVED and st.st_uid != evolve_uid:
+            checks.append(_PermCheck(
+                category="keystore-dir-mode", target=str(path), ok=False,
+                detail=(f"owner uid={st.st_uid} (expected {_EVOLVE_USER}="
+                        f"{evolve_uid}; {why}) — a mode fix alone would not "
+                        f"contain this, not auto-repaired"),
+                fix_description=(
+                    f"chown {_EVOLVE_USER} {path} (operator; needs sudo)")))
+            continue
+        mode = st.st_mode & 0o777  # RAW mode — see the docstring
+        if mode == expected:
+            checks.append(_PermCheck(
+                category="keystore-dir-mode", target=str(path), ok=True,
+                detail=f"mode={oct(mode)}"))
+            continue
+        if not _evo_can_traverse(path):
+            # The trap this whole change exists to avoid — see _evo_can_traverse.
+            checks.append(_PermCheck(
+                category="keystore-dir-mode", target=str(path), ok=False,
+                detail=(f"mode={oct(mode)} ({why}; expected {oct(expected)}) — "
+                        f"NOT tightened: the user:{_EVO_GATEWAY_USER} ACE on this "
+                        f"dir lacks execute/search, so 0750 would strand the "
+                        f"gateway with 'no token in keystore slot'"),
+                fix_description=(
+                    f"grant the evo traverse ACE first (ensure_pod_perms' "
+                    f"evo-write-ACL check repairs it), then re-run — "
+                    f"chmod {oct(expected)[2:]} {path}")))
+            continue
+        checks.append(_PermCheck(
+            category="keystore-dir-mode", target=str(path), ok=False,
+            detail=f"mode={oct(mode)} ({why}; expected {oct(expected)})",
+            fix_description=f"chmod {oct(expected)[2:]} {path}",
+            apply=lambda p=path, m=expected: (
+                _evo_can_traverse(p) and chmod_shared_secret(p, m))))
+    return checks
+
+
+def tighten_shared_protected_trees(shared_dir: "str | Path") -> bool:
+    """Re-tighten every evolve-owned protected tree after a widening pass.
+
+    THE single post-widen re-tighten. Three trees, all re-exposed by the same
+    two passes — ``deploy_shared_dir``'s ``chmod -R a+rX {shared_dir}`` and
+    ``installer``'s setup-time ``chmod -R 755 {shared_dir}``:
+
+      * ``secrets/``   — Google SA/DwD keys + OAuth token records (2026-06-20)
+      * ``directory/`` — per-bot contact emails (PII at rest)
+      * ``keystore/``  — the pod's OWN key material: the file-vault machine key
+        and the admin device-token HMAC key (2026-08-18; see the keystore
+        section docstring above for the full root cause), plus the 0750
+        directory modes on ``keystore/`` and ``keystore/vault/`` — guarded on
+        the evo traverse ACE, so this call can never strand the gateway
+
+    Called immediately after each widen so no tree is left world-readable even
+    for the remainder of that deploy. Each subtree re-tighten is independently
+    best-effort and independently backstopped by its ``check_*_modes`` per-file
+    self-heal in the trailing ``ensure_pod_perms`` pass; returns True iff all
+    three succeeded. Composed here rather than inlined at the call sites so
+    ``deploy.py`` — at its no-growth line cap — adds no line, and so a FOURTH
+    protected tree is one edit in one place.
+
+    Renamed from ``tighten_shared_pii_trees`` when ``keystore/`` joined: a
+    machine key is not PII, and a stale name is how the next protected tree gets
+    filed under the wrong contract.
+    """
+    secrets_ok = tighten_shared_secret_tree(shared_dir)
+    directory_ok = tighten_shared_directory_tree(shared_dir)
+    keystore_ok = tighten_keystore_secrets(shared_dir)
+    # Directories last: the files inside are already at their contract mode by
+    # this point, so a guarded skip here never leaves a secret wider than a
+    # tightened parent would have implied.
+    keystore_dirs_ok = tighten_keystore_dirs(shared_dir)
+    return secrets_ok and directory_ok and keystore_ok and keystore_dirs_ok
+
+
+def _iter_directory_store_files(root: Path) -> "list[Path]":
+    """Every PII-bearing regular file under ``{shared_dir}/directory/``.
+
+    The per-bot ``{bot_id}.json`` rows plus the ``log/*.jsonl`` audit trail (which
+    records email values). Sorted for deterministic check ordering. Raises
+    ``OSError`` to the caller if the tree can't be walked (surfaced as a check
+    failure rather than silently skipped)."""
+    out: list[Path] = []
+    for path in sorted(root.rglob("*")):
+        if path.suffix in (".json", ".jsonl"):
+            out.append(path)
+    return out
+
+
+def check_shared_directory_modes(shared_dir: "str | Path") -> list:
+    """One ``_PermCheck`` per directory-store file under ``{shared_dir}/directory/``;
+    asserts mode 0600, offers a plain-chmod repair.
+
+    The contact-PII analogue of ``check_shared_secret_modes`` — same self-heal
+    shape, wired into ``ensure_pod_perms``'s pod-wide phase so every
+    ``evolve-admin deploy`` re-asserts 0600 and the hourly
+    ``pod_perms_drift_monitor`` turns a regression into a Signal between deploys.
+    Idempotent and cheap: a stat per file, a chmod only when the mode is wrong.
+
+    Walks the per-bot ``{bot_id}.json`` rows AND ``log/*.jsonl`` (both carry email
+    PII). RAW stat mode (see the shared-secret section docstring on why NOT
+    ``effective_mode``: for an evolve-owned PII file the contract is exactly raw
+    0600 — ``chmod 600`` also zeroes any stray inherited read ACE's mask). Skips
+    symlinks (flagged for operator review, never auto-chmod'd through). No-op
+    (produces no checks) on pods with no directory store yet.
+
+    Returns ``deploy._PermCheck`` instances (imported lazily to avoid the import
+    cycle — deploy.py imports this module at load time).
+    """
+    from .deploy import _PermCheck  # lazy: deploy imports us at module load
+
+    root = Path(shared_dir) / DIRECTORY_STORE_SUBDIR
+    if not root.exists():
+        return []  # no directory writes on this pod yet — nothing to enforce
+    checks: list = []
+    try:
+        files = _iter_directory_store_files(root)
+    except OSError as e:
+        return [_PermCheck(
+            category="directory-mode", target=str(root), ok=False,
+            detail=f"cannot list directory store: {e}")]
+    for path in files:
+        # lstat (no symlink follow): a symlink in an evolve-owned directory store
+        # is anomalous. Flag it for operator review; DON'T auto-chmod through it
+        # (and chmod_shared_secret would ELOOP anyway).
+        try:
+            st = path.lstat()
+        except OSError as e:
+            checks.append(_PermCheck(
+                category="directory-mode", target=str(path), ok=False,
+                detail=f"lstat failed: {e}"))
+            continue
+        if stat.S_ISLNK(st.st_mode):
+            checks.append(_PermCheck(
+                category="directory-mode", target=str(path), ok=False,
+                detail="unexpected symlink in evolve-owned directory store "
+                       "(not auto-repaired — review for tampering)"))
+            continue
+        if not stat.S_ISREG(st.st_mode):
+            continue
+        mode = st.st_mode & 0o777  # RAW mode — see check_shared_secret_modes docstring
+        ok = mode == DIRECTORY_STORE_MODE
+        checks.append(_PermCheck(
+            category="directory-mode", target=str(path), ok=ok,
+            detail=(f"mode={oct(mode)}" if ok
+                    else f"mode={oct(mode)} (contact-PII; "
+                         f"expected {oct(DIRECTORY_STORE_MODE)})"),
+            fix_description="" if ok else f"chmod {_DIRECTORY_MODE_ARG} {path}",
+            apply=None if ok else (lambda p=path: chmod_shared_secret(p))))
+    return checks

@@ -1,0 +1,317 @@
+#!/usr/bin/env python3
+"""signal-protection-lint — enforce fresh-pod alert protection BY CONSTRUCTION.
+
+Spec: internal/spec-transient-signal-suppression-2026-06-23.md (§ "Protection by
+construction").
+
+A freshly-provisioned Evolve pod must NOT spam its operator. Three composable
+gates exist for this (``signals.settle_gate`` / ``flap_gate`` / ``maturity_gate``),
+but they are opt-in per producer — nothing stops the *next* new monitor from
+reintroducing exactly the fresh-pod flurry they just fixed. This lint closes that
+gap: every operator-facing Signal producer must be declared in
+``signals.protection_registry`` with an explicit fresh-pod posture
+(``settle`` / ``flap`` / ``maturity`` / ``none``+justification).
+
+What it checks
+--------------
+1. **File coverage (BLOCK).** Statically maps every ``signals.store.observe(...)``
+   call site in packages/{admin,analyzer} to its producer's source file and
+   asserts that file is claimed by some registry entry's ``emits_from``. A NEW
+   observe() site in an unregistered file → a new producer with no declared
+   posture → FAIL, pointing at the registry.
+2. **Registry consistency (BLOCK).** ``protection_registry.consistency_errors()``:
+   a ``none`` producer MUST carry a justification (the escape hatch is "explain
+   it", never "gate it"); ``none`` is exclusive; ``gap`` is none-only.
+3. **Name reconciliation (WARN; BLOCK under --strict).** Every producer in
+   ``signals.producer_severity.PRODUCER_SEVERITY`` and every dispatcher source in
+   ``alerts.dispatcher._DEFAULT_SOURCE_CATEGORY`` must have a registry entry. A
+   producer added to those maps but not to the protection registry is a missing
+   declaration — warned locally (the mapping can be momentarily ambiguous mid-PR)
+   and blocked in CI via --strict.
+
+What it does NOT do
+-------------------
+It does not require a *non-none* posture. A genuinely-critical, must-page-now
+condition (gateway down, daemon not loaded, sudoers invalid, security floor)
+correctly declares ``none`` WITH a justification and passes. The lint enforces a
+*declared* posture, not a gated one — do not over-gate critical alerts.
+
+Detection model
+---------------
+AST-based (comments / docstrings ignored). An ``observe`` / ``observe_from_opik``
+call is treated as a Signal emit when its shape matches the store API — a ``**``
+kwargs splat, a Signal kwarg (producer / signature / type / state / …), or ≥2
+positional args. This deliberately excludes the generator ``mod.observe(ctx)``
+proposal call (single positional, no kwargs).
+
+Usage
+-----
+  tools/signal-protection-lint <file.py> [...]   # lint specific files
+  tools/signal-protection-lint --all             # lint all production .py
+  tools/signal-protection-lint --staged          # lint git-staged .py
+  tools/signal-protection-lint --all --strict    # name reconciliation BLOCKS (CI)
+  tools/signal-protection-lint --gaps            # list registered coverage gaps
+
+Exit status: 0 clean; 1 a violation (or, under --strict, a reconciliation
+miss); 2 usage error.
+"""
+from __future__ import annotations
+
+import argparse
+import ast
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# Make the analyzer packages importable so we can read the registry + the
+# producer-severity map (both stdlib-only, light imports).
+_ANALYZER = REPO_ROOT / "packages" / "analyzer"
+if str(_ANALYZER) not in sys.path:
+    sys.path.insert(0, str(_ANALYZER))
+
+from signals import protection_registry as registry  # noqa: E402
+from signals.producer_severity import PRODUCER_SEVERITY  # noqa: E402
+
+_LINT_ROOTS = ("packages",)
+
+# The store module itself defines observe()/observe_from_opik() and shows them in
+# docstrings — it IS the API, not a producer. tools/ holds dev harnesses
+# (rsi_dry_run) that emit into throwaway dirs, not operator-facing pods.
+_ALLOWLIST = {
+    "packages/analyzer/signals/store.py",
+}
+_EXEMPT_PARTS = {"tests", "testing", "__pycache__", "tools"}
+
+# Signal-store observe() kwargs — their presence marks a store emit (vs the
+# generator's `mod.observe(ctx)` which returns proposals).
+_SIGNAL_KWARGS = {
+    "producer", "signature", "type", "state", "severity",
+    "flavor", "scope", "bot_id", "title", "detail",
+}
+
+_DISPATCHER_PATH = (
+    REPO_ROOT / "packages" / "admin" / "evolve_admin" / "alerts" / "dispatcher.py"
+)
+
+
+def _rel(p: Path) -> str:
+    try:
+        return str(p.resolve().relative_to(REPO_ROOT))
+    except ValueError:
+        return str(p)
+
+
+def _is_signal_observe(node: ast.AST) -> bool:
+    if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+        return False
+    if node.func.attr not in ("observe", "observe_from_opik"):
+        return False
+    has_splat = any(k.arg is None for k in node.keywords)
+    has_sig_kw = any(k.arg in _SIGNAL_KWARGS for k in node.keywords)
+    return has_splat or has_sig_kw or len(node.args) >= 2
+
+
+def observe_lines(path: Path) -> list[int]:
+    """1-based line numbers of Signal-store observe() call sites in ``path``."""
+    try:
+        src = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return []
+    return sorted(n.lineno for n in ast.walk(tree) if _is_signal_observe(n))
+
+
+def _is_exempt(p: Path) -> bool:
+    rel = _rel(p)
+    if rel in _ALLOWLIST:
+        return True
+    return bool(_EXEMPT_PARTS & set(p.parts))
+
+
+def _iter_production_py() -> list[Path]:
+    out: list[Path] = []
+    for root in _LINT_ROOTS:
+        base = REPO_ROOT / root
+        if not base.exists():
+            continue
+        for p in base.rglob("*.py"):
+            if _is_exempt(p):
+                continue
+            out.append(p)
+    return out
+
+
+def _staged_files() -> list[Path]:
+    r = subprocess.run(
+        ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+    )
+    out: list[Path] = []
+    for name in r.stdout.splitlines():
+        if not name.endswith(".py"):
+            continue
+        p = REPO_ROOT / name
+        if p.exists() and not _is_exempt(p):
+            out.append(p)
+    return out
+
+
+def find_unregistered(paths: list[Path]) -> list[tuple[str, list[int]]]:
+    """Files in ``paths`` that emit a Signal but are not claimed by the registry."""
+    claimed = registry.claimed_files()
+    out: list[tuple[str, list[int]]] = []
+    for p in paths:
+        if _is_exempt(p):
+            continue
+        lines = observe_lines(p)
+        if lines and _rel(p) not in claimed:
+            out.append((_rel(p), lines))
+    return out
+
+
+def _dict_keys_from_module(path: Path, dict_name: str) -> set[str]:
+    """String keys of a top-level ``dict_name: ... = {...}`` literal (AST, no import)."""
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):
+        return set()
+    keys: set[str] = set()
+    for node in tree.body:
+        targets = []
+        value = None
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            targets = [node.target.id]
+            value = node.value
+        elif isinstance(node, ast.Assign):
+            targets = [t.id for t in node.targets if isinstance(t, ast.Name)]
+            value = node.value
+        if dict_name in targets and isinstance(value, ast.Dict):
+            for k in value.keys:
+                if isinstance(k, ast.Constant) and isinstance(k.value, str):
+                    keys.add(k.value)
+    return keys
+
+
+def reconcile_missing() -> list[str]:
+    """Producer names known to the codebase but absent from the registry."""
+    missing: list[str] = []
+    for name in sorted(PRODUCER_SEVERITY):
+        if not registry.is_registered(name):
+            missing.append(f"{name} (in producer_severity.PRODUCER_SEVERITY)")
+    for name in sorted(_dict_keys_from_module(_DISPATCHER_PATH, "_DEFAULT_SOURCE_CATEGORY")):
+        if not registry.is_registered(name):
+            missing.append(f"{name} (a dispatcher source category)")
+    return missing
+
+
+def _print_unregistered(violations: list[tuple[str, list[int]]]) -> None:
+    print("✗ Signal producer(s) with no declared fresh-pod protection posture:\n")
+    for rel, lines in violations:
+        loc = ", ".join(f"L{n}" for n in lines)
+        print(f"  {rel}: signals.store.observe(...) at {loc}")
+    print(
+        "\nEvery operator-facing Signal producer must declare how it behaves on a\n"
+        "fresh / immature pod, so a new monitor cannot reintroduce the fresh-pod\n"
+        "alert flurry the settle/flap/maturity gates were built to stop.\n"
+        "\nAdd an entry to packages/analyzer/signals/protection_registry.py with a\n"
+        "posture:\n"
+        "  settle    — gated by the bring-up settle window (signals.settle_gate)\n"
+        "  flap      — dwell hysteresis for transient-prone conditions (flap_gate)\n"
+        "  maturity  — no-data / pod-maturity gate (maturity_gate)\n"
+        "  none      — deliberately always pages (REQUIRES a justification string;\n"
+        "              correct for gateway-down / daemon-not-loaded / security floor)\n"
+        "and list this file in the entry's emits_from=(...). See the registry\n"
+        "module docstring + internal/spec-transient-signal-suppression-2026-06-23.md."
+    )
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description="Enforce a declared fresh-pod protection posture for every "
+        "operator-facing Signal producer.",
+    )
+    ap.add_argument("files", nargs="*", help="specific files to lint")
+    ap.add_argument("--all", action="store_true", help="lint all production .py")
+    ap.add_argument("--staged", action="store_true", help="lint git-staged .py")
+    ap.add_argument(
+        "--strict", action="store_true",
+        help="name-reconciliation misses BLOCK (used in CI)",
+    )
+    ap.add_argument(
+        "--gaps", action="store_true",
+        help="list registered coverage gaps (none-posture producers that should "
+        "eventually adopt a gate) and exit 0",
+    )
+    args = ap.parse_args()
+
+    if args.gaps:
+        gap_entries = registry.gaps()
+        print(f"{len(gap_entries)} registered fresh-pod protection gap(s) "
+              f"(none today; gate candidates):\n")
+        for e in sorted(gap_entries, key=lambda x: x.producer):
+            print(f"  {e.producer} [{e.kind}] — {e.note or e.justification}")
+        return 0
+
+    # (2) Registry consistency — always checked; a malformed registry blocks.
+    consistency = registry.consistency_errors()
+
+    # Targets for the file-coverage check.
+    if args.all:
+        targets = _iter_production_py()
+    elif args.staged:
+        targets = _staged_files()
+    else:
+        targets = [Path(f) for f in args.files]
+
+    unregistered = find_unregistered(targets)
+
+    # (3) Name reconciliation — only meaningful repo-wide (--all / --strict).
+    reconciliation: list[str] = []
+    if args.all or args.strict:
+        reconciliation = reconcile_missing()
+
+    failed = False
+
+    if consistency:
+        failed = True
+        print("✗ protection_registry is internally inconsistent:\n")
+        for err in consistency:
+            print(f"  {err}")
+        print(
+            "\nFix packages/analyzer/signals/protection_registry.py. A 'none'\n"
+            "producer MUST carry a justification (the escape hatch is 'explain it',\n"
+            "never 'gate it'); 'none' cannot be combined with a gate posture.\n"
+        )
+
+    if unregistered:
+        failed = True
+        _print_unregistered(unregistered)
+        print("")
+
+    if reconciliation:
+        header = "✗" if args.strict else "⚠"
+        print(f"{header} producer(s) known to the codebase but absent from the "
+              f"protection registry:\n")
+        for m in reconciliation:
+            print(f"  {m}")
+        print(
+            "\nAdd each to packages/analyzer/signals/protection_registry.py with a\n"
+            "declared posture (see the module docstring)."
+            + ("" if args.strict else "\n(warning only without --strict)")
+        )
+        if args.strict:
+            failed = True
+        print("")
+
+    if failed:
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

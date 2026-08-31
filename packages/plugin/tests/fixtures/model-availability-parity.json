@@ -1,0 +1,74 @@
+{
+  "_comment": "Shared TS<->Python parity fixture for availability-aware role resolution (spec internal/spec-model-rungs-and-roles-2026-06-09.md Addendum 3.A). Both ModelRouter.ts (resolveRoleAvailability) and primary_bot.py (resolve_role_with_availability) must resolve each (pod, bot, credentialed) triple to the SAME {model, resolvedRole, degraded, reason} per role. 'credentialed' is the RAW provider set (presence of a usable key); availability intersects it against the LLM-capable set DERIVED from the merged catalog's rung clusters (no provider literal — three-homes rule Addendum 3.B). 'reason' unifies degradation: uncredentialed | unconfigured | same_vendor_as_standard | null. JUDGE DIVERSITY IS A PREFERENCE (2026-06-19): judge prefers a cross-vendor model but falls back to standard's own vendor with reason 'same_vendor_as_standard' (it STILL ROUTES); it is hard-unavailable (model null) only when no credentialed model exists in its rung at all. KEEP IN SYNC: edit once; both parity tests read it.",
+  "scenarios": [
+    {
+      "name": "fully credentialed pod — every role resolves, no degradation",
+      "pod": {},
+      "bot": {},
+      "credentialed": ["anthropic", "openai", "google", "brave"],
+      "expect": {
+        "fast":     { "model": "anthropic/claude-haiku-4-5",  "resolvedRole": "fast",     "degraded": false, "reason": null },
+        "standard": { "model": "anthropic/claude-sonnet-4-6", "resolvedRole": "standard", "degraded": false, "reason": null },
+        "power":    { "model": "anthropic/claude-opus-4-8",   "resolvedRole": "power",    "degraded": false, "reason": null },
+        "max":      { "model": "anthropic/claude-fable-5",    "resolvedRole": "max",      "degraded": false, "reason": null },
+        "judge":    { "model": "openai/gpt-4.1",              "resolvedRole": "judge",    "degraded": false, "reason": null }
+      }
+    },
+    {
+      "name": "non-LLM credential only (brave) — every LLM role unavailable",
+      "_comment": "brave is credentialed but is NOT in any rung cluster, so the LLM-capable intersection is empty. Every role degrades to the bottom of the ladder and still finds nothing -> unavailable with uncredentialed. judge is off-ladder -> uncredentialed directly.",
+      "pod": {},
+      "bot": {},
+      "credentialed": ["brave"],
+      "expect": {
+        "fast":     { "model": null, "resolvedRole": null, "degraded": false, "reason": "uncredentialed" },
+        "standard": { "model": null, "resolvedRole": null, "degraded": true,  "reason": "uncredentialed" },
+        "power":    { "model": null, "resolvedRole": null, "degraded": true,  "reason": "uncredentialed" },
+        "max":      { "model": null, "resolvedRole": null, "degraded": true,  "reason": "uncredentialed" },
+        "judge":    { "model": null, "resolvedRole": null, "degraded": false, "reason": "uncredentialed" }
+      }
+    },
+    {
+      "name": "only openai credentialed — max degrades down to a credentialed rung",
+      "_comment": "fable-class is anthropic-only in defaults, but the enriched opus-class now holds openai/gpt-4.1 (Addendum 7 #13). With only openai credentialed: max degrades max->power; power's opus-class holds openai/gpt-4.1 so max resolves there (resolvedRole=power, degraded, uncredentialed). power itself resolves WITHIN its own opus-class rung to openai/gpt-4.1 (no degradation). standard resolves to openai/gpt-4.1 within sonnet-class. fast resolves to openai/gpt-4.1-mini within haiku-class. judge: standard provider is openai; diversity prefers non-openai but the only credentialed provider IS openai -> judge falls back to openai/gpt-4.1 (same vendor) and STILL ROUTES with reason same_vendor_as_standard (diversity is a preference, not a requirement).",
+      "pod": {},
+      "bot": {},
+      "credentialed": ["openai"],
+      "expect": {
+        "fast":     { "model": "openai/gpt-4.1-mini", "resolvedRole": "fast",     "degraded": false, "reason": null },
+        "standard": { "model": "openai/gpt-4.1",      "resolvedRole": "standard", "degraded": false, "reason": null },
+        "power":    { "model": "openai/gpt-4.1",      "resolvedRole": "power",    "degraded": false, "reason": null },
+        "max":      { "model": "openai/gpt-4.1",      "resolvedRole": "power",    "degraded": true,  "reason": "uncredentialed" },
+        "judge":    { "model": "openai/gpt-4.1",      "resolvedRole": "judge",    "degraded": false, "reason": "same_vendor_as_standard" }
+      }
+    },
+    {
+      "name": "within-rung credentialed fallback preferred over degradation",
+      "_comment": "pod gives power's opus-class a two-provider cluster [anthropic, openai]; only openai credentialed. power resolves WITHIN its own rung to the openai member (no degradation) rather than degrading to standard.",
+      "pod": {
+        "rungs": [
+          { "id": "opus-class", "models": ["anthropic/claude-opus-4-8", "openai/gpt-4o"], "costClass": "high" }
+        ]
+      },
+      "bot": {},
+      "credentialed": ["openai"],
+      "expect": {
+        "power":    { "model": "openai/gpt-4o", "resolvedRole": "power", "degraded": false, "reason": null }
+      }
+    },
+    {
+      "name": "anthropic-only pod — every role resolves to anthropic, judge routes same-vendor with advisory",
+      "_comment": "This is evo's live shape (the bug this fix targets). judge diversity prefers a provider != standard's anthropic; the default judge rung (sonnet-class) holds non-anthropic options (openai/gpt-4.1, google/gemini-2.5-pro, xai/grok-4) but NONE are credentialed -> judge falls back to anthropic/claude-sonnet-4-6 (same vendor as standard) and STILL ROUTES with reason same_vendor_as_standard. It is NOT a hard break; the UI surfaces a soft amber advisory.",
+      "pod": {},
+      "bot": {},
+      "credentialed": ["anthropic"],
+      "expect": {
+        "fast":     { "model": "anthropic/claude-haiku-4-5",  "resolvedRole": "fast",     "degraded": false, "reason": null },
+        "standard": { "model": "anthropic/claude-sonnet-4-6", "resolvedRole": "standard", "degraded": false, "reason": null },
+        "power":    { "model": "anthropic/claude-opus-4-8",   "resolvedRole": "power",    "degraded": false, "reason": null },
+        "max":      { "model": "anthropic/claude-fable-5",    "resolvedRole": "max",      "degraded": false, "reason": null },
+        "judge":    { "model": "anthropic/claude-sonnet-4-6", "resolvedRole": "judge",    "degraded": false, "reason": "same_vendor_as_standard" }
+      }
+    }
+  ]
+}

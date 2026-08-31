@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.{bot_id}.atlas-daily-digest</string>
+  <key>UserName</key>
+  <string>{bot_id}</string>
+  <key>GroupName</key>
+  <string>staff</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/{bot_id}/.openclaw/workspace/scripts/atlas-digest-cron.sh</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>TZ</key>
+    <string>{time_zone}</string>
+  </dict>
+  <!-- StartCalendarInterval: default is 07:00 local. Substitute Hour/Minute at install time
+       via: plutil -replace StartCalendarInterval.Hour -integer $H <plist>
+            plutil -replace StartCalendarInterval.Minute -integer $M <plist> -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>7</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/tmp/{bot_id}-atlas-digest-out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/{bot_id}-atlas-digest-err.log</string>
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>

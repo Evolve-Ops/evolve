@@ -1,0 +1,91 @@
+{
+  "evolveVersion": "0.1.0",
+  "networkId": "my-pod",
+  "primary": "bot1",
+  "members": ["bot1", "bot2", "bot3"],
+  "sharedDir": "/Users/Shared/evolve",
+  "timezone": "America/Los_Angeles",
+  "thresholds": {
+    "dailySpendAlertUsd": 5.0,
+    "weeklySpendAlertUsd": 20.0,
+    "spendCapAction": "downgrade-tier",
+    "maxSessionContextTokens": 100000
+  },
+  "classifiers": {
+    "tier": {
+      "model": "anthropic/claude-haiku-4-5",
+      "fallback": "keyword"
+    }
+  },
+  "alerts": {
+    "channel": "telegram",
+    "chatId": "YOUR_TELEGRAM_CHAT_ID",
+    "spendThresholdUSD": 5.0,
+    "spendAlertHour": 12,
+    "enabled": true,
+    "cronSilenceThresholdDays": 2,
+    "watchedCrons": [
+      "ai.evolve.*.measure",
+      "ai.evolve.*.heal"
+    ]
+  },
+  "security": {
+    "botId": null,
+    "_comment_botId": "The pod's designated security/audit bot, or null for none. Default target for 'evolve-admin repair-security_bot'.",
+    "_comment_screening": "Proposal screening itself is not configurable: the deny mandate ships in code (arbiter/security_screen.py) so no proposal can rewrite it."
+  },
+  "models": {
+    "rungs": [
+      { "id": "haiku-class",  "models": ["anthropic/claude-haiku-4-5", "openai/gpt-4o-mini", "google/gemini-2.0-flash"], "costClass": "low"     },
+      { "id": "sonnet-class", "models": ["anthropic/claude-sonnet-4-6", "openai/gpt-4o"],                                "costClass": "medium"  },
+      { "id": "opus-class",   "models": ["anthropic/claude-opus-4-8"],                                                   "costClass": "high"    },
+      { "id": "fable-class",  "models": ["anthropic/claude-fable-5"],                                                    "costClass": "premium" }
+    ],
+    "roles": {
+      "fast":     "haiku-class",
+      "standard": "sonnet-class",
+      "power":    "opus-class",
+      "max":      "fable-class",
+      "judge":    { "rung": "sonnet-class", "provider": "not-standard" }
+    },
+    "roleCaps": {
+      "power": { "maxPerDayPerBot": 10 },
+      "max":   { "maxPerDayPerBot": 5 }
+    },
+    "routing": {
+      "enabled": true,
+      "maintenanceRole": "fast",
+      "backgroundRole": "fast",
+      "ambiguousRole": null,
+      "_comment": "ambiguousRole null means use bot default. Set to 'standard' to always use the workhorse for ambiguous sessions. Classifier roles validate against {fast, standard, power} — 'max' is pull-only and cannot be a default."
+    }
+  },
+  "accounts": {
+    "tiers": {
+      "primary": {
+        "description": "Primary accounts for productive sessions",
+        "profiles": ["anthropic:user@example.com"],
+        "for_session_types": ["productive", "ambiguous"]
+      },
+      "secondary": {
+        "description": "Secondary accounts for maintenance/background",
+        "profiles": ["anthropic:account2@example.com"],
+        "for_session_types": ["maintenance", "background"]
+      },
+      "metered": {
+        "description": "API key for cron/automated tasks",
+        "profiles": ["anthropic:api"],
+        "for_session_types": ["cron", "heartbeat"]
+      }
+    },
+    "routing": {
+      "enabled": false,
+      "_comment": "Enable after adding multiple account profiles. Only useful with more than one auth profile configured."
+    }
+  },
+  "bots": {
+    "bot1": { "role": "primary", "port": 19001 },
+    "bot2": { "role": "member",  "port": 19002 },
+    "bot3": { "role": "member",  "port": 19003, "_comment_securityScanning": "Add 'securityScanning: false' on a bot to opt it out of recent-transcripts.json capture (see docs/configuration.md#security-scanning)"}
+  }
+}

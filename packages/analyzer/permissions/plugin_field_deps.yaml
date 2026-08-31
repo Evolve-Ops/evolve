@@ -1,0 +1,73 @@
+# packages/analyzer/permissions/plugin_field_deps.yaml
+#
+# Plugin → permission-field dependency map.
+#
+# Spec: internal/spec-config-intent-system-2026-05-21.md §6.
+#
+# Used by:
+#   - permissions/intent_inference.py — feeds the haiku prompt as
+#     structured context and contradiction-checks the LLM's
+#     ``depends_on.plugin`` claim.
+#   - (future) plugin install/uninstall side-effect intent recording
+#     in deploy.py — when a plugin enable side-effects a field, the
+#     map tells the recorder which (field, value, rationale) triple to
+#     stamp with ``set_by=plugin_side_effect:<plugin_id>``.
+#
+# Schema:
+#
+#   <plugin_id>:                              # OC plugin id (kebab/lowercase)
+#     required_fields:                        # list of fields the plugin depends on
+#       - field: <dotted-path>                # e.g. tools.exec.security
+#         values: [<value>, <value>, ...]     # accepted observed values
+#         rationale: <single-sentence why>    # operator-readable explanation
+#
+# Conventions:
+#   - One operator-facing rationale sentence per field; no jargon. The
+#     inference module quotes the rationale into the recorded intent
+#     reason when the match is confident.
+#   - Use list form for `values:` even when there's only one expected
+#     value, so future expansion (e.g. ``allowlist`` is added as a second
+#     accepted exec security mode) doesn't reshape the file.
+#   - Add new plugins as we identify the dep — this file is intentionally
+#     conservative. False positives here become wrong intent reasons; the
+#     inference layer's contradiction-check filters them but starting
+#     narrow is the safer default.
+
+codex:
+  required_fields:
+    - field: tools.exec.security
+      values: [allowlist, full]
+      rationale: codex executes generated code locally; requires exec
+    - field: tools.fs.workspaceOnly
+      values: [false]
+      rationale: codex needs to touch files outside workspace by design
+
+brave:
+  required_fields:
+    - field: tools.web.search.enabled
+      values: [true]
+      rationale: brave is a web-search provider — disabling search disables the plugin
+
+slack:
+  required_fields:
+    - field: plugins.entries.slack.enabled
+      values: [true]
+      rationale: enabled state is the plugin definition
+
+telegram:
+  required_fields:
+    - field: plugins.entries.telegram.enabled
+      values: [true]
+      rationale: enabled state is the plugin definition
+
+discord:
+  required_fields:
+    - field: plugins.entries.discord.enabled
+      values: [true]
+      rationale: enabled state is the plugin definition
+
+memory-core:
+  required_fields:
+    - field: plugins.entries.memory-core.enabled
+      values: [true]
+      rationale: memory-core writes long-term storage; enabled state is its definition

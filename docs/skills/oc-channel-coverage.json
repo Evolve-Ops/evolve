@@ -1,0 +1,291 @@
+{
+  "channels": [
+    {
+      "bundled_in": "extensions/clickclack",
+      "clawhub_spec": null,
+      "default_install": "bundled",
+      "id": "clickclack",
+      "label": "ClickClack",
+      "min_host_version": null,
+      "npm_name": "@openclaw/clickclack",
+      "selection_label": "ClickClack",
+      "source": "extensions"
+    },
+    {
+      "bundled_in": null,
+      "clawhub_spec": null,
+      "default_install": "npm",
+      "id": "discord",
+      "label": "Discord",
+      "min_host_version": ">=2026.4.10",
+      "npm_name": "@openclaw/discord",
+      "selection_label": "Discord (Bot API)",
+      "source": "catalog"
+    },
+    {
+      "bundled_in": null,
+      "clawhub_spec": null,
+      "default_install": "npm",
+      "id": "feishu",
+      "label": "Feishu",
+      "min_host_version": ">=2026.5.29",
+      "npm_name": "@openclaw/feishu",
+      "selection_label": "Feishu/Lark (\u98de\u4e66)",
+      "source": "catalog"
+    },
+    {
+      "bundled_in": null,
+      "clawhub_spec": null,
+      "default_install": "npm",
+      "id": "googlechat",
+      "label": "Google Chat",
+      "min_host_version": ">=2026.4.10",
+      "npm_name": "@openclaw/googlechat",
+      "selection_label": "Google Chat (Chat API)",
+      "source": "catalog"
+    },
+    {
+      "bundled_in": "extensions/imessage",
+      "clawhub_spec": null,
+      "default_install": "bundled",
+      "id": "imessage",
+      "label": "iMessage",
+      "min_host_version": null,
+      "npm_name": "@openclaw/imessage",
+      "selection_label": "iMessage (imsg)",
+      "source": "extensions"
+    },
+    {
+      "bundled_in": "extensions/irc",
+      "clawhub_spec": null,
+      "default_install": "bundled",
+      "id": "irc",
+      "label": "IRC",
+      "min_host_version": ">=2026.4.10",
+      "npm_name": "@openclaw/irc",
+      "selection_label": "IRC (Server + Nick)",
+      "source": "extensions"
+    },
+    {
+      "bundled_in": null,
+      "clawhub_spec": null,
+      "default_install": "npm",
+      "id": "line",
+      "label": "LINE",
+      "min_host_version": ">=2026.4.10",
+      "npm_name": "@openclaw/line",
+      "selection_label": "LINE (Messaging API)",
+      "source": "catalog"
+    },
+    {
+      "bundled_in": null,
+      "clawhub_spec": "clawhub:@openclaw/matrix",
+      "default_install": "clawhub",
+      "id": "matrix",
+      "label": "Matrix",
+      "min_host_version": ">=2026.4.10",
+      "npm_name": "@openclaw/matrix",
+      "selection_label": "Matrix (plugin)",
+      "source": "catalog"
+    },
+    {
+      "bundled_in": "extensions/mattermost",
+      "clawhub_spec": null,
+      "default_install": "bundled",
+      "id": "mattermost",
+      "label": "Mattermost",
+      "min_host_version": ">=2026.4.10",
+      "npm_name": "@openclaw/mattermost",
+      "selection_label": "Mattermost (plugin)",
+      "source": "extensions"
+    },
+    {
+      "bundled_in": null,
+      "clawhub_spec": null,
+      "default_install": "npm",
+      "id": "msteams",
+      "label": "Microsoft Teams",
+      "min_host_version": ">=2026.4.10",
+      "npm_name": "@openclaw/msteams",
+      "selection_label": "Microsoft Teams (Teams SDK)",
+      "source": "catalog"
+    },
+    {
+      "bundled_in": null,
+      "clawhub_spec": null,
+      "default_install": "npm",
+      "id": "nextcloud-talk",
+      "label": "Nextcloud Talk",
+      "min_host_version": ">=2026.4.10",
+      "npm_name": "@openclaw/nextcloud-talk",
+      "selection_label": "Nextcloud Talk (self-hosted)",
+      "source": "catalog"
+    },
+    {
+      "bundled_in": null,
+      "clawhub_spec": null,
+      "default_install": "npm",
+      "id": "nostr",
+      "label": "Nostr",
+      "min_host_version": ">=2026.4.10",
+      "npm_name": "@openclaw/nostr",
+      "selection_label": "Nostr (NIP-04 DMs)",
+      "source": "catalog"
+    },
+    {
+      "bundled_in": null,
+      "clawhub_spec": null,
+      "default_install": "npm",
+      "id": "openclaw-weixin",
+      "label": "Weixin",
+      "min_host_version": ">=2026.3.22",
+      "npm_name": "@tencent-weixin/openclaw-weixin@2.4.3",
+      "selection_label": "Weixin\uff08\u5fae\u4fe1\uff09",
+      "source": "catalog"
+    },
+    {
+      "bundled_in": null,
+      "clawhub_spec": null,
+      "default_install": "npm",
+      "id": "qqbot",
+      "label": "QQ Bot",
+      "min_host_version": ">=2026.4.10",
+      "npm_name": "@openclaw/qqbot",
+      "selection_label": "QQ Bot (Official API)",
+      "source": "catalog"
+    },
+    {
+      "bundled_in": "extensions/signal",
+      "clawhub_spec": null,
+      "default_install": "bundled",
+      "id": "signal",
+      "label": "Signal",
+      "min_host_version": null,
+      "npm_name": "@openclaw/signal",
+      "selection_label": "Signal (signal-cli)",
+      "source": "extensions"
+    },
+    {
+      "bundled_in": null,
+      "clawhub_spec": null,
+      "default_install": "npm",
+      "id": "slack",
+      "label": "Slack",
+      "min_host_version": ">=2026.5.12-beta.1",
+      "npm_name": "@openclaw/slack",
+      "selection_label": "Slack (Socket Mode)",
+      "source": "catalog"
+    },
+    {
+      "bundled_in": "extensions/sms",
+      "clawhub_spec": null,
+      "default_install": "bundled",
+      "id": "sms",
+      "label": "SMS",
+      "min_host_version": null,
+      "npm_name": "@openclaw/sms",
+      "selection_label": "SMS (Twilio)",
+      "source": "extensions"
+    },
+    {
+      "bundled_in": null,
+      "clawhub_spec": null,
+      "default_install": "npm",
+      "id": "synology-chat",
+      "label": "Synology Chat",
+      "min_host_version": ">=2026.4.10",
+      "npm_name": "@openclaw/synology-chat",
+      "selection_label": "Synology Chat (Webhook)",
+      "source": "catalog"
+    },
+    {
+      "bundled_in": "extensions/telegram",
+      "clawhub_spec": null,
+      "default_install": "bundled",
+      "id": "telegram",
+      "label": "Telegram",
+      "min_host_version": null,
+      "npm_name": "@openclaw/telegram",
+      "selection_label": "Telegram (Bot API)",
+      "source": "extensions"
+    },
+    {
+      "bundled_in": null,
+      "clawhub_spec": null,
+      "default_install": "npm",
+      "id": "tlon",
+      "label": "Tlon",
+      "min_host_version": ">=2026.4.10",
+      "npm_name": "@openclaw/tlon",
+      "selection_label": "Tlon (Urbit)",
+      "source": "catalog"
+    },
+    {
+      "bundled_in": null,
+      "clawhub_spec": null,
+      "default_install": "npm",
+      "id": "twitch",
+      "label": "Twitch",
+      "min_host_version": ">=2026.4.10",
+      "npm_name": "@openclaw/twitch",
+      "selection_label": "Twitch (Chat)",
+      "source": "catalog"
+    },
+    {
+      "bundled_in": null,
+      "clawhub_spec": null,
+      "default_install": "npm",
+      "id": "wecom",
+      "label": "WeCom",
+      "min_host_version": null,
+      "npm_name": "@wecom/wecom-openclaw-plugin@2026.5.7",
+      "selection_label": "WeCom\uff08\u4f01\u4e1a\u5fae\u4fe1\uff09",
+      "source": "catalog"
+    },
+    {
+      "bundled_in": null,
+      "clawhub_spec": "clawhub:@openclaw/whatsapp",
+      "default_install": "clawhub",
+      "id": "whatsapp",
+      "label": "WhatsApp",
+      "min_host_version": ">=2026.4.25",
+      "npm_name": "@openclaw/whatsapp",
+      "selection_label": "WhatsApp (QR link)",
+      "source": "catalog"
+    },
+    {
+      "bundled_in": null,
+      "clawhub_spec": null,
+      "default_install": "npm",
+      "id": "yuanbao",
+      "label": "Yuanbao",
+      "min_host_version": null,
+      "npm_name": "openclaw-plugin-yuanbao@2.13.1",
+      "selection_label": "Yuanbao (\u5143\u5b9d)",
+      "source": "catalog"
+    },
+    {
+      "bundled_in": null,
+      "clawhub_spec": null,
+      "default_install": "npm",
+      "id": "zalo",
+      "label": "Zalo",
+      "min_host_version": ">=2026.4.10",
+      "npm_name": "@openclaw/zalo",
+      "selection_label": "Zalo (Bot API)",
+      "source": "catalog"
+    },
+    {
+      "bundled_in": null,
+      "clawhub_spec": null,
+      "default_install": "npm",
+      "id": "zalouser",
+      "label": "Zalo Personal",
+      "min_host_version": ">=2026.4.10",
+      "npm_name": "@openclaw/zalouser",
+      "selection_label": "Zalo (Personal Account)",
+      "source": "catalog"
+    }
+  ],
+  "schema_version": 1
+}
