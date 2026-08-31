@@ -16,7 +16,7 @@ dependencies = [
     # Admin imports its monitors, stores, and registries directly
     # (audit, signals.*, arbiter.*, install_profile, model_registry, ...).
     "evolve-analyzer",
-    "click>=8.4.2",
+    "click>=8.5.0",
     "flask>=3.0",
     "rich>=13.0",
     # RSI arbiter charter loader — charters are YAML on disk.
