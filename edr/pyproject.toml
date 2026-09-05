@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=84.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "evolve-edr"
+version = "0.1.0"
+description = "Evolve Development Rig — dev-environment-only meta-development system that builds and improves Evolve itself. NOT shipped to pods."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "BUSL-1.1" }
+
+# EDR recomposes Evolve's OWN RSI primitives (signal store, arbiter/proposal
+# store, generators, verify daemon) over a new domain — Evolve's own
+# development — by IMPORTING the packaged analyzer libraries. It never forks
+# or copies them. The dependency below is the load-bearing seam: EDR drives
+# Evolve's primitives by import, exactly as the admin package does.
+#
+# Design: internal/edr/design-edr-2026-06-11.md
+dependencies = [
+    # The analyzer sibling package (monorepo-internal, not on PyPI). EDR
+    # imports its stores (signals.store, arbiter.store) and schema types
+    # (schema.signal.Signal, schema.proposal.Proposal). On deploy boxes the
+    # analyzer is installed editable-in-compat-mode; EDR is dev-only and is
+    # only ever installed via the uv workspace below.
+    "evolve-analyzer",
+]
+
+# uv workspace resolution (Phase 6.4): evolve-analyzer is the sibling package
+# in this monorepo, not a PyPI distribution. The repo-root virtual workspace
+# lists edr/ as a member; this table points the dependency at the workspace
+# checkout rather than PyPI.
+[tool.uv.sources]
+evolve-analyzer = { workspace = true }
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["edr*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

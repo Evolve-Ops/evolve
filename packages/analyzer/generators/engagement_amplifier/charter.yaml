@@ -1,0 +1,54 @@
+id: engagement_amplifier
+schema_version: 1
+type: optimizer
+dimension: capabilities
+bucket: improve
+# Surface routing: improvement. Detects working patterns and proposes
+#   ways to deepen them — direct embodiment of the user's "facilitate
+#   more of the desired activity" RSI framing.
+# Spec: internal/spec-rsi-proposal-eligibility-2026-06-05.md §"Phase 2".
+surface: improvement
+purpose: >
+  Detect conversational patterns that are working (high engagement,
+  low frustration, recurring across sessions) and propose ways to
+  deepen them. Companion to app_suggester: that generator surfaces
+  capability gaps; this one surfaces capability amplifications.
+  Distinguishes "confirmed" patterns (already in the bot's stated
+  scope per AGENTS.md) from "emergent" patterns (users organically
+  converged on this, AGENTS.md doesn't mention it yet).
+cadence: daily
+# Sensor-style: the generator re-emits a proposal every cycle while its
+# grounding Signal keeps firing, so a pending whose fingerprint is NOT
+# re-emitted (pattern went quiet, signal resolved, cluster shifted) is
+# stale — let the generator_runner sweep archive it instead of pinning
+# the operator's Findings queue.
+resolves_when_silent: true
+# Backstop TTL (arbiter.auto_resolve): a pending proposal with no
+# operator engagement and no re-assertion for this many days archives
+# as resolved_externally — covers the window where the generator itself
+# stops running and the resolves_when_silent sweep never fires.
+pending_ttl_days: 7
+# Event-driven dispatch: when the engagement_amplifier_monitor emits a
+# new Signal, the signal-subscriber daemon invokes this generator within
+# seconds. The daily generator_runner sweep stays as the safety net.
+subscribes_to:
+  - engagement_amplification_opportunity
+invariants:
+  - id: action_kind_allowed
+    description: >
+      Engagement Amplifier emits Investigation proposals only — the
+      operator picks the specific way to deepen (cron schedule, app
+      manifest, AGENTS.md note). v1 doesn't auto-apply any of these
+      because "deepen" is purpose-shaped and the operator's judgment
+      call. AgentsAppend / WorkflowInstruction reserved for later
+      tiers.
+    check_kind: action_kind_allowed
+    params:
+      allowlist: [Investigation]
+  - id: touches_forbidden
+    description: >
+      Engagement Amplifier does not touch auth, tools, channel config,
+      or gateway core. Same posture as persona_tuner.
+    check_kind: touches_forbidden
+    params:
+      forbidden: [auth, tools, channel_config, gateway_core]

@@ -1,0 +1,175 @@
+---
+title: "Your board on your phone"
+slug: board
+audience: public
+last_reviewed: 2026-09-03
+concepts:
+  - board
+  - board-link
+  - tailnet-listener
+  - add-to-home-screen
+  - tailscale
+ui_surface: null
+related_specs: []
+---
+
+# Your board on your phone
+
+The board is your task list, shared with your bot: what's on you, what you've
+handed over, and what came back. It lives on your pod — not in anyone's
+cloud — and you open it on your phone from a link the pod gives you.
+
+This page is for the person who runs the pod. It covers turning the phone
+link on, handing it to someone, and taking it away again.
+
+## What you get
+
+A single page, sized for a thumb. Lanes across the top — **Today**, **Bot**,
+**Inbox**, **Later**, **Done** — and cards inside them. Tap a card to move
+it, or to split it into your half and the bot's half. Tap **+** to add one.
+It follows your phone's light and dark setting, and you can add it to your
+home screen so it opens like an app.
+
+There is no separate login. The link *is* the key, which is why the two
+sections below matter.
+
+## Turn it on
+
+Two steps, then one link. All three commands run on the pod.
+
+**1. Let the pod answer on your private network.** By default the pod only
+answers to itself — deliberately, because it runs your whole admin console.
+The board gets its own separate door, and that door is open only on your
+Tailscale network, and only for board pages. Add this to `network.json`:
+
+```json
+"board": {
+  "tailnetListener": {
+    "enabled": true
+  }
+}
+```
+
+Then restart the admin service. Optionally add `"port": 5061` inside that
+block if you want the board on a different port from the console; leave it
+out and it uses the same one.
+
+Three things are worth knowing about that door, because they are what make
+it safe to open:
+
+- It only ever attaches to your Tailscale address. Not your home Wi-Fi, not
+  "everything". If the pod can't find a Tailscale address, the door simply
+  doesn't open and the pod says so in its log.
+- It serves board pages and nothing else. Every other address on that door
+  answers "not found" — the admin console isn't merely locked there, it
+  isn't present.
+- Your phone has to be signed in to the same Tailscale network. That's what
+  makes it private, and it's why the traffic doesn't need a certificate:
+  Tailscale already encrypts it end to end.
+
+If you don't use Tailscale, see
+[Install the Evolve app on your phone or desktop](pwa-install.md) for
+setting it up; it's free for personal use and takes a few minutes.
+
+**2. Make a link.** One per bot:
+
+```bash
+sudo evolve-admin board token personal-bot
+```
+
+It prints a URL **once**, and underneath it, the same link drawn as a square
+of blocks — a QR code. The pod keeps only a fingerprint of the link, so
+nobody — including you — can print it again. Lost it? Run the command again;
+that makes a new link, retires the old one, and draws the new code.
+
+The code is about 45 characters wide and 25 lines tall, so give the terminal
+window room before you run the command — if it's too narrow the pod says so
+rather than drawing a code your phone couldn't read. If you're piping the
+output somewhere, add `--no-qr` to get the link on its own.
+
+**3. Scan it with the phone, once.** Point the phone's camera at the code on
+the screen and tap the link it offers. There is nothing to type — the link
+ends in a long random key, which is exactly the kind of thing nobody should
+be retyping on a phone.
+
+Opening it once is all it takes: the pod hands your phone a private pass and
+immediately drops the key out of the address bar, so the address you see
+afterwards — and the bookmark you make from it — carries nothing sensitive.
+From then on the phone just works, and the link you were shown is spent.
+
+To keep it on the home screen: in Safari tap **Share → Add to Home Screen**;
+in Chrome, **⋮ → Add to Home screen**. It opens without browser chrome.
+
+## Treat the link like a key
+
+Anyone who has the link can read and change that one board — add cards, move
+them, split them. That is all it can do: it does not open any other bot's
+board, and it does not open the admin console. But within that board it is
+full access, so send it the way you'd send a house key, not the way you'd
+send a photo.
+
+Take it back at any time:
+
+```bash
+sudo evolve-admin board revoke personal-bot
+```
+
+That works immediately, on every phone that ever used it, including ones you
+handed it to. To give access back, mint a new link.
+
+## When something's wrong
+
+**"This link's token was not accepted."** The link was revoked or replaced.
+Mint a new one and scan it once.
+
+**"Board token required" on a link you just minted.** The pod kept the link,
+but the part of Evolve that answers your phone can't read it — that happens
+when the file lands owned by the wrong account. Two lines fix it, on the pod:
+
+```bash
+sudo evolve-admin ensure-pod-perms
+```
+
+```bash
+sudo evolve-admin board token personal-bot
+```
+
+The first hands the board back to the account that serves it; the second
+mints a fresh link to scan. Repeated refusals also pause that phone for a
+minute — the board slows down anything that keeps presenting a token it
+won't accept — so if the page still refuses right after the repair, wait a
+minute and open it again. Evolve now logs a plain line when it hits this
+("board token hash … is present but unreadable"), so it shows up in the
+admin log instead of looking like a wrong link.
+
+**The page won't load at all.** Your phone isn't on the Tailscale network,
+or the pod's Tailscale is signed out. Check Tailscale on the phone first,
+then on the pod with `tailscale status`. If both look fine, check that the
+door actually opened — see the last two entries below.
+
+**"Too many changes at once."** The board limits how fast it accepts edits.
+Wait a minute. If it happens while you're just tapping normally, that's a
+bug worth reporting.
+
+**The door didn't open after you edited `network.json`.** The pod logs one
+plain line explaining why — no Tailscale address, a port already in use, a
+config it couldn't read. Look for `board listener` in the admin log. When
+the door did open, that same line says where and how:
+
+```
+board listener bound 100.74.228.85:5050 (source: interface) — http://100.74.228.85:5050/board/<bot_id>, board paths only
+```
+
+`source` is just how the pod worked out its own Tailscale address. `interface`
+means it read the address straight off the network connection; `tailscale-cli`
+means it asked the Tailscale program. Either is fine — there is nothing to
+choose or configure.
+
+**You installed Tailscale from the Mac App Store.** That version only answers
+questions from whoever is logged in at the screen, and the part of Evolve that
+opens the board door runs as its own background account — so it can't ask.
+Nothing is wrong and there is nothing to change: Evolve reads the Tailscale
+address off the network connection instead, and the log line above will say
+`source: interface`. If you ever see the door refuse to open with a message
+about Tailscale, it means neither way found an address — the machine really
+isn't on your Tailscale network at that moment.

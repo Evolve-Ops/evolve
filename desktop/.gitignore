@@ -1,0 +1,8 @@
+# Rust / Cargo build output
+src-tauri/target/
+
+# Tauri-generated bundles
+src-tauri/gen/
+
+# macOS
+.DS_Store

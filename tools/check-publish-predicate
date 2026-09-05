@@ -1,0 +1,312 @@
+#!/usr/bin/env python3
+"""check-publish-predicate — keep the duplicated `publish` path predicate honest.
+
+The `publish` path predicate decides whether the ~4m publish/scrub suites run on
+a PR. It is written out TWICE, and the two copies must stay byte-for-byte
+identical:
+
+  * ``.github/workflows/ci.yml`` — the ``grep -qE`` in the ``changes`` job's
+    ``decide`` step (the copy CI actually gates on);
+  * ``tools/preflight`` — ``RE_PUBLISH`` (the copy that mirrors CI locally, so a
+    local PASS means the matching CI job will pass).
+
+Part of that predicate is a hand-maintained echo of a THIRD list:
+``publish_sanitize._TARGETS``, the files with a curated per-file publish-time
+transform. ``tools/test_publish_sanitize.py::test_every_target_exists_and_sanitizes_clean``
+reads each target from the real repo tree and asserts both directions — the
+private text must still carry reserved tokens, and the sanitized output must be
+clean. So editing a target can red the publish suite with no publish TOOL
+touched. If a fifth target is added to ``_TARGETS`` without extending both
+predicates, that suite silently stops firing for it.
+
+The failure is invisible where it matters: the PR stays green (the suite never
+ran), and the red only lands on main, where ``publish=true`` unconditionally —
+which then blocks the automated private→public republish. ``CLAUDE.md`` is the
+worst case, because it is allowlisted in the repo-wide ``scrub-guard`` job
+(``packages/admin/tests/test_public_launch_scrub.py``), so nothing else in CI
+checks that its shipping form is clean.
+
+The ``_TARGETS`` echo is not the only hand-maintained list in that predicate: the
+other alternatives name the publish tools, their tests, the manifest, and the two
+workflows. Those go stale the other way — rename or move one and BOTH predicates
+keep a dead alternative that matches nothing, so the suites quietly stop firing
+for the renamed file with nothing to notice. Same failure shape as a dead
+denylist glob, which ``tools/check-public-manifest`` already blocks on.
+
+This lint closes both loops by asserting, against the real files:
+
+  1. both predicate literals are extractable;
+  2. they are byte-for-byte identical to each other;
+  3. every ``publish_sanitize.target_paths()`` entry is matched by BOTH;
+  4. every alternative in the predicate matches ≥1 git-tracked file (no dead or
+     typo'd path), the ``check-public-manifest`` dead-glob rule applied to the
+     predicate instead of the denylist.
+
+Cheap, stdlib-only, no network and no repo env — so it rides an unconditional CI
+job (``public-manifest``) and an ``always`` preflight gate. ``publish_sanitize``
+imports nothing beyond the stdlib at module scope, and ``target_paths()`` does
+not touch the reserved-token guard, so importing it here stays env-free.
+``tracked_files()`` is reused from ``tools/publish-public`` (one definition of
+"tracked", same as ``check-public-manifest`` does); that module imports PyYAML
+lazily inside ``load_manifest``, so importing it here stays env-free too.
+
+Spec: internal/spec-public-2026-06-18.md §5 (PD-3).
+"""
+from __future__ import annotations
+
+import importlib.util
+import re
+import sys
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+
+_TOOLS = Path(__file__).resolve().parent
+_REPO = _TOOLS.parent
+_CI_YML = _REPO / ".github" / "workflows" / "ci.yml"
+_PREFLIGHT = _TOOLS / "preflight"
+
+# The ci.yml copy: a single-quoted ERE argument to `grep -qE`, on one long line.
+# Anchored on the predicate's own first alternative so it cannot latch onto one
+# of the other `grep -qE` predicates in the same `decide` step.
+_CI_LITERAL_RE = re.compile(r"grep -qE '(\^\(tools/publish-public.*?)'; then", re.S)
+
+# The preflight copy: a re.compile() call whose argument is a run of adjacent
+# implicitly-concatenated raw-string fragments, one per source line.
+_PREFLIGHT_BLOCK_RE = re.compile(r"RE_PUBLISH = re\.compile\(\n(.*?)\n\)", re.S)
+_FRAGMENT_RE = re.compile(r'r"([^"]*)"')
+
+# An alternative that denotes exactly ONE literal path: word chars, slash, plus
+# and hyphen, plus backslash-escaped dots, terminated by `$`. Such an alternative
+# resolves to a single path, so it can be checked with an O(1) set lookup instead
+# of scanning ~4k tracked paths. An UNescaped `.` is excluded on purpose — it is a
+# regex metacharacter, so those fall through to the (stricter, correct) regex scan.
+_PLAIN_PATH_ALT_RE = re.compile(r"^(?:[\w/+-]|\\\.)+\$$")
+
+
+def _load_tracked_files() -> list[str]:
+    """Repo-relative POSIX paths tracked by git, via publish-public's own lister."""
+    loader = SourceFileLoader("publish_public", str(_TOOLS / "publish-public"))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod.tracked_files(_REPO)
+
+
+def _split_alternatives(literal: str) -> list[str] | None:
+    """Split ``^(a|b|c)`` into ``[a, b, c]`` on TOP-LEVEL ``|`` only.
+
+    Escapes, character classes and nested groups are respected, so a future
+    alternative like ``pkg/[^/]*(sudoers|perms)[^/]*\\.py$`` (the shape the
+    linux_e2e predicate already uses) splits as one alternative rather than
+    three fragments. Returns None if the literal is not the expected
+    ``^(...)`` shape or its brackets/parens are unbalanced — an unparseable
+    predicate must fail loudly, not silently check nothing.
+    """
+    if not (literal.startswith("^(") and literal.endswith(")")):
+        return None
+    body = literal[2:-1]
+    alts: list[str] = []
+    buf: list[str] = []
+    depth = 0
+    in_class = False
+    i = 0
+    while i < len(body):
+        ch = body[i]
+        if ch == "\\" and i + 1 < len(body):
+            buf.append(ch)
+            buf.append(body[i + 1])
+            i += 2
+            continue
+        if in_class:
+            if ch == "]":
+                in_class = False
+        elif ch == "[":
+            in_class = True
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth < 0:
+                return None
+        elif ch == "|" and depth == 0:
+            alts.append("".join(buf))
+            buf = []
+            i += 1
+            continue
+        buf.append(ch)
+        i += 1
+    if depth != 0 or in_class:
+        return None
+    alts.append("".join(buf))
+    return alts if all(alts) else None
+
+
+def _alternative_is_live(alt: str, tracked: list[str], tracked_set: set[str]) -> bool:
+    """True if ``alt`` matches at least one tracked path.
+
+    The predicate's group is preceded by ``^``, so each alternative is anchored at
+    the start of the path — hence ``re.match``, not ``re.search``.
+    """
+    if _PLAIN_PATH_ALT_RE.match(alt):
+        return alt[:-1].replace("\\.", ".") in tracked_set
+    try:
+        pattern = re.compile(alt)
+    except re.error:
+        return False
+    return any(pattern.match(rel) for rel in tracked)
+
+
+def _load_target_paths() -> tuple[str, ...]:
+    """Import tools/publish_sanitize.py by path and return its declared targets.
+
+    Loaded by path rather than by package import: `tools/` is not an installed
+    package, and this lint must run on a bare checkout with no repo env.
+    """
+    loader = SourceFileLoader("publish_sanitize", str(_TOOLS / "publish_sanitize.py"))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod.target_paths()
+
+
+def _extract_ci_literal() -> str | None:
+    m = _CI_LITERAL_RE.search(_CI_YML.read_text(encoding="utf-8"))
+    return m.group(1) if m else None
+
+
+def _extract_preflight_literal() -> str | None:
+    m = _PREFLIGHT_BLOCK_RE.search(_PREFLIGHT.read_text(encoding="utf-8"))
+    if not m:
+        return None
+    fragments = _FRAGMENT_RE.findall(m.group(1))
+    return "".join(fragments) if fragments else None
+
+
+def main() -> int:
+    errors: list[str] = []
+
+    ci_literal = _extract_ci_literal()
+    pf_literal = _extract_preflight_literal()
+
+    # 1. Extractability. A miss means the predicate was RESHAPED (renamed,
+    #    reformatted, split) — this lint would then silently pass on nothing, so
+    #    treat an unparseable predicate as a failure, not a skip.
+    if ci_literal is None:
+        errors.append(
+            f"could not extract the publish predicate from {_CI_YML.relative_to(_REPO)} "
+            f"— expected a `grep -qE '^(tools/publish-public...'` line in the `changes` "
+            f"job's `decide` step. If the predicate was intentionally reshaped, update "
+            f"_CI_LITERAL_RE in this lint."
+        )
+    if pf_literal is None:
+        errors.append(
+            f"could not extract RE_PUBLISH from {_PREFLIGHT.relative_to(_REPO)} "
+            f"— expected `RE_PUBLISH = re.compile(` followed by adjacent r\"...\" "
+            f"fragments and a closing `)` on its own line. If the predicate was "
+            f"intentionally reshaped, update _PREFLIGHT_BLOCK_RE in this lint."
+        )
+
+    # 2. The two copies must be byte-for-byte identical.
+    if ci_literal is not None and pf_literal is not None and ci_literal != pf_literal:
+        errors.append(
+            "the two publish predicates have DIVERGED — preflight no longer mirrors "
+            "what CI gates on, so a local PASS stops meaning the CI job will pass.\n"
+            f"    ci.yml:    {ci_literal}\n"
+            f"    preflight: {pf_literal}"
+        )
+
+    # 3. Every curated sanitizer target must be matched by BOTH copies. Checked
+    #    against each literal independently: the identity assert above makes this
+    #    redundant today, but it keeps the coverage claim standing on its own.
+    targets = _load_target_paths()
+    if not targets:
+        errors.append(
+            "publish_sanitize.target_paths() is empty — the sanitizer declares no "
+            "targets, which makes this coverage check vacuous."
+        )
+    for literal, where in ((ci_literal, "ci.yml"), (pf_literal, "tools/preflight")):
+        if literal is None:
+            continue
+        pattern = re.compile(literal)
+        missing = [t for t in targets if not pattern.search(t)]
+        if missing:
+            errors.append(
+                f"{where}'s publish predicate does not match "
+                f"{len(missing)} publish_sanitize._TARGETS entr"
+                f"{'y' if len(missing) == 1 else 'ies'}: {', '.join(missing)}.\n"
+                f"    The publish/scrub suites will NOT fire when those files change, "
+                f"so a break lands on main (where publish=true always) and blocks the "
+                f"automated republish. Add each as an escaped alternative — e.g. "
+                f"`|docs/PLACEHOLDER_NAMING\\.md$` — to BOTH predicates, identically."
+            )
+
+    # 4. No dead alternatives: every alternative must still name something git
+    #    tracks. A rename leaves both predicates matching nothing for the moved
+    #    file, which silently narrows the gate — the mirror image of (3), and the
+    #    same rule check-public-manifest applies to denylist globs.
+    #
+    #    Iterate over the DISTINCT literals: when the two agree (the healthy
+    #    case) that is one pass over ~4k paths, not two. When they have diverged,
+    #    (2) has already failed, but both still get checked and attributed.
+    tracked = _load_tracked_files()
+    if not tracked:
+        errors.append(
+            "`git ls-files` returned no tracked paths — cannot verify the predicate "
+            "against the tree. Failing rather than passing on nothing (this lint runs "
+            "in a checkout; an empty listing means git is unavailable or this is not "
+            "a repo)."
+        )
+    else:
+        tracked_set = set(tracked)
+        sources: dict[str, list[str]] = {}
+        for literal, where in ((ci_literal, "ci.yml"), (pf_literal, "tools/preflight")):
+            if literal is not None:
+                sources.setdefault(literal, []).append(where)
+        for literal, wheres in sources.items():
+            alts = _split_alternatives(literal)
+            if alts is None:
+                errors.append(
+                    f"could not split {' and '.join(wheres)}'s publish predicate into "
+                    f"alternatives — expected the shape `^(a|b|c)` with balanced "
+                    f"parens/brackets, got: {literal}"
+                )
+                continue
+            dead = [a for a in alts if not _alternative_is_live(a, tracked, tracked_set)]
+            if dead:
+                errors.append(
+                    f"{' and '.join(wheres)}'s publish predicate has {len(dead)} dead "
+                    f"alternative{'' if len(dead) == 1 else 's'} matching no tracked "
+                    f"file (renamed, moved, or typo'd):\n"
+                    + "".join(f"      {a}\n" for a in dead)
+                    + f"    A dead alternative silently NARROWS the gate: the file it "
+                    f"was meant to cover no longer triggers the publish/scrub suites. "
+                    f"Point it at the new path, or drop it if the file is gone — in "
+                    f"BOTH predicates, identically."
+                )
+
+    if errors:
+        print("check-publish-predicate: FAIL", file=sys.stderr)
+        for err in errors:
+            print(f"  - {err}", file=sys.stderr)
+        print(
+            "\nThe `publish` predicate is duplicated in .github/workflows/ci.yml "
+            "(the `changes` job) and tools/preflight (RE_PUBLISH). Both must be "
+            "identical, both must cover every publish_sanitize._TARGETS entry, and "
+            "every alternative must still name a tracked file.",
+            file=sys.stderr,
+        )
+        return 1
+
+    n_alts = len(_split_alternatives(ci_literal) or ())
+    print(
+        f"check-publish-predicate: OK — ci.yml and tools/preflight carry an "
+        f"identical publish predicate; all {n_alts} alternatives match a tracked "
+        f"file (of {len(tracked)} tracked), including all {len(targets)} "
+        f"publish_sanitize._TARGETS entr{'y' if len(targets) == 1 else 'ies'} "
+        f"({', '.join(targets)})."
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

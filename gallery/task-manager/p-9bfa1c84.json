@@ -1,0 +1,704 @@
+{
+  "pkg_id": "p-9bfa1c84",
+  "pkg_version": "2026.06.08-1.2",
+  "gallery_version": "2026.06.08-1.2",
+  "schema_version": 20,
+  "manifest_shape": "v20",
+  "manifest_type": "evolve_application",
+  "display_name": "Task Manager",
+  "author": "evolve",
+  "description": "Persistent task management. Track active work items with owners, categories, priorities, tags, and approval states. Includes CLI (add/list/show/update/complete/next/summary), tag-registry-driven normalization, expires-based pending todos, year-bucketed archive, an hourly launchd cron that caches the urgent/overdue list to memory/next-up.md, and a daily 03:00 launchd cron that prunes expired pending todos.",
+  "application_tags": [
+    "personal-productivity",
+    "task-management",
+    "productivity-foundation",
+    "ea-suite",
+    "productivity"
+  ],
+  "supersedes": [
+    {
+      "pkg_id": "p-c20a5564",
+      "as_of": "2026.06.05-1.0",
+      "note": "Unified Task System merged into Task Manager. See internal/gallery-merge-task-manager-2026-06-05.md."
+    }
+  ],
+  "id": "app_task_manager",
+  "name": "Task Manager",
+  "status": "active",
+  "dependencies": [],
+  "app_dependencies": [],
+  "requirements": {
+    "integrations": [],
+    "secrets": [],
+    "system": [],
+    "python_packages": []
+  },
+  "provenance": {
+    "manifest_origin": "forge_built",
+    "created_at": "2026-06-05T00:00:00Z",
+    "created_by": "operator",
+    "last_promoted_at": "2026-06-05T00:00:00Z",
+    "field_origins": {
+      "description":         {"source": "user_authored", "by": "operator", "at": "2026-06-05T00:00:00Z"},
+      "identity":            {"source": "user_authored", "by": "operator", "at": "2026-06-05T00:00:00Z"},
+      "requirements":        {"source": "user_authored", "by": "operator", "at": "2026-06-05T00:00:00Z"},
+      "files":               {"source": "forge_built",   "from_spec": "p-9bfa1c84@2026.06.05-1.0", "at": "2026-06-05T00:00:00Z"},
+      "volatile_paths":      {"source": "forge_built",   "from_spec": "p-9bfa1c84@2026.06.05-1.0", "at": "2026-06-05T00:00:00Z"},
+      "scheduled_actions":   {"source": "forge_built",   "from_spec": "p-9bfa1c84@2026.06.05-1.0", "at": "2026-06-05T00:00:00Z"},
+      "interface_contract":  {"source": "forge_built",   "from_spec": "p-9bfa1c84@2026.06.05-1.0", "at": "2026-06-05T00:00:00Z"},
+      "build_spec":          {"source": "user_authored", "by": "operator", "at": "2026-06-05T00:00:00Z"}
+    }
+  },
+  "identity": {
+    "purpose": "Central repository and query interface for a bot's task management. Persists todos and pending actions across conversation sessions; surfaces relevant pending work, urgent items, and expiring todos so the bot can act on them without being prompted. Domain-neutral with a sensible default category taxonomy; meant to be customised per install.",
+    "scope_includes": [
+      "Create, read, update, complete, and cancel tasks via CLI",
+      "Filter tasks by status, owner, category, tag, priority, approval light, and date ranges",
+      "Tag-registry-driven normalization (canonical name + alias resolution at input time)",
+      "Recommend next-up work via `next` (priority-sorted, category-grouped)",
+      "Compose a one-shot status dashboard via `summary` (status / light / category / owner / cost breakdown)",
+      "`expires`-based pending-todo lifecycle so event-triggered todos auto-cancel when stale",
+      "Year-bucketed archive of completed/cancelled tasks older than a configurable threshold",
+      "Daily 03:00 launchd cron that prunes expired pending todos",
+      "Hourly launchd cron that refreshes `memory/next-up.md` with urgent/overdue/expiring-soon items",
+      "Session-start AGENTS.md instruction that surfaces the cached urgent list once per conversation (no heartbeat tokens spent)"
+    ],
+    "scope_excludes": [
+      "Calendar/scheduling integration or event firing (tasks record due dates but don't fire)",
+      "Multi-user collaboration features (no locking, no conflict resolution beyond simple assignee field)",
+      "Real-time notifications or out-of-band alerts",
+      "Integration with external task tools (Jira, Asana, etc.)",
+      "Natural-language task decomposition or LLM-driven task generation",
+      "Multi-bot shared task databases (each bot owns its own task store)"
+    ],
+    "bot_interaction_pattern": "CLI-driven app. Operator and bot both invoke `scripts/unified_task_system.py` directly. An hourly launchd cron refreshes `memory/next-up.md` with the urgent/overdue/expiring-soon list; the bot reads that cache file ONCE per conversation (driven by an AGENTS.md session-start instruction) and surfaces its contents naturally in the first reply. The bot does NOT poll the task system every heartbeat — that is explicitly forbidden and was the regression this version fixes.",
+    "user": "The bot and the human operator(s) who track work for it. Bot surfaces reminders and expiring items; humans query status and update state."
+  },
+  "success_criteria": {
+    "observable_outcomes": [
+      "`list --owner X --status open` returns a complete, accurate set within 2 seconds",
+      "Urgent / overdue / expiring-soon tasks appear in the bot's first reply when the operator opens a new conversation, drawn from the cron-maintained cache",
+      "Expired pending todos are auto-cancelled by the 03:00 daily launchd cron within 24h of their `expires` timestamp",
+      "Tag aliases normalize transparently (`asap` → `urgent`) without operator intervention",
+      "Completed tasks older than the archive threshold move out of `tasks.json` into `archive/completed_YYYY.json`",
+      "`tasks.json` stays under the bloat threshold (default 150 tasks) thanks to archive rotation",
+      "Bot consumes ZERO heartbeat tokens on task-system polling (no HEARTBEAT.md section ships with this package)"
+    ],
+    "failure_signals": [
+      "`tasks.json` becomes corrupted or unreadable",
+      "Urgent or overdue items don't surface at the start of a fresh conversation (cron-write or AGENTS.md drift)",
+      "`memory/next-up.md` grows stale (cron not running) or is touched on every heartbeat (regression to old pattern)",
+      "Tag variants proliferate (e.g. `fix`, `repair`, `maintenance` all stored as separate tags)",
+      "Archive files are missing or empty after archive runs"
+    ],
+    "quality_bar": {
+      "minimum": "Operator can query 'what tasks does {owner} have open?' and get a complete, accurate list with category and urgency within one response",
+      "excellent": "Bot proactively surfaces urgent, overdue, and expiring-soon tasks at the start of each new conversation using the cron-maintained cache; tag normalization keeps the registry tight; archive rotation keeps `tasks.json` lean over years of use; heartbeat tokens stay flat regardless of task volume."
+    }
+  },
+  "constraints": {
+    "safety": [
+      "All writes to `tasks.json` must be atomic (temp file + os.replace) to prevent corruption",
+      "Never delete tasks — mark `cancelled` instead so the history is preserved",
+      "Never reuse a task ID — sequences are monotonically increasing per category prefix",
+      "Daily prune cadence is owned by launchd (cron at 03:00 local). The CLI does not self-throttle; running it manually is always allowed.",
+      "Do NOT add a HEARTBEAT.md section for this app. Heartbeat-driven polling of `next` or any other CLI is explicitly forbidden — that pattern caused the 2026-06-08 token-waste regression."
+    ],
+    "dependencies": [],
+    "boundaries": [
+      "Single-bot task store — do not share `tasks.json` across bots",
+      "Do not modify archived tasks — archive is append-only",
+      "Normalize tags at input time; never store alias variants",
+      "Tag registry (`tag_registry.json`) is the canonical source of normalization; alias dict in code must mirror it"
+    ]
+  },
+  "volatile_paths": [
+    {"glob": "archive/completed_*.json", "layer": "data",  "expected_growth": "monthly", "max_age_days": null, "rotation": "yearly"},
+    {"glob": "archive/cancelled_*.json", "layer": "data",  "expected_growth": "monthly", "max_age_days": null, "rotation": "yearly"},
+    {"glob": "memory/next-up.md",        "layer": "state", "expected_growth": "hourly",  "rotation": "any"}
+  ],
+  "files": [
+    {
+      "path": "scripts/unified_task_system.py",
+      "layer": "code",
+      "data_kind": null,
+      "owned_by": "p-9bfa1c84",
+      "shared_with": [],
+      "purpose": "Main CLI. Subcommands: add | list | show | update | complete | next | summary | tags | tag | lights | tag-registry | archive | prune-expired | cache-urgent | migrate."
+    },
+    {
+      "path": "scripts/task-manager-cache-cron.sh",
+      "layer": "code",
+      "data_kind": null,
+      "owned_by": "p-9bfa1c84",
+      "shared_with": [],
+      "purpose": "Launchd cron wrapper. Calls `unified_task_system.py cache-urgent` to refresh memory/next-up.md. Quiet on success, errors to /tmp."
+    },
+    {
+      "path": "scripts/task-manager-prune-cron.sh",
+      "layer": "code",
+      "data_kind": null,
+      "owned_by": "p-9bfa1c84",
+      "shared_with": [],
+      "purpose": "Launchd cron wrapper. Calls `unified_task_system.py prune-expired --tag pending_todo` once per day at 03:00 local."
+    },
+    {
+      "path": "memory/next-up.md",
+      "layer": "state",
+      "data_kind": "cache",
+      "owned_by": "p-9bfa1c84",
+      "shared_with": [],
+      "purpose": "Hourly-refreshed cache of urgent / overdue / soon-expiring tasks. Written by the cache-urgent cron; read by the bot ONCE per conversation via the AGENTS.md session-greet instruction. Empty file when nothing qualifies — that signals 'stay silent on tasks this session'."
+    },
+    {
+      "path": "tasks.json",
+      "layer": "data",
+      "data_kind": "user-data",
+      "owned_by": "p-9bfa1c84",
+      "shared_with": [],
+      "purpose": "Active task registry. Schema: {version, last_updated, tasks: [task_object, ...]}. Atomic writes only."
+    },
+    {
+      "path": "tag_registry.json",
+      "layer": "config",
+      "data_kind": "template",
+      "owned_by": "p-9bfa1c84",
+      "shared_with": [],
+      "purpose": "Tag canonical-name + alias registry. Edited by operator; read by CLI at every add/update to normalize tags."
+    },
+    {
+      "path": "TASKS.md",
+      "layer": "behavior_doc",
+      "data_kind": null,
+      "owned_by": "p-9bfa1c84",
+      "shared_with": [],
+      "purpose": "Living manual: field reference, status semantics, light + urgency / priority definitions, category table, CLI quick reference, workflow recipes. Bot keeps it current as the system evolves."
+    },
+    {
+      "path": "TAGS.md",
+      "layer": "reference",
+      "data_kind": null,
+      "owned_by": "p-9bfa1c84",
+      "shared_with": [],
+      "purpose": "Canonical tag registry (markdown rendering of tag_registry.json). Operator-readable, optional."
+    },
+    {
+      "path": "AGENTS.md",
+      "layer": "behavior_doc",
+      "data_kind": null,
+      "owned_by": "p-9bfa1c84",
+      "shared_with": [],
+      "purpose": "Carries the evolve-managed `## Task Manager — Session Greet` section. Phase 4.5 installs this via the `oc_session_instruction` mechanism so the bot reads memory/next-up.md once per conversation. This package owns ONLY this section — the rest of AGENTS.md is the bot's own."
+    }
+  ],
+  "interface_contract": {
+    "populated_by_forge": true,
+    "extracted_at": "2026-06-05T00:00:00Z",
+    "data_files": [
+      {
+        "path": "tasks.json",
+        "description": "Active task registry — flat array of task objects.",
+        "schema": {
+          "storage_format": "JSON object: {version, last_updated, tasks: [task_object, ...]}",
+          "fields": {
+            "id":             "string — format {CATEGORY_PREFIX}-{NNNN}, e.g. WK-0001",
+            "title":          "string — task title (was `name` in legacy schema)",
+            "description":    "string | null — multi-line details",
+            "status":         "enum — see enums.status",
+            "category":       "string — matches VALID_CATEGORIES; drives ID prefix",
+            "tags":           "array of canonical lowercase strings (aliases resolved at input)",
+            "light":          "enum — see enums.light (approval state, independent of status)",
+            "priority":       "enum — see enums.priority",
+            "owner":          "string | null",
+            "due_date":       "ISO date YYYY-MM-DD | null",
+            "expires":        "ISO datetime with offset | null — for event-triggered pending todos",
+            "cost":           "number | null — optional dollar estimate",
+            "hours":          "number | null — optional effort estimate (hours)",
+            "created_by":     "string — who requested the task (often the bot id)",
+            "created_date":   "ISO datetime with offset",
+            "updated_date":   "ISO datetime with offset",
+            "started_at":     "ISO datetime with offset | null — set on first transition to in_progress",
+            "completed_at":   "ISO datetime with offset | null — set on transition to complete or cancelled",
+            "status_history": "array of {status: string, at: ISO datetime, by: string}",
+            "notes":          "array of {timestamp: ISO datetime, author: string, note: string}"
+          }
+        }
+      },
+      {
+        "path": "tag_registry.json",
+        "description": "Tag canonical names with descriptions and aliases.",
+        "schema": {
+          "storage_format": "JSON object: {version, tags: {canonical: {description, aliases: [...], group}}}",
+          "fields": {
+            "tags.{canonical}.description": "string — human description of the tag's meaning",
+            "tags.{canonical}.aliases":     "array of strings — input variants normalized to canonical at write time",
+            "tags.{canonical}.group":       "string — optional logical group (priority | status | domain | ...)"
+          }
+        }
+      },
+      {
+        "path": "archive/completed_{YYYY}.json",
+        "description": "Year-bucketed archive of completed tasks older than the archive threshold.",
+        "schema": {
+          "storage_format": "JSON object: {version, kind: \"completed\", year, last_updated, tasks: [...]}",
+          "fields": {
+            "kind":  "literal \"completed\"",
+            "year":  "integer year of terminal state",
+            "tasks": "array of archived task objects (each gains `archived_at`)"
+          }
+        }
+      },
+      {
+        "path": "archive/cancelled_{YYYY}.json",
+        "description": "Year-bucketed archive of cancelled tasks. Same shape as completed_, with kind=\"cancelled\".",
+        "schema": {
+          "storage_format": "JSON object: {version, kind: \"cancelled\", year, last_updated, tasks: [...]}"
+        }
+      }
+    ],
+    "cli": [
+      {
+        "command": "python3 scripts/unified_task_system.py add",
+        "key_flags": [
+          "--title TEXT",
+          "--category CAT",
+          "--description TEXT",
+          "--tags T1,T2",
+          "--priority critical|high|normal|low",
+          "--light green|yellow|blue|red",
+          "--owner WHO",
+          "--due YYYY-MM-DD",
+          "--expires ISO_DATETIME",
+          "--cost DOLLARS",
+          "--hours N",
+          "--severity 1-5",
+          "--reporter WHO"
+        ],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/unified_task_system.py list",
+        "key_flags": [
+          "--status STATUS",
+          "--owner OWNER",
+          "--category CAT",
+          "--tag TAG",
+          "--priority P",
+          "--light COLOR",
+          "--completed-after YYYY-MM-DD",
+          "--completed-before YYYY-MM-DD",
+          "--started-after YYYY-MM-DD",
+          "--started-before YYYY-MM-DD"
+        ],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/unified_task_system.py show TASK_ID",
+        "key_flags": [],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/unified_task_system.py update TASK_ID",
+        "key_flags": [
+          "--title TEXT",
+          "--status STATUS",
+          "--light COLOR",
+          "--owner WHO",
+          "--priority P",
+          "--due DATE",
+          "--expires ISO_DATETIME",
+          "--tags T1,T2",
+          "--add-tag TAG",
+          "--remove-tag TAG",
+          "--note TEXT",
+          "--cost DOLLARS",
+          "--hours N"
+        ],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/unified_task_system.py complete TASK_ID",
+        "key_flags": ["--note TEXT"],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/unified_task_system.py next",
+        "key_flags": ["--limit N"],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/unified_task_system.py summary",
+        "key_flags": [],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/unified_task_system.py tags",
+        "key_flags": [],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/unified_task_system.py tag TAG_NAME",
+        "key_flags": [],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/unified_task_system.py lights",
+        "key_flags": ["--verbose"],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/unified_task_system.py tag-registry",
+        "key_flags": ["search TERM", "--group GROUP"],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/unified_task_system.py archive",
+        "key_flags": ["--days N", "--dry-run", "--force"],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/unified_task_system.py prune-expired",
+        "key_flags": ["--tag TAG", "--note TEXT", "--dry-run"],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/unified_task_system.py cache-urgent",
+        "key_flags": ["--out PATH", "--limit N"],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/unified_task_system.py migrate",
+        "key_flags": [],
+        "output_signals": []
+      }
+    ],
+    "key_paths": {
+      "active_db":        "tasks.json",
+      "tag_registry":     "tag_registry.json",
+      "archive_dir":      "archive/",
+      "urgent_cache":     "memory/next-up.md",
+      "cli":              "scripts/unified_task_system.py",
+      "cache_cron":       "scripts/task-manager-cache-cron.sh",
+      "prune_cron":       "scripts/task-manager-prune-cron.sh"
+    },
+    "enums": {
+      "status":   ["open", "in_progress", "blocked", "needs_review", "complete", "cancelled"],
+      "light":    ["green", "yellow", "blue", "red"],
+      "priority": ["critical", "high", "normal", "low"]
+    },
+    "terminal_states": ["complete", "cancelled"],
+    "signal_prefixes": []
+  },
+  "scheduled_actions": [
+    {
+      "id": "task-manager-cache-urgent",
+      "mechanism": "launchd",
+      "trigger": {
+        "kind": "launchd",
+        "schedule": "every_60_minutes"
+      },
+      "state": "active",
+      "quality": "verified",
+      "safety_net_for": [],
+      "install": {
+        "plist_label": "ai.evolve.${bot_id}.task-manager-cache-urgent",
+        "command": "/bin/bash ${workspace}/scripts/task-manager-cache-cron.sh",
+        "cwd": "${workspace}",
+        "schedule": {"every_minutes": 60},
+        "exec_policy": "inherit"
+      },
+      "inputs": [
+        {"path": "tasks.json", "kind": "data_file"}
+      ],
+      "outputs": [
+        {"path": "memory/next-up.md", "kind": "data_file"}
+      ],
+      "summary": "Hourly launchd cron — refreshes memory/next-up.md with priority-critical, overdue, and soon-expiring items. Bot reads the cache lazily via the session-greet AGENTS.md instruction. Replaces the every-heartbeat next-check that was billing tokens with zero output."
+    },
+    {
+      "id": "task-manager-daily-prune",
+      "mechanism": "launchd",
+      "trigger": {
+        "kind": "launchd",
+        "schedule": "daily_at_03_00_local"
+      },
+      "state": "active",
+      "quality": "verified",
+      "safety_net_for": [],
+      "install": {
+        "plist_label": "ai.evolve.${bot_id}.task-manager-daily-prune",
+        "command": "/bin/bash ${workspace}/scripts/task-manager-prune-cron.sh",
+        "cwd": "${workspace}",
+        "schedule": {"cron": {"Hour": 3, "Minute": 0}},
+        "exec_policy": "inherit"
+      },
+      "inputs": [
+        {"path": "tasks.json", "kind": "data_file"}
+      ],
+      "outputs": [],
+      "summary": "Daily 03:00-local launchd cron — runs `prune-expired --tag pending_todo`. No self-throttle file needed; launchd owns the schedule."
+    },
+    {
+      "id": "task-manager-session-greet",
+      "mechanism": "oc_session_instruction",
+      "trigger": {
+        "kind": "session_start",
+        "schedule": "session_start",
+        "evidence_path": "AGENTS.md",
+        "evidence_locator": "## Task Manager — Session Greet"
+      },
+      "state": "active",
+      "quality": "verified",
+      "safety_net_for": [],
+      "install": {
+        "file": "AGENTS.md",
+        "section_anchor": "## Task Manager — Session Greet",
+        "body": "At the start of a fresh operator-initiated conversation, read `memory/next-up.md`. If the file exists and is non-empty, weave its contents (urgent / overdue / soon-expiring tasks) naturally into your first reply — reference each task ID verbatim (e.g. `WK-0007`) so the operator can act with `update` / `show`. If the file is empty or absent, say nothing about tasks; stay silent on this topic for the remainder of the session unless the operator asks.\n\nDo NOT run `unified_task_system.py next` on every turn or every heartbeat. An hourly launchd cron (`scripts/task-manager-cache-cron.sh`) already refreshes this cache — it is the source of truth for proactive surfacing. Polling the CLI on heartbeats is a regression and was explicitly retired in pkg_version 2026.06.08-1.1.",
+        "command": "cat memory/next-up.md",
+        "output_signals": [],
+        "silent_when_no_output": true,
+        "exec_policy": "inherit"
+      },
+      "inputs": [
+        {"path": "memory/next-up.md", "kind": "data_file"}
+      ],
+      "outputs": [
+        {"kind": "session_message", "channel": "primary"}
+      ],
+      "summary": "Once-per-conversation lazy read of the urgent cache. Zero heartbeat cost — the bot only consults the cache on the first turn of an operator-initiated session."
+    }
+  ],
+  "coherence": {
+    "last_checked_at": "2026-06-05T00:00:00Z",
+    "status": "ok",
+    "findings": []
+  },
+  "reconciliation": {
+    "last_reconciled_at": "2026-06-05T00:00:00Z",
+    "status": "ok",
+    "extra_files": [],
+    "missing_files": [],
+    "missing_crons": [],
+    "missing_actions": [],
+    "volatile_growth_anomalies": [],
+    "operator_decisions": []
+  },
+  "build_spec": "# Task Manager — Build Specification\n\n## Overview\n\nA persistent, CLI-driven task manager. Tracks todos, pending actions, and work items across conversation sessions with status awareness, priority + approval-light dimensions, expires-based pending-todo lifecycle, tag-registry normalization, year-bucketed archive, and a daily prune scheduled by launchd.\n\nThis spec consolidates two earlier reference implementations (the dict-keyed `tasks.py` from `team-bot-c` and the array-of-tasks `unified_task_system.py` from `team-bot-a`). v2026.06.05-1.0 was the original merger; **v2026.06.08-1.1 removes the heartbeat-driven `next-check` instruction** that was billing per-turn tokens on every bot with no urgent items to surface (2026-06-08 incident). The hourly cron + lazy-read AGENTS.md pattern in this version replaces it.\n\n**What it does**\n- Create, read, update, complete, archive, and prune tasks via CLI\n- Multi-dimensional queries (status, owner, category, tag, priority, light, date ranges)\n- Expires-based lifecycle so event-triggered todos auto-cancel when stale\n- `next` recommends the top priority items grouped by category\n- `summary` renders a one-shot status + light + category + owner + cost dashboard\n- Tag registry with canonical names and alias resolution\n- Year-bucketed archive of completed/cancelled tasks older than the threshold\n- Hourly launchd cron refreshes `memory/next-up.md` with urgent items; bot reads it once per session\n- Daily 03:00-local launchd cron runs `prune-expired --tag pending_todo`\n\n**Who it's for**\nOperators and bots managing work across multiple categories (work, personal, errands, learning, etc.). Domain-neutral by default; meant to be customised per install.\n\n**What it doesn't do**\n- Calendar integration, alarms, or temporal execution (tasks record due dates but don't fire events)\n- Multi-user collaboration features (no permissions, locking, conflict resolution)\n- Real-time notifications outside the session-greet surface\n- Integration with Jira / Asana / external tools\n- **Heartbeat polling. This package ships NO HEARTBEAT.md section.** Any future contributor who adds one is reintroducing the 2026-06-08 regression.\n\n## File Layout\n\n```\n{workspace}/\n├── tasks.json                              # Active task registry (created on first add)\n├── tag_registry.json                       # Tag metadata + aliases (seeded at install)\n├── archive/\n│   ├── completed_{YYYY}.json               # year-bucketed completed-task archive\n│   └── cancelled_{YYYY}.json               # year-bucketed cancelled-task archive\n├── memory/\n│   └── next-up.md                          # cron-maintained cache of urgent items\n├── TASKS.md                                # Living manual (bot maintains)\n├── TAGS.md                                 # Markdown render of tag_registry.json (optional)\n└── scripts/\n    ├── unified_task_system.py              # Main CLI\n    ├── task-manager-cache-cron.sh          # launchd wrapper: writes memory/next-up.md\n    └── task-manager-prune-cron.sh          # launchd wrapper: nightly prune\n```\n\nAll absolute paths resolve from the bot's actual workspace path (`openclaw.json → agents.defaults.workspace`, default `/Users/{bot_id}/.openclaw/workspace`).\n\n## Data Format\n\n### tasks.json schema\n\n```json\n{\n  \"version\": \"6.0\",\n  \"last_updated\": \"2026-06-05T00:00:00+00:00\",\n  \"tasks\": [\n    {\n      \"id\": \"WK-0001\",\n      \"title\": \"Draft Q3 planning doc\",\n      \"description\": \"Multi-line details\",\n      \"category\": \"work\",\n      \"tags\": [\"planning\", \"writing\"],\n      \"status\": \"open\",\n      \"light\": \"yellow\",\n      \"priority\": \"high\",\n      \"owner\": \"operator\",\n      \"due_date\": \"2026-07-01\",\n      \"expires\": null,\n      \"cost\": null,\n      \"hours\": 4.0,\n      \"created_by\": \"{bot_id}\",\n      \"created_date\": \"2026-06-05T10:00:00+00:00\",\n      \"updated_date\": \"2026-06-05T10:00:00+00:00\",\n      \"started_at\": null,\n      \"completed_at\": null,\n      \"notes\": [],\n      \"status_history\": [\n        {\"status\": \"open\", \"at\": \"2026-06-05T10:00:00+00:00\", \"by\": \"{bot_id}\"}\n      ]\n    }\n  ]\n}\n```\n\n**Atomic write convention.** Load the full file, mutate in memory, write the complete structure with an updated `last_updated` timestamp. Never partial-update; never truncate-and-write in place. Always temp-file + `os.replace`.\n\n**ID generation.** Read `CATEGORY_PREFIX[category]`, scan `tasks[]` + archive files for the highest existing `{PREFIX}-{NNNN}` for that prefix, increment by 1, format as `{PREFIX}-{NNNN:04d}`.\n\n**First-run init.** If `tasks.json` does not exist, write `{\"version\":\"6.0\",\"tasks\":[]}` and continue.\n\n### tag_registry.json schema\n\n```json\n{\n  \"version\": \"1.0\",\n  \"tags\": {\n    \"urgent\": {\n      \"description\": \"Time-sensitive work requiring immediate attention\",\n      \"aliases\": [\"asap\", \"now\", \"rush\"],\n      \"group\": \"priority\"\n    },\n    \"blocked\": {\n      \"description\": \"Waiting on external dependency\",\n      \"aliases\": [\"waiting\"],\n      \"group\": \"status\"\n    }\n  }\n}\n```\n\n**Alias resolution.** On `add` / `update`, every input tag is looked up against `tags.{canonical}.aliases[]`; matches are replaced with the canonical name. Tags are stored only as canonical lowercase strings.\n\nThe in-code `TAG_ALIASES` fallback dict (for tags not yet in `tag_registry.json`) is allowed but the registry file is authoritative.\n\n### archive file schema\n\nSame task array structure with two extra fields:\n- `kind`: literal `\"completed\"` or `\"cancelled\"`\n- `year`: integer year of terminal state\n- Each archived task gains `archived_at`: ISO datetime\n\n## CLI Commands\n\nAll commands invoked via `python3 scripts/unified_task_system.py <command> [options]`.\n\n### add\n```\nadd --title TEXT --category CAT [--description TEXT] [--tags T1,T2]\n    [--priority critical|high|normal|low] [--light green|yellow|blue|red]\n    [--owner WHO] [--due YYYY-MM-DD] [--expires ISO_DATETIME]\n    [--cost DOLLARS] [--hours N] [--severity 1-5] [--reporter WHO]\n```\n- Auto-generates ID with category prefix (e.g. `WK-0001`, `OP-0002`)\n- Initializes `status_history` with the `open` entry\n- Defaults: priority=normal, light=yellow, created_by={bot_id}\n- Normalizes tags via tag_registry\n- Atomic write; prints new task ID\n\n### list\n```\nlist [--status STATUS] [--owner OWNER] [--category CAT] [--tag TAG]\n     [--priority P] [--light COLOR] [--completed-after DATE]\n     [--completed-before DATE] [--started-after DATE] [--started-before DATE]\n```\n- Tabular output with ID, light icon, title (40-char truncated), category, owner, status icon, priority, tags, cost, expires\n- If task count > `BLOAT_THRESHOLD` (default 150) without a recent archive, prints a warning suggesting `archive --dry-run --days 14`\n\n### show TASK_ID\n- Prints every field including the full `status_history` and `notes` arrays\n\n### update TASK_ID\n```\nupdate TASK_ID [--title TEXT] [--status STATUS] [--light COLOR]\n               [--owner WHO] [--priority P] [--due DATE] [--expires ISO_DATETIME]\n               [--tags T1,T2]       # replaces all\n               [--add-tag TAG] [--remove-tag TAG]\n               [--note TEXT] [--cost DOLLARS] [--hours N]\n```\n- Status change: appends `{status, at, by}` to `status_history`\n- First transition to `in_progress` sets `started_at`\n- Transition to `complete` or `cancelled` sets `completed_at`\n- `--note` appends a timestamped entry to `notes[]`\n- Updates `updated_date`\n- Atomic write\n\n### complete TASK_ID [--note TEXT]\nShorthand for `update --status complete`.\n\n### next [--limit N]\n- Selects tasks with status in `open | in_progress | blocked`\n- Sort: priority (critical > high > normal > low), then creation date\n- Groups output by category; shows ID, light icon, status icon, priority, title, expiry warning if applicable\n- Default limit: 10\n\n### summary\n- Header: total count + schema version + last update\n- Sections: status breakdown (with mini bar chart), active-task light breakdown, category breakdown with ID prefix reference, owner breakdown, cost summary\n\n### tags\nFrequency table (tag → count) sorted by descending count.\n\n### tag TAG_NAME\nAll tasks with that tag, grouped by status; header shows completion ratio (N/M complete).\n\n### lights [--verbose]\nCount + description per light. `--verbose` lists IDs under each bucket.\n\n### tag-registry [search TERM] [--group GROUP]\nBrowse / search the tag registry. Without args, groups by `group` field.\n\n### archive\n```\narchive [--days 30] [--dry-run] [--force]\n```\n- Default threshold 30 days; auto-tightens to 14 if task count > BLOAT_THRESHOLD\n- Eligible: status in {complete, cancelled} AND `completed_at` (or `updated_date` fallback) older than threshold\n- Writes to `archive/completed_{YYYY}.json` or `archive/cancelled_{YYYY}.json` (creates if missing)\n- Stamps `archived_at` on each archived task\n- `--dry-run`: print eligible without writing\n- Without `--force`: interactive confirmation\n- Atomic write to both source and destination\n\n### prune-expired\n```\nprune-expired [--tag TAG] [--note TEXT] [--dry-run]\n```\n- Eligible: status NOT in terminal states AND `expires` is in the past\n- `--tag` scoping: only tasks bearing that (alias-resolved) tag are considered — this is how the daily prune scopes to `pending_todo` rather than touching regular tasks that use `expires` for display\n- Sets status=cancelled with `status_history` entry `by=\"cron:prune-expired\"`\n- Appends a note (default `\"expired (auto-pruned)\"`) to `notes[]`\n- `--dry-run`: print eligible without writing\n- Atomic write\n- **No CLI-level self-throttle.** The launchd `task-manager-daily-prune` daemon (03:00 local) owns the cadence. Manual invocations during the day are always allowed and idempotent — re-running after the daemon is a no-op when nothing new has expired.\n\n### cache-urgent\n```\ncache-urgent [--out PATH] [--limit N]\n```\n- Writes a markdown cache file at `--out` (default `memory/next-up.md`) listing items that qualify as urgent: priority in `critical|high`, OR `due_date` ≤ today, OR `expires` within the next 60 minutes\n- Sorted by urgency then due/expires then priority; one bullet per item with task ID, light icon, title, category, and a short urgency reason (`overdue`, `due today`, `expires in 12m`, `high priority`)\n- Default `--limit` = 8. If nothing qualifies, writes an empty file (truncate to zero bytes) — that empty-file signal tells the AGENTS.md session-greet instruction to stay silent.\n- Atomic write (temp file + os.replace)\n- Header line: `<!-- evolve-managed: task-manager cache-urgent; refreshed {ISO_LOCAL} -->`\n- Body example (when non-empty):\n  ```markdown\n  - **WK-0007** 🟡 Draft Q3 planning doc — work — overdue 2 days\n  - **OP-0003** 🔴 Send vendor counter — operations — due today\n  - **PT-0011** 🔵 Confirm Friday haircut — pending_todo — expires in 42m\n  ```\n- Designed to be called by `scripts/task-manager-cache-cron.sh` every hour; safe to call manually for debugging\n\n### migrate\nBackfill schema-shape upgrades:\n- **Legacy dict-keyed shape** (from the old Task Manager `tasks.py` — `{\"metadata\": {...}, \"tasks\": {ID: obj}}`) → array shape (`{\"version\":\"6.0\",\"tasks\":[...]}`). Detect by `\"metadata\"` key or `tasks` being a dict. Drop `metadata.id_sequences` (regenerated by scan); preserve every task object verbatim, mapping `name → title`, `status_log → status_history`, `urgency` integer → `priority` enum (1=low, 2=normal, 3=critical; map intermediate values to high).\n- Tasks missing any of `light`, `priority`, `tags`, `created_by`, `notes`, `status_history`: filled with default values.\n- Idempotent. Reports count migrated.\n\n## Scheduled Behavior — launchd crons + session-start instruction\n\n**Phase 4.5 owns materialization.** Do NOT write AGENTS.md sections or install launchd plists during the Build phase, even though `scheduled_actions[]` describes them. Phase 4.5 (Materialize) reads `scheduled_actions[*].install` and dispatches to `install_launchd_command_action` / `install_heartbeat_instruction` (the latter handles `oc_session_instruction` too). The AGENTS.md section gets an `<!-- evolve-managed: pkg=p-9bfa1c84 job=<job_id> -->` marker. Pre-writing without markers breaks clobber protection.\n\n**v2026.06.08-1.1 architecture — three actions, none of them on heartbeat:**\n\n1. **`task-manager-cache-urgent`** — `mechanism: launchd`. Fires every 60 minutes via `StartInterval: 3600`. Calls `scripts/task-manager-cache-cron.sh` which invokes `python3 scripts/unified_task_system.py cache-urgent`. The script writes `memory/next-up.md` — non-empty when items qualify, zero-bytes when nothing does. Runs as the bot user (UserName in the plist).\n\n2. **`task-manager-daily-prune`** — `mechanism: launchd`. Fires daily at 03:00 local via `StartCalendarInterval {Hour=3, Minute=0}`. Calls `scripts/task-manager-prune-cron.sh` which invokes `python3 scripts/unified_task_system.py prune-expired --tag pending_todo`. No self-throttle file — launchd owns the schedule.\n\n3. **`task-manager-session-greet`** — `mechanism: oc_session_instruction`. Installs a `## Task Manager — Session Greet` section in AGENTS.md. On the first turn of an operator-initiated session, the bot reads `memory/next-up.md`; if non-empty, the bot weaves the contents into its first reply naturally. If empty/missing, the bot stays silent on tasks unless asked. Fires once per session, NOT per heartbeat.\n\n### What the bot must NOT do\n\n- Run `unified_task_system.py next` (or any CLI subcommand) on every heartbeat. The cron owns refresh cadence.\n- Re-read `memory/next-up.md` on every turn within a session — once at session start is enough.\n- Maintain its own throttle counters — launchd handles that.\n\n### Why this shape\n\nThe v1.0 design used `oc_heartbeat_instruction` for the next-check, which billed a per-heartbeat turn on every bot that had the package installed. In the 2026-06-08 incident, this produced steady token spend with zero output messages because no urgent items were ever flagged. The fix is structural: move regular polling off the LLM's turn loop entirely. Cron is OS-level; the bot only pays tokens when an actual operator-initiated session happens, and then only once at session start.\n\n## FILE: scripts/task-manager-cache-cron.sh\n\n```bash\n#!/bin/bash\n# task-manager-cache-cron.sh — launchd wrapper that refreshes memory/next-up.md.\n# Quiet on success; errors to /tmp.\n\nWORKSPACE=\"/Users/{bot_id}/.openclaw/workspace\"\nLOGFILE=\"/tmp/{bot_id}-task-manager-cache.log\"\n\ncd \"$WORKSPACE\" || exit 1\n/usr/bin/python3 \"$WORKSPACE/scripts/unified_task_system.py\" cache-urgent \\\n  >> \"$LOGFILE\" 2>&1\n\nexit 0\n```\n\nMake it executable: `chmod +x scripts/task-manager-cache-cron.sh`.\n\n## FILE: scripts/task-manager-prune-cron.sh\n\n```bash\n#!/bin/bash\n# task-manager-prune-cron.sh — launchd wrapper that runs the daily prune.\n# Quiet on success; errors to /tmp.\n\nWORKSPACE=\"/Users/{bot_id}/.openclaw/workspace\"\nLOGFILE=\"/tmp/{bot_id}-task-manager-prune.log\"\n\ncd \"$WORKSPACE\" || exit 1\n/usr/bin/python3 \"$WORKSPACE/scripts/unified_task_system.py\" prune-expired \\\n  --tag pending_todo \\\n  >> \"$LOGFILE\" 2>&1\n\nexit 0\n```\n\nMake it executable: `chmod +x scripts/task-manager-prune-cron.sh`.\n\nBoth wrappers use `/usr/bin/python3` (the macOS system Python) and the absolute workspace path. launchd does not resolve relative program names or rely on the bot's interactive shell PATH, so absolute paths are mandatory.\n\nThe launchd plists themselves are not authored here — Phase 4.5's `install_launchd_command_action` renders them from `scheduled_actions[*].install` (`plist_label`, `command`, `cwd`, `schedule`).\n\n## Atomic writes\n\n```python\nimport os, json, tempfile\nfrom pathlib import Path\n\ndef atomic_write_json(path: str | Path, data: dict) -> None:\n    path = Path(path)\n    path.parent.mkdir(parents=True, exist_ok=True)\n    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=\".tmp\")\n    try:\n        with os.fdopen(fd, \"w\") as f:\n            json.dump(data, f, indent=2)\n        os.replace(tmp, path)  # atomic on POSIX\n    except Exception:\n        try: os.unlink(tmp)\n        except OSError: pass\n        raise\n```\n\nAll writes to `tasks.json`, `tag_registry.json`, and the archive files MUST go through `atomic_write_json`. Never truncate-and-write in place.\n\n## Timezone-Aware Timestamps\n\nAll timestamps must include a timezone offset. Use the system local timezone via:\n\n```python\nfrom datetime import datetime\n\ndef now() -> str:\n    return datetime.now().astimezone().isoformat()\n```\n\nNever use naive `datetime.utcnow()` or `datetime.now()` without `astimezone()`. Earlier reference implementations used `systemsetup -gettimezone` which requires admin and silently falls back to UTC on macOS — explicitly forbidden here.\n\n## TASKS.md — Living Manual\n\nThe bot maintains `TASKS.md` at workspace root. Content includes the field reference, status definitions with semantics, light + priority definitions, the category table with prefixes, the CLI quick reference, and any per-install workflow recipes (e.g. \"how to build a purchasing list\"). Keep it current as the system evolves — when a category, prefix, or alias changes, update TASKS.md in the same edit.\n\n## TAGS.md — Tag Registry (optional)\n\nA markdown rendering of `tag_registry.json`. One row per canonical tag with description and aliases. Useful for operators who want a human-readable view of the normalization rules.\n\n## Provenance Marker Pattern\n\nEmbed in every generated script after the shebang:\n\n```python\n#!/usr/bin/env python3\n# evolve: pkg=p-9bfa1c84 file=<f-XXXXXXXX>\n```\n\nThe file ID is assigned by forge at build time.\n\n## Customization Guidance\n\nFields the consumer SHOULD adapt:\n\n1. **`VALID_CATEGORIES`** — default personal-productivity taxonomy: `work, personal, errands, learning, health, finance, home, operations, code, uncategorized`. Replace with categories relevant to the install (e.g. `engineering, research, sales, support` for a work bot). Keep `uncategorized` as the fallback.\n2. **`CATEGORY_PREFIX`** — default 2-char mapping matching the categories above (`work → WK`, etc.). Customize to match category names; keep prefixes short.\n3. **Tag registry contents** — seed `tag_registry.json` with domain-specific tags and aliases; group logically (priority / status / domain). Canonical names are lowercase-hyphenated.\n4. **Thresholds** — `BLOAT_THRESHOLD` (default 150) and `DEFAULT_ARCHIVE_DAYS` (default 30) can be tuned to task velocity.\n5. **Light semantics** — descriptions in `LIGHT_DESC` are adjustable; the four-value structure (green/yellow/blue/red) is fixed.\n\nContract surfaces that MUST NOT change:\n\n1. JSON schema field names and types: `id, title, status, category, tags, created_date, updated_date, status_history`\n2. `status_history` shape: `{status, at, by}`\n3. Archive file structure: `{version, kind, year, last_updated, tasks: [...]}` with per-task `archived_at`\n4. Status transition state machine (terminal states `complete | cancelled` trigger `completed_at`)\n5. CLI flag names (e.g. `--status`, not `--state` — third-party integrations parse output)\n6. The `unified_task_system.py` script path (renaming breaks the cron shell wrappers and the AGENTS.md session-greet section, which hard-reference it)\n7. Atomic-write convention\n8. Provenance marker `# evolve: pkg=... file=...`\n\n## Test Suite\n\nRun in sequence from the workspace root:\n\n```bash\n# 1. Syntax check\npython3 -m py_compile scripts/unified_task_system.py\n\n# 2. Empty list\npython3 scripts/unified_task_system.py list\n# Expected: \"No tasks found.\"\n\n# 3. Add a task with all features\npython3 scripts/unified_task_system.py add \\\n  --title \"Smoke test\" \\\n  --category operations \\\n  --tags test,validation \\\n  --priority high --light yellow \\\n  --cost 100 --hours 4 \\\n  --due 2026-12-31 \\\n  --expires 2026-06-01T12:00:00Z\n\n# 4. Verify in list\npython3 scripts/unified_task_system.py list --status open\n# Expected: one row with ID OP-0001\n\n# 5. Show full details\npython3 scripts/unified_task_system.py show OP-0001\n\n# 6. Update with note\npython3 scripts/unified_task_system.py update OP-0001 --status in_progress --note \"Started\"\n\n# 7. Check status_history grew\npython3 scripts/unified_task_system.py show OP-0001 | grep -c \"in_progress\"\n# Expected: at least 1\n\n# 8. Complete\npython3 scripts/unified_task_system.py complete OP-0001 --note \"Done\"\n\n# 9. Next (empty)\npython3 scripts/unified_task_system.py next\n# Expected: \"No open tasks\" message\n\n# 10. Summary\npython3 scripts/unified_task_system.py summary\n\n# 11. Archive dry-run\npython3 scripts/unified_task_system.py archive --days 0 --dry-run\n# Expected: lists OP-0001 as eligible\n\n# 12. Tag registry\npython3 scripts/unified_task_system.py tag-registry\n\n# 13. Expired prune\npython3 scripts/unified_task_system.py add \\\n  --title \"Expired test\" --category operations \\\n  --tags pending_todo \\\n  --expires 2020-01-01T00:00:00Z\npython3 scripts/unified_task_system.py prune-expired --tag pending_todo --dry-run\n# Expected: lists the expired item as eligible\n\n# 14. Cache writes a non-empty file when items qualify\npython3 scripts/unified_task_system.py cache-urgent\ntest -s memory/next-up.md && echo 'OK: cache non-empty'\n\n# 15. Cron wrappers exist and are executable\ntest -x scripts/task-manager-cache-cron.sh  && echo 'OK: cache cron exec'\ntest -x scripts/task-manager-prune-cron.sh  && echo 'OK: prune cron exec'\n\n# 16. Cache becomes zero-bytes when nothing qualifies\npython3 scripts/unified_task_system.py complete OP-0002 --note \"clean\" 2>/dev/null || true\npython3 scripts/unified_task_system.py cache-urgent\ntest ! -s memory/next-up.md && echo 'OK: cache empty when nothing urgent'\n\n# 17. Cleanup\nrm -f tasks.json tag_registry.json && rm -rf archive/ memory/\n```\n\nAll commands must exit 0. No Python tracebacks.\n\n## What NOT to include\n\n- **No HEARTBEAT.md section for this app.** Heartbeat-driven polling of CLI commands burns tokens on every bot turn even when there is nothing to surface — that was the 2026-06-08 regression that this version explicitly fixes. If a future reviewer asks \"why no heartbeat instruction?\", the answer is: the cron + session-greet pair gives the same proactive surfacing at a fraction of the cost.\n- No `openclaw.json` mutation (Phase 4.5 installs the launchd plists and the AGENTS.md section; that's all).\n- No `/tmp` log files written from the Python script (logs go to stdout/stderr; the cron wrapper redirects to `/tmp/{bot_id}-task-manager-*.log`).\n- No background daemons or sleep loops (launchd handles cadence).\n- No interactive prompts in commands other than `archive` (and `archive --force` bypasses).\n- No `memory/last_prune.txt` (or any other self-throttle file). The 03:00 launchd cron owns prune cadence.\n",
+  "example_triggers": [
+    "What tasks are assigned to me?",
+    "Add a task: review the deployment checklist",
+    "Show all blocked tasks",
+    "What's the top priority right now?",
+    "Mark WK-0012 complete",
+    "Archive tasks completed more than 30 days ago",
+    "What tasks are waiting for approval (yellow light)?",
+    "Summarize the current task load",
+    "Cancel expired pending todos tagged pending_todo"
+  ],
+  "test_command": "python3 -m py_compile scripts/unified_task_system.py && python3 scripts/unified_task_system.py --help > /dev/null && python3 scripts/unified_task_system.py list > /dev/null",
+  "test_cases": [
+    {
+      "id": "tc-001",
+      "description": "Empty registry lists cleanly",
+      "trigger": "python3 scripts/unified_task_system.py list",
+      "expected": "Exits 0; stdout contains 'No tasks found.' when tasks.json is empty or absent."
+    },
+    {
+      "id": "tc-002",
+      "description": "Add + list + complete round-trip",
+      "trigger": "add a task with --title and --category, list with --status open shows that task, then complete <ID>",
+      "expected": "After complete, `list --status open` no longer shows the task; `list --status complete` does."
+    },
+    {
+      "id": "tc-003",
+      "description": "Next on an empty workload",
+      "trigger": "python3 scripts/unified_task_system.py next",
+      "expected": "Exits 0; stdout reports no open tasks."
+    },
+    {
+      "id": "tc-004",
+      "description": "Summary on an empty workload",
+      "trigger": "python3 scripts/unified_task_system.py summary",
+      "expected": "Exits 0; renders a status/light/category breakdown with 0 totals."
+    },
+    {
+      "id": "tc-005",
+      "description": "prune-expired --dry-run finds expired items",
+      "trigger": "Add a task with --expires in the past tagged pending_todo, then `prune-expired --tag pending_todo --dry-run`",
+      "expected": "Stdout lists the task as eligible for cancellation; tasks.json is unchanged."
+    },
+    {
+      "id": "tc-006",
+      "description": "Tag alias normalisation at input",
+      "trigger": "tag_registry.json declares `urgent` with alias `asap`; `add --tags asap` stores the tag as `urgent`",
+      "expected": "`show <ID>` shows the stored tags array contains 'urgent' (not 'asap')."
+    },
+    {
+      "id": "tc-007",
+      "description": "Migrate from legacy dict-keyed shape",
+      "trigger": "Pre-populate tasks.json with `{\"metadata\":{...},\"tasks\":{\"OP-0001\":{...}}}` then run `migrate`",
+      "expected": "tasks.json is rewritten to the array shape `{\"version\":\"6.0\",\"tasks\":[...]}`; the original task object is preserved with `name` mapped to `title` and `status_log` to `status_history`."
+    }
+  ],
+  "rsigrade_signals": [
+    "open_task_count",
+    "overdue_task_count",
+    "stale_needs_review_count",
+    "daily_prune_skip_streak",
+    "archive_age_days"
+  ],
+  "capability_tags": [
+    "Task Manager",
+    "task",
+    "todo",
+    "pending"
+  ],
+  "session_keywords": [
+    "task manager",
+    "tasks",
+    "todo",
+    "pending todo",
+    "next up",
+    "task summary"
+  ],
+  "files_pack": {
+    "format_version": "1.0",
+    "files_count": 0,
+    "snapshot_source_pkg_version": null,
+    "snapshot_at": null,
+    "sha256": null,
+    "notes": "v2026.06.05-1.0 is a spec-only release — the merger blueprint. Forge materializes scripts/unified_task_system.py + tag_registry.json + TASKS.md from the build_spec at install time. A snapshot files-pack will be cut once a reference bot has been migrated and the script verified end-to-end."
+  },
+  "usage": {
+    "model": "user-initiated",
+    "trigger_recognition": {
+      "pattern": "When the user mentions a thing they (or someone) needs to do, add it. When they ask what's on their plate, list. When something is done, complete it.",
+      "hint_words": [
+        "task",
+        "todo",
+        "add a task",
+        "what's on my plate",
+        "what tasks",
+        "mark done",
+        "next task",
+        "blocked tasks"
+      ],
+      "requires_keyword": false
+    },
+    "auto_capture": {
+      "enabled": true,
+      "sources": [
+        "user message"
+      ]
+    },
+    "how_to_use": "Use `add` to capture; the script accepts a freeform title plus optional owner / category / priority / tags. Use `list` for the active set; `show <id>` for detail; `update <id>` to change anything; `complete <id>` when done. `next` returns the highest-priority unblocked task. Don't ask the user to confirm category / priority — set defaults and let them correct if they care.",
+    "bot_voice_examples": [
+      "Added — 'Review deployment checklist', priority normal, owner you.",
+      "Five active: 2 high-priority (contract review, Q2 deck), 3 normal. One blocked on Bob's input.",
+      "Next up: 'Q2 deck review' — high priority, due today."
+    ]
+  },
+  "verification": [
+    {
+      "kind": "artifact",
+      "name": "main_script_compiles",
+      "path": "scripts/unified_task_system.py",
+      "checks": [
+        "exists",
+        "py_compiles"
+      ]
+    },
+    {
+      "kind": "artifact",
+      "name": "cache_cron_wrapper",
+      "path": "scripts/task-manager-cache-cron.sh",
+      "checks": [
+        "exists",
+        "owner_exec"
+      ]
+    },
+    {
+      "kind": "artifact",
+      "name": "prune_cron_wrapper",
+      "path": "scripts/task-manager-prune-cron.sh",
+      "checks": [
+        "exists",
+        "owner_exec"
+      ]
+    },
+    {
+      "kind": "artifact",
+      "name": "tag_registry_seeded",
+      "path": "tag_registry.json",
+      "checks": [
+        "exists",
+        "json_valid"
+      ]
+    },
+    {
+      "kind": "artifact",
+      "name": "tasks_manual_present",
+      "path": "TASKS.md",
+      "checks": [
+        "exists"
+      ]
+    },
+    {
+      "kind": "command",
+      "name": "cli_help",
+      "argv": [
+        "python3",
+        "scripts/unified_task_system.py",
+        "--help"
+      ],
+      "expected_exit": 0,
+      "stdout_regex": "(?i)usage",
+      "timeout_s": 30
+    },
+    {
+      "kind": "command",
+      "name": "cli_list",
+      "argv": [
+        "python3",
+        "scripts/unified_task_system.py",
+        "list"
+      ],
+      "expected_exit": 0,
+      "timeout_s": 30
+    },
+    {
+      "kind": "command",
+      "name": "cli_summary",
+      "argv": [
+        "python3",
+        "scripts/unified_task_system.py",
+        "summary"
+      ],
+      "expected_exit": 0,
+      "timeout_s": 30
+    },
+    {
+      "kind": "command",
+      "name": "cli_tag_registry",
+      "argv": [
+        "python3",
+        "scripts/unified_task_system.py",
+        "tag-registry"
+      ],
+      "expected_exit": 0,
+      "timeout_s": 30
+    },
+    {
+      "kind": "artifact",
+      "name": "next_up_cache_fresh",
+      "path": "memory/next-up.md",
+      "checks": [
+        "exists"
+      ],
+      "max_age_days": 2,
+      "modes": [
+        "dry-run"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,145 @@
+#!/bin/bash
+# Pre-commit hook — runs lightweight lints over the staged change set.
+#
+# To activate, from repo root run:
+#   git config core.hooksPath .githooks
+#
+# Bypass with `git commit --no-verify` if needed.
+
+set -e
+
+# --- catalog lint -----------------------------------------------------------
+# Lints docs/verification/catalog-*.md files. See docs/CATALOG_LINT.md for
+# the full wiring guide.
+catalog_staged=$(git diff --cached --name-only --diff-filter=ACM \
+                 | grep -E '^docs/verification/catalog-.*\.md$' || true)
+if [ -n "$catalog_staged" ]; then
+    if ! tools/etr-catalog-lint $catalog_staged; then
+        echo ""
+        echo "catalog-lint: errors in staged catalog files — aborting commit." >&2
+        echo "run 'tools/etr-catalog-lint' for the full report, or commit with --no-verify to bypass." >&2
+        exit 1
+    fi
+fi
+
+# --- ui style lint ----------------------------------------------------------
+# Checks staged admin-UI changes against docs/style-guide.md. Diff-only by
+# default: only NEW or CHANGED lines are checked, so legacy violations don't
+# block commits. See CLAUDE.md "Admin UI style" for the rules.
+if ! tools/ui-style-lint --staged; then
+    echo ""
+    echo "ui-style-lint: style-guide violations in NEW or CHANGED lines — aborting commit." >&2
+    echo "see docs/style-guide.md and CLAUDE.md for the rules, or commit with --no-verify to bypass." >&2
+    exit 1
+fi
+
+# --- sudo-grant lint --------------------------------------------------------
+# Every `sudo` call in packages/{admin,analyzer} that targets a binary in
+# evolve's sudo contract must map to a NOPASSWD grant (or carry a
+# `# sudo-grant:` annotation). Diff-only: only NEW or CHANGED lines block, so
+# legacy fuzzy warnings don't trip commits. Catches the silent "sudo: a
+# terminal is required to read the password" drift class. See CLAUDE.md
+# "sudoers Rules" + tools/sudo-grant-lint.
+if ! tools/sudo-grant-lint --staged; then
+    echo ""
+    echo "sudo-grant-lint: a NEW or CHANGED sudo call has no matching grant — aborting commit." >&2
+    echo "add the grant in setup_wizard._render_evolve_sudoers, or annotate the call" >&2
+    echo "(# sudo-grant: root-only / ungranted-by-design: <reason>), or commit with --no-verify." >&2
+    exit 1
+fi
+
+# --- platform-blind producer lint -------------------------------------------
+# Stops a NEW platform-blind producer/monitor from shipping: a macOS-only
+# binary (socketfilterfw/pfctl/dscl/fdesetup/softwareupdate/...) or a
+# macOS/darwin/FileVault string in a Signal/Finding message, with no
+# get_profile()/sys.platform gate, FileNotFoundError-s into a false CRITICAL
+# on a Linux/VPS pod. Staged producers under packages/analyzer/ are checked
+# against tools/platform-blind-baseline.txt (shrink-only). The /Users/ paths
+# rule stays CI-only (run via tools/platform-path-lint --all). See CLAUDE.md
+# "Runtime Context" + the lint's --help.
+if ! tools/platform-path-lint --rule blind --staged; then
+    echo ""
+    echo "platform-blind-lint: a NEW unguarded macOS-only producer was staged — aborting commit." >&2
+    echo "gate the check behind 'if get_profile().name == \"macos\":' (or add the Linux branch)," >&2
+    echo "or bump tools/platform-blind-baseline.txt, or commit with --no-verify to bypass." >&2
+    exit 1
+fi
+
+# --- openclaw EACCES recurrence guard ---------------------------------------
+# Blocks a NEW bare .exists()/.stat()/.is_file()/.is_dir()/open() on a bot
+# .openclaw path that is not guarded by try/except (PermissionError, OSError)
+# and does not route through secret_config_perms.exists_or_unreachable(). On
+# Linux/Py3.12 such a call RAISES PermissionError when the OC gateway clamps the
+# .openclaw ACL mask to --- (the #3184 deploy-abort / daemon-crash class). Staged
+# admin/analyzer files are checked against tools/openclaw-eacces-baseline.txt
+# (shrink-only). See the lint's --help + CLAUDE.md "File Access Pattern".
+if ! tools/openclaw-eacces-lint --staged; then
+    echo ""
+    echo "openclaw-eacces-lint: a NEW bare existence/open call on a bot .openclaw path was staged — aborting commit." >&2
+    echo "route it through secret_config_perms.exists_or_unreachable(), use read_text()+sudo /bin/cat," >&2
+    echo "or wrap it in try/except (PermissionError, OSError); or bump tools/openclaw-eacces-baseline.txt," >&2
+    echo "or commit with --no-verify to bypass." >&2
+    exit 1
+fi
+
+# --- deploy-checkout-path lint ----------------------------------------------
+# Stops a NEW hardcoded /Users/Shared/evolve-repo deploy-checkout literal in a
+# path-resolution context (Path(...)/os.path.*/cwd=) from shipping: on a Linux
+# pod the deploy checkout is /var/lib/evolve/repo, so a macOS literal breaks
+# path resolution (rollback no-ops, monitors go blind). Staged files are
+# checked against tools/platform-repo-path-baseline.txt (shrink-only; empty
+# goal state). Fast + low-false-positive, so it runs at commit time like the
+# blind rule; the broader /Users/ paths rule stays CI-only.
+if ! tools/platform-path-lint --rule repo --staged; then
+    echo ""
+    echo "platform-repo-path-lint: a NEW /Users/Shared/evolve-repo deploy-checkout literal was staged — aborting commit." >&2
+    echo "resolve it from the platform profile: Path(get_profile().deploy_checkout_default)," >&2
+    echo "or bump tools/platform-repo-path-baseline.txt, or commit with --no-verify to bypass." >&2
+    exit 1
+fi
+
+# --- signal-protection lint -------------------------------------------------
+# Fresh-pod alert protection by construction (spec internal/spec-transient-signal-
+# suppression-2026-06-23.md). Every operator-facing Signal producer must declare
+# its fresh-pod posture in signals.protection_registry. Diff-aware (--staged):
+# a NEW signals.store.observe() site in a file no registry entry claims (= an
+# undeclared producer), or a 'none' posture with no justification, blocks the
+# commit. Enforces a *declared* posture, not a gated one — gateway-down / security-
+# floor alerts pass with none+justification.
+if ! tools/signal-protection-lint --staged; then
+    echo ""
+    echo "signal-protection-lint: a Signal producer has no declared fresh-pod protection posture — aborting commit." >&2
+    echo "add an entry to packages/analyzer/signals/protection_registry.py (settle/flap/maturity, or" >&2
+    echo "none+justification for must-page-now alerts), or commit with --no-verify to bypass." >&2
+    exit 1
+fi
+
+# --- footprint output-declaration lint --------------------------------------
+# Auto-generated disk-output discipline by construction (spec internal/spec-
+# footprint-2026-06-18.md § "Auto-generated output declaration contract"). The
+# 2026-06-28 disk audit found 537 MB of audit records nothing reads or prunes,
+# because no mechanism forced a producer to declare a consumer + retention. This
+# lint blocks a NEW record/log write under {shared_dir}/** or workspace/evolve/**
+# whose file is not claimed by an OutputDeclaration in footprint.components
+# (each declares a retention policy AND a consumer; a consumer: none with no
+# retention is forbidden). Diff-aware (--staged).
+if ! tools/footprint-output-lint --staged; then
+    echo ""
+    echo "footprint-output-lint: an auto-generated disk output has no declaration — aborting commit." >&2
+    echo "add an OutputDeclaration to packages/analyzer/footprint/components.py (path + writer +" >&2
+    echo "retention + consumer, or a justified consumer:none + finite retention), or commit with --no-verify." >&2
+    exit 1
+fi
+
+# --- footprint posture-graph load-validator ---------------------------------
+# The F-3 posture dial cascades a disable through the component dependency graph
+# in footprint.components. This load-validator keeps that graph structurally
+# sound: every requires[] target exists + is a graph node, requires/required_by
+# are reciprocal, the cascade DAG is acyclic, the infra floor is never
+# dial-scoped (FD-7). Registry-internal (no files / diff) — cheap to always run.
+if ! tools/footprint-graph-lint; then
+    echo ""
+    echo "footprint-graph-lint: the posture component graph is structurally inconsistent — aborting commit." >&2
+    echo "fix the graph nodes in packages/analyzer/footprint/components.py, or commit with --no-verify." >&2
+    exit 1
+fi

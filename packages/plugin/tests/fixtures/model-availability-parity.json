@@ -1,0 +1,195 @@
+{
+  "_comment": "Shared TS<->Python parity fixture for availability-aware role resolution (spec internal/spec-model-rungs-and-roles-2026-06-09.md Addendum 3.A). Both ModelRouter.ts (resolveRoleAvailability) and primary_bot.py (resolve_role_with_availability) must resolve each (pod, bot, credentialed) triple to the SAME {model, resolvedRole, degraded, reason} per role. 'credentialed' is the RAW provider set (presence of a usable key); availability intersects it against the LLM-capable set DERIVED from the merged catalog's rung clusters (no provider literal — three-homes rule Addendum 3.B). 'reason' unifies degradation: uncredentialed | unconfigured | null. The former judge role (and its same_vendor_as_standard advisory reason) was collapsed — J3, internal/design-judge-role-collapse-2026-08-21.md 5.4. 'expectCrossVendor' pins the cross-vendor derivation (design 5.2 — resolve_cross_vendor / resolveCrossVendor): per against-role, the first credentialed model in the resolved role's rung whose provider differs from the resolved model's, or null when none exists (null is meaningful — a single-provider pod gets no cross-vendor judge). KEEP IN SYNC: edit once; both parity tests read it.",
+  "scenarios": [
+    {
+      "name": "fully credentialed pod — every role resolves, no degradation",
+      "pod": {},
+      "bot": {},
+      "credentialed": [
+        "anthropic",
+        "openai",
+        "google",
+        "brave"
+      ],
+      "expect": {
+        "fast": {
+          "model": "anthropic/claude-haiku-4-5",
+          "resolvedRole": "fast",
+          "degraded": false,
+          "reason": null
+        },
+        "standard": {
+          "model": "anthropic/claude-sonnet-4-6",
+          "resolvedRole": "standard",
+          "degraded": false,
+          "reason": null
+        },
+        "power": {
+          "model": "anthropic/claude-opus-4-8",
+          "resolvedRole": "power",
+          "degraded": false,
+          "reason": null
+        },
+        "max": {
+          "model": "anthropic/claude-fable-5",
+          "resolvedRole": "max",
+          "degraded": false,
+          "reason": null
+        }
+      },
+      "expectCrossVendor": {
+        "fast": "openai/gpt-4.1-mini",
+        "standard": "openai/gpt-4.1",
+        "power": "openai/gpt-4.1",
+        "max": null
+      }
+    },
+    {
+      "name": "non-LLM credential only (brave) — every LLM role unavailable",
+      "_comment": "brave is credentialed but is NOT in any rung cluster, so the LLM-capable intersection is empty. Every role degrades to the bottom of the ladder and still finds nothing -> unavailable with uncredentialed.",
+      "pod": {},
+      "bot": {},
+      "credentialed": [
+        "brave"
+      ],
+      "expect": {
+        "fast": {
+          "model": null,
+          "resolvedRole": null,
+          "degraded": false,
+          "reason": "uncredentialed"
+        },
+        "standard": {
+          "model": null,
+          "resolvedRole": null,
+          "degraded": true,
+          "reason": "uncredentialed"
+        },
+        "power": {
+          "model": null,
+          "resolvedRole": null,
+          "degraded": true,
+          "reason": "uncredentialed"
+        },
+        "max": {
+          "model": null,
+          "resolvedRole": null,
+          "degraded": true,
+          "reason": "uncredentialed"
+        }
+      },
+      "expectCrossVendor": {
+        "standard": null
+      }
+    },
+    {
+      "name": "only openai credentialed — max degrades down to a credentialed rung",
+      "_comment": "fable-class is anthropic-only in defaults, but the enriched opus-class now holds openai/gpt-4.1 (Addendum 7 #13). With only openai credentialed: max degrades max->power; power's opus-class holds openai/gpt-4.1 so max resolves there (resolvedRole=power, degraded, uncredentialed). power itself resolves WITHIN its own opus-class rung to openai/gpt-4.1 (no degradation). standard resolves to openai/gpt-4.1 within sonnet-class. fast resolves to openai/gpt-4.1-mini within haiku-class. expectCrossVendor is null everywhere — a single-provider pod gets no cross-vendor option (the meaningful null, design 5.2).",
+      "pod": {},
+      "bot": {},
+      "credentialed": [
+        "openai"
+      ],
+      "expect": {
+        "fast": {
+          "model": "openai/gpt-4.1-mini",
+          "resolvedRole": "fast",
+          "degraded": false,
+          "reason": null
+        },
+        "standard": {
+          "model": "openai/gpt-4.1",
+          "resolvedRole": "standard",
+          "degraded": false,
+          "reason": null
+        },
+        "power": {
+          "model": "openai/gpt-4.1",
+          "resolvedRole": "power",
+          "degraded": false,
+          "reason": null
+        },
+        "max": {
+          "model": "openai/gpt-4.1",
+          "resolvedRole": "power",
+          "degraded": true,
+          "reason": "uncredentialed"
+        }
+      },
+      "expectCrossVendor": {
+        "standard": null,
+        "max": null
+      }
+    },
+    {
+      "name": "within-rung credentialed fallback preferred over degradation",
+      "_comment": "pod gives power's opus-class a two-provider cluster [anthropic, openai]; only openai credentialed. power resolves WITHIN its own rung to the openai member (no degradation) rather than degrading to standard.",
+      "pod": {
+        "rungs": [
+          {
+            "id": "opus-class",
+            "models": [
+              "anthropic/claude-opus-4-8",
+              "openai/gpt-4o"
+            ],
+            "costClass": "high"
+          }
+        ]
+      },
+      "bot": {},
+      "credentialed": [
+        "openai"
+      ],
+      "expect": {
+        "power": {
+          "model": "openai/gpt-4o",
+          "resolvedRole": "power",
+          "degraded": false,
+          "reason": null
+        }
+      },
+      "expectCrossVendor": {
+        "power": null
+      }
+    },
+    {
+      "name": "anthropic-only pod — every role resolves to anthropic; no cross-vendor option",
+      "_comment": "The single-provider live shape. Every ladder role resolves on anthropic; expectCrossVendor is null (the meaningful null — design 5.2/5.3: the call site decides, e.g. SessionStruggleJudge falls back to classifierModel flagged cross_vendor:false). The second-provider recommendation on AI Optimization is the surface that nudges this pod toward failover + cross-vendor checking.",
+      "pod": {},
+      "bot": {},
+      "credentialed": [
+        "anthropic"
+      ],
+      "expect": {
+        "fast": {
+          "model": "anthropic/claude-haiku-4-5",
+          "resolvedRole": "fast",
+          "degraded": false,
+          "reason": null
+        },
+        "standard": {
+          "model": "anthropic/claude-sonnet-4-6",
+          "resolvedRole": "standard",
+          "degraded": false,
+          "reason": null
+        },
+        "power": {
+          "model": "anthropic/claude-opus-4-8",
+          "resolvedRole": "power",
+          "degraded": false,
+          "reason": null
+        },
+        "max": {
+          "model": "anthropic/claude-fable-5",
+          "resolvedRole": "max",
+          "degraded": false,
+          "reason": null
+        }
+      },
+      "expectCrossVendor": {
+        "standard": null,
+        "fast": null
+      }
+    }
+  ]
+}

@@ -1,0 +1,309 @@
+[
+  {
+    "pkg_id": "p-9bfa1c84",
+    "pkg_version": "2026.06.08-1.2",
+    "display_name": "Task Manager",
+    "description": "Persistent task management. Track active work items with owners, categories, priorities, tags, and approval states. Includes CLI (add/list/show/update/complete/next/summary), tag-registry-driven normalization, expires-based pending todos, year-bucketed archive, and a self-throttled daily prune.",
+    "author": "evolve",
+    "app_id": "app_task_manager",
+    "path": "task-manager/p-9bfa1c84.json",
+    "application_tags": [
+      "personal-productivity",
+      "task-management",
+      "productivity-foundation",
+      "ea-suite",
+      "productivity"
+    ]
+  },
+  {
+    "pkg_id": "p-aab5e569",
+    "pkg_version": "2026.06.11-2.2",
+    "display_name": "EA Pack",
+    "description": "Curated bundle of executive-assistant behaviors \u2014 Morning Briefing, Evening Sweep, Pre-Meeting Brief, Commitment Tracker \u2014 plus their data-layer foundations (Contacts, Task Manager, Calendar Sync). Meta-spec only: installs the seven dependencies, ships no scripts of its own.",
+    "author": "evolve",
+    "app_id": "app_ea_pack",
+    "path": "ea-pack/p-aab5e569.json",
+    "application_tags": [
+      "starter-pack",
+      "archetype-personal-assistant",
+      "personal-productivity",
+      "executive-assistant",
+      "ea-suite",
+      "morning-routine",
+      "evening-routine",
+      "calendar",
+      "calendar-summary",
+      "contacts",
+      "task-management",
+      "daily-digest",
+      "productivity",
+      "integration"
+    ]
+  },
+  {
+    "pkg_id": "p-3a7d52c9",
+    "pkg_version": "2026.06.11-1.2",
+    "display_name": "Project Pack",
+    "description": "Curated bundle for a project-manager bot \u2014 Task Manager, Meeting Note-taker, Commitment Tracker, Pre-Meeting Brief \u2014 plus their data-layer foundations (Contacts, Calendar Sync). Meta-spec only: installs the six dependencies, ships no scripts of its own.",
+    "author": "evolve",
+    "app_id": "app_project_pack",
+    "path": "project-pack/p-3a7d52c9.json",
+    "application_tags": [
+      "starter-pack",
+      "archetype-project-manager",
+      "project-management",
+      "task-management",
+      "meeting-prep",
+      "meeting-notes",
+      "contacts",
+      "calendar",
+      "follow-up",
+      "productivity",
+      "executive-assistant",
+      "integration",
+      "notes"
+    ]
+  },
+  {
+    "pkg_id": "p-1d3e8f47",
+    "pkg_version": "2026.07.02-1.3",
+    "display_name": "Evening Sweep",
+    "description": "Once-per-day end-of-day review delivered via the bot's primary channel \u2014 what was completed today, what's still open or overdue, plus commitment follow-ups when Contacts is installed.",
+    "author": "evolve",
+    "app_id": "app_evening_sweep",
+    "path": "evening-sweep/p-1d3e8f47.json",
+    "application_tags": [
+      "personal-productivity",
+      "executive-assistant",
+      "ea-suite",
+      "evening-routine",
+      "task-management",
+      "productivity",
+      "contacts"
+    ]
+  },
+  {
+    "pkg_id": "p-2c7a9b6e",
+    "pkg_version": "2026.07.02-1.4",
+    "display_name": "Pre-Meeting Brief",
+    "description": "Sends a short briefing message ~60 minutes before each external calendar event. Polls every 15 minutes, reads the Calendar Sync cache, and delivers attendee context drawn from Contacts memory.",
+    "author": "evolve",
+    "app_id": "app_pre_meeting_brief",
+    "path": "pre-meeting-brief/p-2c7a9b6e.json",
+    "application_tags": [
+      "personal-productivity",
+      "executive-assistant",
+      "ea-suite",
+      "calendar",
+      "calendar-summary",
+      "meeting-prep",
+      "productivity",
+      "contacts",
+      "integration"
+    ]
+  },
+  {
+    "pkg_id": "p-3b4f5d29",
+    "pkg_version": "2026.06.08-1.2",
+    "display_name": "Commitment Tracker",
+    "description": "Captures commitments made in conversation into the Contacts memory layer; surfaces overdue commitments to the operator once per day via heartbeat.",
+    "author": "evolve",
+    "app_id": "app_commitment_tracker",
+    "path": "commitment-tracker/p-3b4f5d29.json",
+    "application_tags": [
+      "personal-productivity",
+      "executive-assistant",
+      "ea-suite",
+      "contacts",
+      "follow-up",
+      "productivity",
+      "task-management"
+    ]
+  },
+  {
+    "pkg_id": "p-4136a932",
+    "pkg_version": "2026.04.16-1.1",
+    "display_name": "Contacts",
+    "description": "Per-person relationship memory \u2014 tracks commitments, notes, and meeting history for each contact.",
+    "author": "evolve",
+    "app_id": "app_contacts",
+    "path": "contacts/p-4136a932.json",
+    "application_tags": [
+      "personal-productivity",
+      "relationship-management",
+      "crm",
+      "data-foundation",
+      "calendar",
+      "contacts",
+      "ea-suite",
+      "executive-assistant",
+      "productivity"
+    ]
+  },
+  {
+    "pkg_id": "p-fb9141b4",
+    "pkg_version": "2026.04.16-1.1",
+    "display_name": "Journal",
+    "description": "Daily log with morning intentions, end-of-day notes, and freeform entries \u2014 one file per day.",
+    "author": "evolve",
+    "app_id": "app_journal",
+    "path": "journal/p-fb9141b4.json",
+    "application_tags": [
+      "personal-productivity",
+      "reflection",
+      "journaling",
+      "daily-routine",
+      "productivity"
+    ]
+  },
+  {
+    "pkg_id": "p-fe9acef3",
+    "pkg_version": "2026.04.16-1.1",
+    "display_name": "Calendar Sync",
+    "description": "Syncs Google Calendar events into structured local JSON files, updating every 15 minutes.",
+    "author": "evolve",
+    "app_id": "app_calendar_sync",
+    "path": "calendar-sync/p-fe9acef3.json",
+    "application_tags": [
+      "calendar-summary",
+      "data-foundation",
+      "personal-productivity",
+      "calendar",
+      "executive-assistant",
+      "integration",
+      "productivity",
+      "workspace-suite"
+    ]
+  },
+  {
+    "pkg_id": "p-341576fa",
+    "pkg_version": "2026.04.16-1.1",
+    "display_name": "Email Integration",
+    "description": "Syncs Gmail into structured local files for EA Pack, CRM, and commitment detection apps, updating every 30 minutes.",
+    "author": "evolve",
+    "app_id": "app_email_integration",
+    "path": "email-integration/p-341576fa.json",
+    "application_tags": [
+      "email-summary",
+      "data-foundation",
+      "personal-productivity",
+      "calendar",
+      "contacts",
+      "email",
+      "executive-assistant",
+      "integration",
+      "productivity",
+      "workspace-suite"
+    ]
+  },
+  {
+    "pkg_id": "p-a9a74bf7",
+    "pkg_version": "2026.07.02-2.5",
+    "display_name": "Morning Briefing",
+    "description": "Composes a single daily morning message from the data files produced by Calendar Sync and (optionally) Email Integration, then delivers it via the bot's primary channel at a configured time (default 7 AM local). A day-1 bot with nothing connected still gets a useful first briefing \u2014 what the bot is set up to do and what it's waiting on \u2014 instead of silence.",
+    "author": "evolve",
+    "app_id": "app_morning_briefing",
+    "path": "morning-briefing/p-a9a74bf7.json",
+    "application_tags": [
+      "personal-productivity",
+      "morning-routine",
+      "email-summary",
+      "calendar-summary",
+      "daily-digest",
+      "calendar",
+      "daily-brief-suite",
+      "email",
+      "productivity",
+      "integration"
+    ]
+  },
+  {
+    "pkg_id": "p-f14e9562",
+    "pkg_version": "2026.06.11-1.2",
+    "display_name": "Meeting Note-taker",
+    "description": "Captures meeting notes in your Obsidian vault automatically. Creates a note when a meeting starts, accepts 'take a note' commands during meetings via the bot's channel, and seals the note with attendees and an optional summary when the meeting ends.",
+    "author": "evolve",
+    "app_id": "app_note_taker",
+    "path": "note-taker/p-f14e9562.json",
+    "application_tags": [
+      "meeting-notes",
+      "obsidian-integration",
+      "calendar-summary",
+      "knowledge-management",
+      "calendar",
+      "integration",
+      "notes"
+    ]
+  },
+  {
+    "pkg_id": "p-738f057c",
+    "pkg_version": "2026.07.02-1.3",
+    "display_name": "Calendar Daily Summary",
+    "description": "Delivers one daily message with today's meeting schedule, a tomorrow preview, and any scheduling conflicts or tight transitions. Calendar-only \u2014 no weather, news, or email. Configurable delivery time (default 7 AM local).",
+    "author": "evolve",
+    "app_id": "app_calendar_summary",
+    "path": "calendar-summary/p-738f057c.json",
+    "application_tags": [
+      "personal-productivity",
+      "calendar-summary",
+      "daily-digest",
+      "morning-routine",
+      "calendar",
+      "daily-brief-suite",
+      "email",
+      "productivity"
+    ]
+  },
+  {
+    "pkg_id": "p-41e4c5f4",
+    "pkg_version": "2026.07.02-1.3",
+    "display_name": "Email Triage",
+    "description": "Reads your recent unread email twice a day, classifies each message by urgency and category, and delivers a triage summary via your bot's primary channel.",
+    "author": "evolve",
+    "app_id": "app_email_triage",
+    "path": "email-triage/p-41e4c5f4.json",
+    "application_tags": [
+      "personal-productivity",
+      "email-summary",
+      "email-triage",
+      "daily-digest",
+      "daily-brief-suite",
+      "email",
+      "productivity"
+    ]
+  },
+  {
+    "pkg_id": "p-5f2bc54c",
+    "pkg_version": "2026.07.28-1.4",
+    "display_name": "PM Inbox",
+    "description": "Public-repo feedback PM for a maintainer bot. Hourly sweep of a public GitHub repo's issues and PRs: classifies and labels each new item, keeps a public-to-private crosswalk ledger, drafts replies and private-tracker filings, and sends every draft to the operator for approval before anything is posted. Labels are the only automatic public action.",
+    "author": "evolve",
+    "app_id": "app_pm_inbox",
+    "path": "pm-inbox/p-5f2bc54c.json",
+    "application_tags": [
+      "github",
+      "developer-tools",
+      "productivity",
+      "integration",
+      "project-management",
+      "issue-triage",
+      "task-management"
+    ]
+  },
+  {
+    "pkg_id": "p-38da680b",
+    "pkg_version": "2026.09.01-1.0",
+    "display_name": "Documents",
+    "description": "Documents by reference: every document-shaped output (itinerary, letter, report, plan) lives as a markdown file in docs/, replies carry a short summary and the path, revisions are targeted section or phrase edits applied by script, and the PDF/HTML deliverable is rendered by code and attached by path. The model writes a document once and never re-emits it to change a line.",
+    "author": "evolve",
+    "app_id": "app_documents",
+    "path": "documents/p-38da680b.json",
+    "application_tags": [
+      "documents",
+      "writing",
+      "personal-productivity",
+      "productivity-foundation",
+      "productivity"
+    ]
+  }
+]

@@ -1,0 +1,23 @@
+
+── OpenClaw Upgrade ──────────────────────────────────
+  Installed:  2026.7.0
+  Checking npm registry…  Latest:     2026.7.1      
+
+  Upgrading 2026.7.0 → 2026.7.1
+
+  Running safe-upgrade preflight…
+  ✅ preflight: all gates passed
+  Running: install -g --prefix=/opt/homebrew openclaw@2026.7.1
+  ✅ Installed: 2026.7.1
+
+  Checking for conflicting user-level LaunchAgents…
+  (no conflicting agents)
+
+  Checking CLI device scopes…
+  ✅ CLI device scopes intact
+
+  Restarting all gateways…
+  (send-surface stub)
+  (oc-deps stub)
+
+  ✅ Upgrade complete.
