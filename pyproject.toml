@@ -1,0 +1,38 @@
+# Repo-root VIRTUAL uv workspace — exists so `uv lock` can resolve both
+# Python packages into the single committed uv.lock (Phase 6.4). There is
+# deliberately NO [project] section: the repo root is not an installable
+# package, just the workspace umbrella.
+#
+# Floor pins live in each package's pyproject.toml; uv.lock carries the
+# exact resolved set. CI installs with `uv sync --locked` (fails if the
+# lock is stale instead of silently re-resolving). Refresh after editing
+# any pyproject:  uv lock   (then commit the lock in the same PR).
+#
+# Deploy boxes do NOT use uv — they keep the documented pip editable
+# installs (compat mode for the analyzer; see packages/analyzer/
+# pyproject.toml). The lock is for CI + dev reproducibility.
+
+[tool.uv.workspace]
+# edr/ is the dev-environment-only Evolve Development Rig. It imports the
+# packaged evolve-analyzer libraries (never forks them) and ships nothing a
+# pod loads. It is a workspace member so `uv lock` resolves it into the
+# committed lock and `uv sync` installs it editable for CI + dev.
+members = ["packages/admin", "packages/analyzer", "edr"]
+
+# Test-only dependencies, locked alongside the runtime set. CI installs
+# them via `uv sync --locked` (dev group is on by default).
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-xdist>=3.6",
+    # Toolchain-ratchet linters (Phase 6.3) — locked here so CI and dev
+    # run the exact same versions; lint/type diagnostics drift across
+    # releases. Bumping either means re-freezing its baseline in the
+    # same PR (tools/ruff-baseline-lint / tools/pyright-baseline-lint).
+    "ruff==0.16.5",
+    "pyright==1.1.411",
+]
+# browser-smoke workflow only — heavy (downloads drivers), so not in dev.
+browser = [
+    "pytest-playwright>=0.9.0",
+]

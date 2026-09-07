@@ -1,0 +1,18 @@
+{
+  "networkId": "browser-smoke-test",
+  "members": [],
+  "primary": null,
+  "sharedDir": "__SHARED_DIR_PLACEHOLDER__",
+  "timezone": "America/Los_Angeles",
+  "thresholds": {
+    "dailySpendAlertUsd": 5.0,
+    "weeklySpendAlertUsd": 20.0,
+    "spendCapAction": "alert-only",
+    "maxSessionContextTokens": 100000
+  },
+  "alerts": {
+    "channel": "telegram",
+    "chatId": "0"
+  },
+  "bots": {}
+}

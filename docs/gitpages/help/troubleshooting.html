@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Troubleshooting · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">troubleshooting</span><span class="chip">logs</span></div><div class="reviewed">Last reviewed 2026-07-28</div></div><h1 id="troubleshooting">Troubleshooting</h1>
+<p>Start with the two commands that diagnose most things:</p>
+<pre><code class="language-bash">evolve-admin status              # pod summary: bots live? versions in sync?
+sudo evolve-admin health         # scan OC instances, permissions, services
+sudo evolve-admin health --fix   # ...and apply the non-privileged fixes
+</code></pre>
+<p><code>health</code> exits 0 when everything passes (warnings allowed) and 2 when at
+least one check fails, so it also works in scripts.</p>
+<hr>
+<h2 id="the-wizard-failed-at-step-n">"The wizard failed at step N"</h2>
+<p>The setup wizard is <strong>idempotent</strong> — every step checks before it acts, so the
+fix for almost any wizard failure is: fix the underlying problem, then re-run
+<code>sudo evolve-admin setup --fresh</code> and let it fast-forward through the steps
+that already succeeded.</p>
+<p>The 18 steps, so you can name where it died:</p>
+<ol>
+<li>Pod identity</li>
+<li>Bot roster</li>
+<li>Security configuration</li>
+<li>Admin user</li>
+<li>Check prerequisites</li>
+<li>Host power &amp; sleep</li>
+<li>Dedicated-host acknowledgment</li>
+<li>Install OpenClaw</li>
+<li>Create bot accounts</li>
+<li>Set up OpenClaw per bot</li>
+<li>Configure Evolve alerts</li>
+<li>Set up shared directory</li>
+<li>Deploy Evolve</li>
+<li>Repo access (auto-update)</li>
+<li>Provision primary bot OC instance</li>
+<li>Verify</li>
+<li>Claude Desktop integration (optional)</li>
+<li>HTTPS on the LAN (for PWA install on phones)</li>
+</ol>
+<p>The steps that fail most often, and the first thing to check:</p>
+<ul>
+<li><strong>Step 5 (prerequisites)</strong> — <code>python3 --version</code> and <code>node --version</code>.
+  Evolve needs Python 3.10+ (macOS ships 3.9) and Node 20+; on a Mac,
+  <code>brew install python@3.12 node</code>.</li>
+<li><strong>Step 8 (install OpenClaw)</strong> — <code>which openclaw</code>. If the npm install
+  failed, check <code>npm --version</code> works and that npm's global bin dir is on
+  <code>PATH</code>, install OpenClaw manually, then re-run the wizard (it detects the
+  existing install and skips).</li>
+<li><strong>Step 14 (repo access)</strong> — <code>sudo evolve-admin repo-pull</code> tests a pull
+  directly; <code>sudo evolve-admin repo-pull --setup-key</code> re-prints the deploy
+  key and the GitHub registration walkthrough (only needed for private
+  origins). The wizard never blocks on this step — the puller install
+  bootstraps the key as a backstop.</li>
+<li><strong>Step 16 (verify — gateway not responding)</strong> — gateways can take a minute
+  to start, especially the primary. If one stays down:
+  <code>tail -50 /Users/&lt;bot&gt;/.openclaw/logs/gateway.err.log</code>, then
+  <code>sudo evolve-admin health</code>.</li>
+</ul>
+<hr>
+<h2 id="where-logs-live">Where logs live</h2>
+<table>
+<thead>
+<tr>
+<th>What</th>
+<th>Where</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Admin structured log (CLI + server)</td>
+<td><code>~/.evolve/logs/evolve-admin.log</code> (the <code>evolve</code> user's home on a pod)</td>
+</tr>
+<tr>
+<td>Admin server daemon stdout/stderr</td>
+<td><code>/Users/evolve/.openclaw/logs/evolve-admin-ui.log</code> and <code>/Users/Shared/evolve/logs/evolve-admin-ui.err.log</code></td>
+</tr>
+<tr>
+<td>Per-bot gateway</td>
+<td><code>/Users/&lt;bot&gt;/.openclaw/logs/gateway.log</code> and <code>gateway.err.log</code></td>
+</tr>
+<tr>
+<td>Pod-wide background jobs</td>
+<td><code>{shared_dir}/logs/</code> (e.g. <code>/Users/Shared/evolve/logs/audit.log</code>, <code>better_engine.log</code>)</td>
+</tr>
+</tbody>
+</table>
+<p>On Linux pods, substitute the platform paths (<code>/var/lib/evolve/…</code>,
+<code>/home/&lt;bot&gt;/…</code>).</p>
+<hr>
+<h2 id="common-issues">Common issues</h2>
+<p><strong>Metrics aren't being written.</strong> Usually shared-dir permissions:
+<code>sudo evolve-admin setup-shared</code> recreates the shared directory with correct
+ownership and modes.</p>
+<p><strong>Plugin not loading.</strong>
+<code>tail -50 /Users/&lt;bot&gt;/.openclaw/logs/gateway.err.log | grep evolve</code>, then
+reinstall with <code>sudo evolve-admin deploy &lt;bot-id&gt;</code>.</p>
+<p><strong>No proposals after a week.</strong> Check that observation data exists:
+<code>ls /Users/Shared/evolve/annotations/&lt;bot-id&gt;/</code> and
+<code>ls /Users/Shared/evolve/metrics/</code>. Empty annotations means the plugin isn't
+running — <code>sudo evolve-admin deploy &lt;bot-id&gt;</code>. (Less than a week of data is
+normal: the engine reports "insufficient data" until then.)</p>
+<p><strong>Proposals exist on disk but not in the dashboard.</strong> Look at the rejected
+pile for an auto-rejection reason:
+<code>python3 -m json.tool /Users/Shared/evolve/proposals/rejected/&lt;latest&gt;.json | grep rejection_reason</code>.</p>
+<hr>
+<h2 id="pairing-problems-locked-out-of-the-dashboard">Pairing problems (locked out of the dashboard)</h2>
+<p>Device pairing is on by default. If no paired browser can reach the UI, get a
+fresh code <strong>on the pod itself</strong>:</p>
+<pre><code class="language-bash">sudo evolve-admin pair           # prints a 6-digit code, valid a few minutes
+evolve-admin auth status         # is pairing enforced? key present?
+</code></pre>
+<p>The sudo matters: the pairing key is owned by the <code>evolve</code> daemon user, and
+minting or reading it without root would leave the daemon locked out. As a
+last resort on a genuinely single-tenant box,
+<code>evolve-admin auth disable --accept-risk "&lt;why&gt;"</code> records an opt-out and stops
+enforcement (<code>auth enable</code> restores it).</p>
+<h2 id="port-5050-already-in-use">Port 5050 already in use</h2>
+<p>That is almost always a good sign: the admin UI is <strong>already running as a
+background service</strong> (the <code>ai.evolve.evolve.admin-ui</code> daemon). Don't run
+<code>evolve-admin serve</code> on the pod — just open <code>http://127.0.0.1:5050</code>. If you
+installed the server as a user-level service instead, <code>evolve-admin service
+status</code> / <code>service restart</code> manage it.</p>
+<hr>
+<h2 id="where-to-look-in-the-dashboard">Where to look in the dashboard</h2>
+<ul>
+<li><strong>Errors page</strong> — deduplicated runtime errors from the admin UI, background
+  jobs, and gateways, with a one-click path to report a bug upstream. See
+  <a href="errors.html">Help: Errors Page</a>.</li>
+<li><strong>Alerts page</strong> — the pod's monitors (health, cost, audit, watchdog) file
+  Signals here; a firing Signal is the "something needs attention" view.</li>
+</ul>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/troubleshooting.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>

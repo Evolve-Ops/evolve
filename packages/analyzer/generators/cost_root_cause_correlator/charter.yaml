@@ -1,0 +1,61 @@
+id: cost_root_cause_correlator
+schema_version: 1
+type: optimizer
+dimension: cost
+bucket: improve
+# Surface routing: firing. This generator only emits when an acute cost
+# signal IS currently firing (session_token_outlier, cost_spike,
+# daily_spend_high), AND it has a correlated chronic root cause to name.
+# The output is "you spent $7.67 this session BECAUSE cache invalidation
+# is chronically elevated — here's the cacheRetention flip." That's an
+# active cost incident with attribution, not slow drift to review later.
+# Moved from drift → firing in the 2026-06-04 charter-surface
+# recalibration. Spec:
+# internal/spec-recommendations-rework-2026-06-02.md §"Generator routing".
+surface: firing
+purpose: >
+  Synthesizes acute cost signals (session_token_outlier, cost_spike,
+  daily_spend_high from cost_watchdog) with correlated chronic patterns
+  on the same bot into a single actionable Proposal that names both the
+  acute incident and the chronic root cause. Today's only correlation:
+  cache_invalidation_elevated chronic + any acute cost signal →
+  UpdateAgentDefaults flipping cacheRetention from "short" to "long".
+
+  Closes the RSI loop on the motivating team-bot-a session 3d5cde22
+  ($7.67, 7.9× median, 92% prompt-cache writes that never paid back)
+  incident: cost_watchdog and session_economics each had the right
+  finding, but neither could surface "the chronic pattern explains the
+  acute incident, and there is a knob to fix it." That's what this
+  generator does.
+
+  Investigate-before-propose pattern (smarter-generators sprint): uses
+  the investigation toolkit (correlated_signals, proposal_history,
+  config_intent) to gather evidence, then emits exactly one Proposal
+  per (bot, correlation) when a fix is warranted. Dedupe via
+  proposal_history.
+
+cadence: daily
+# When the underlying acute Signal stops firing (e.g. operator already
+# flipped the knob and cost outliers stopped), the synthesized Proposal
+# auto-archives via the standard resolves_when_silent loop.
+resolves_when_silent: true
+invariants:
+  - id: action_kind_allowed
+    description: >
+      The correlator emits Investigation (when no autonomous fix is
+      available) or UpdateAgentDefaults (when a correlation has a
+      typed fix today). It does not emit ConfigPatch, UpdateExecApproval,
+      or any other action kind — every fix path goes through a
+      correlation entry in correlations.py.
+    check_kind: action_kind_allowed
+    params:
+      allowlist: [UpdateAgentDefaults, Investigation]
+  - id: touches_forbidden
+    description: >
+      The correlator does not touch auth, tools, channel_config, or
+      gateway_core. It only mutates per-bot agents.defaults.* knobs via
+      UpdateAgentDefaults, which by construction stays in the
+      model-config corner of openclaw.json.
+    check_kind: touches_forbidden
+    params:
+      forbidden: [auth, tools, channel_config, gateway_core]

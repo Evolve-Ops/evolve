@@ -1,0 +1,480 @@
+#!/usr/bin/env python3
+"""context-budget-ratchet — no-growth char budgets on the per-turn context surfaces.
+
+Overhead-budget Phase D1 (internal/spec-evolve-overhead-budget-2026-07-31.md):
+every char in a bootstrap template, a session-injection block, or a tool
+manifest is paid in tokens on EVERY turn of every affected bot — the 2026-07-31
+cost incident traced to exactly this class of unpriced weight (an 18KB conduct
+file, a 92.7k-char MCP manifest, a 128k AGENTS.md silently truncated). Phases
+B1/B2/B6/B7 dieted those surfaces; this gate is what stops the next feature
+from quietly re-bloating them. Same shape as tools/file-size-ratchet (lines →
+chars): a checked-in baseline freezes each surface's current measured size,
+any change that grows a surface past its budget BLOCKS, and shrinks re-freeze
+the baseline DOWN.
+
+**Diff-relative (the per-PR contract).** Measured against the change *this
+branch introduces*, not the absolute repo state. With a base ref (``--base
+<ref>``, or auto-detected from ``origin/main``), the effective ceiling per
+surface is ``max(budget, chars_on_base)``: a PR fails ONLY if it grows a
+surface above that ceiling, so an over-budget merge on main cannot red every
+subsequent PR. When no base resolves, the stricter absolute budget applies
+(fail-closed, never a hole).
+
+The baseline is tools/context-budget-baseline.txt, ``<chars>\t<surface>`` per
+line. A surface is ``kind:spec``:
+
+  file:<path>             — chars of the whole file (bootstrap templates that
+                            deploy verbatim, e.g. the primary AGENTS.md core).
+  marker:<path>#<name>    — chars of the ``<!-- <name>:begin/end -->`` block
+                            inside <path> (the session-injection source blocks
+                            session_surface.py extracts at import).
+  py:<name>               — a named python-measured surface from the registry
+                            below (import-derived: the session_surface static
+                            block templates; the evo MCP tool manifest). The
+                            CURRENT tool measures both sides — against the
+                            working tree, and (lazily, only when a surface is
+                            over budget) against the base materialized into a
+                            temporary ``git worktree``.
+
+This ratchet does NOT discover surfaces — only the baseline's list is checked.
+Add one by appending ``0\t<kind>:<spec>`` and running ``--update-baseline``.
+
+Usage:
+  tools/context-budget-ratchet                     # check every surface
+  tools/context-budget-ratchet --all               # alias for the above
+  tools/context-budget-ratchet --base <ref>        # diff-relative vs <ref>
+  tools/context-budget-ratchet --update-baseline   # re-freeze after a legit
+                                                   # shrink (or a deliberate,
+                                                   # reviewed growth)
+
+The base ref resolves from: ``--base`` → ``$RATCHET_BASE_SHA`` → ``git
+merge-base HEAD origin/main`` (identical to tools/file-size-ratchet; CI passes
+the PR base sha). Unlike the file-size ratchet, a DELIBERATE budget raise is a
+legal move here — but it must be explicit: run ``--update-baseline`` and let
+the reviewer see the number go up in the diff, citing why the weight is worth
+carrying in every turn.
+
+Exit status: 0 if no surface grew past its ceiling; 1 if one did; 2 on a
+broken setup (missing baseline, unmeasurable surface in the working tree).
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+BASELINE_PATH = REPO_ROOT / "tools" / "context-budget-baseline.txt"
+# Same env var the file-size ratchet reads — CI exports one comparison base.
+BASE_ENV_VAR = "RATCHET_BASE_SHA"
+
+
+# ---------------------------------------------------------------------------
+# py: measurement registry — named, import-derived surfaces.
+#
+# Each entry maps a name to (description, source_hint, code). ``code`` is run
+# in a SUBPROCESS interpreter (import isolation; the same code measures the
+# working tree and the base worktree) with the target repo root on argv[1];
+# it must print a single integer char count. Keep the code resilient to older
+# revisions (getattr defaults) so base-side measurement degrades to a clean
+# failure, not a traceback that hides the real diff.
+# ---------------------------------------------------------------------------
+
+_PY_SURFACES: dict[str, tuple[str, str, str]] = {
+    "session-static-blocks": (
+        "sum of session_surface.py's static injection templates "
+        "(member/primary role scaffolds, app-findings footer, apps-reference "
+        "stub scaffolding) — injected per session across the fleet",
+        "packages/analyzer/session_surface.py",
+        """
+import sys
+from pathlib import Path
+root = Path(sys.argv[1])
+sys.path.insert(0, str(root / "packages" / "analyzer"))
+import session_surface as ss
+total = 0
+for const in ("_MEMBER_BLOCK", "_PRIMARY_BLOCK", "_APP_FINDINGS_DEEP_DIVE_FOOTER"):
+    total += len(getattr(ss, const, ""))
+build_stub = getattr(ss, "build_apps_reference_stub", None)
+if build_stub is not None:
+    total += len(build_stub(ss.APPS_REFERENCE_RELPATH, []))
+print(total)
+""",
+    ),
+    "evo-mcp-manifest": (
+        "the ADVERTISED evo MCP tool manifest (facades.advertised_manifest(), "
+        "the JSON the MCP bridge's list_tools serves) — rides in every "
+        "primary-bot prompt via OC's MCP integration (~3 chars/token for "
+        "schemas; B7 dieted 92,726 → 72,462 → 25,265)",
+        "packages/admin/evolve_admin/evo/tools/",
+        """
+import json, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+sys.path.insert(0, str(root / "packages" / "admin"))
+sys.path.insert(1, str(root / "packages" / "analyzer"))
+try:
+    # Post-B7-Phase-2: the facade layer is what list_tools advertises.
+    from evolve_admin.evo.tools.facades import advertised_manifest as _m
+except ImportError:
+    # Pre-facade revisions (base-side measurement): the flat manifest WAS
+    # the advertised surface.
+    from evolve_admin.evo.tools import build_tool_manifest as _m
+print(len(json.dumps(_m())))
+""",
+    ),
+}
+
+
+def _git(*args: str) -> subprocess.CompletedProcess:
+    """Run git in REPO_ROOT, never raising (missing binary -> rc 127-ish)."""
+    try:
+        return subprocess.run(
+            ["git", *args], cwd=REPO_ROOT, capture_output=True
+        )
+    except OSError:
+        return subprocess.CompletedProcess(args, returncode=1, stdout=b"", stderr=b"")
+
+
+def _resolve_base(base_ref: str | None) -> str | None:
+    """Resolve the comparison base to a sha, or None (→ absolute budgets).
+
+    Priority: explicit ``base_ref`` -> ``$RATCHET_BASE_SHA`` -> ``git
+    merge-base HEAD origin/main`` — identical to tools/file-size-ratchet.
+    """
+    ref = (base_ref or os.environ.get(BASE_ENV_VAR) or "").strip()
+    if ref:
+        r = _git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+        sha = r.stdout.decode("utf-8", "replace").strip()
+        return sha or None
+    r = _git("merge-base", "HEAD", "origin/main")
+    sha = r.stdout.decode("utf-8", "replace").strip()
+    return sha if r.returncode == 0 and sha else None
+
+
+# ---------------------------------------------------------------------------
+# Surface measurement — each returns (chars | None, error_note)
+# ---------------------------------------------------------------------------
+
+
+def _marker_block_chars(text: str, name: str) -> int | None:
+    """Chars of the content between ``<!-- name:begin -->`` / ``:end`` markers
+    (exclusive, stripped) — the same slice session_surface.py injects."""
+    begin, end = f"<!-- {name}:begin -->", f"<!-- {name}:end -->"
+    i, j = text.find(begin), text.find(end)
+    if i < 0 or j < 0 or j <= i:
+        return None
+    return len(text[i + len(begin):j].strip())
+
+
+def _measure_worktree(kind: str, spec: str) -> tuple[int | None, str]:
+    """Measure a surface against the current working tree."""
+    return _measure(kind, spec, root=REPO_ROOT, base_sha=None)
+
+
+def _measure_base(kind: str, spec: str, base_sha: str,
+                  base_tree: "Path | None") -> tuple[int | None, str]:
+    """Measure a surface as it was at ``base_sha``. file/marker read the blob
+    via ``git show``; py needs ``base_tree`` (a materialized checkout)."""
+    return _measure(kind, spec, root=base_tree, base_sha=base_sha)
+
+
+def _measure(kind: str, spec: str, *, root: "Path | None",
+             base_sha: str | None) -> tuple[int | None, str]:
+    if kind in ("file", "marker"):
+        path = spec.split("#", 1)[0] if kind == "marker" else spec
+        if base_sha is not None:
+            r = _git("show", f"{base_sha}:{path}")
+            if r.returncode != 0:
+                return None, f"{path} absent at base"
+            text = r.stdout.decode("utf-8", "replace")
+        else:
+            try:
+                text = (REPO_ROOT / path).read_text(encoding="utf-8")
+            except OSError as e:
+                return None, f"cannot read {path}: {e}"
+        if kind == "file":
+            return len(text), ""
+        name = spec.split("#", 1)[1]
+        n = _marker_block_chars(text, name)
+        if n is None:
+            return None, f"markers '<!-- {name}:begin/end -->' not found in {path}"
+        return n, ""
+
+    if kind == "py":
+        entry = _PY_SURFACES.get(spec)
+        if entry is None:
+            return None, f"unknown py surface '{spec}' (registry: {sorted(_PY_SURFACES)})"
+        if root is None:
+            return None, "no base tree materialized"
+        try:
+            r = subprocess.run(
+                [sys.executable, "-c", entry[2], str(root)],
+                capture_output=True, text=True, timeout=120,
+            )
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return None, f"measurement subprocess failed: {e}"
+        if r.returncode != 0:
+            tail = (r.stderr or "").strip().splitlines()[-1:] or ["no output"]
+            return None, f"measurement failed: {tail[0]}"
+        try:
+            return int(r.stdout.strip()), ""
+        except ValueError:
+            return None, f"non-integer measurement output: {r.stdout!r}"
+
+    return None, f"unknown surface kind '{kind}'"
+
+
+# ---------------------------------------------------------------------------
+# Base-tree materialization (lazy — only when a py surface is over budget)
+# ---------------------------------------------------------------------------
+
+
+class _BaseTree:
+    """Lazily materialize ``base_sha`` into a temp git worktree; clean up on
+    close(). Materialization failure degrades to None (→ absolute budget for
+    the asking surface — fail-closed, matching the no-base fallback)."""
+
+    def __init__(self, base_sha: str):
+        self.base_sha = base_sha
+        self._path: Path | None = None
+        self._tried = False
+
+    def get(self) -> "Path | None":
+        if not self._tried:
+            self._tried = True
+            tmp = Path(tempfile.mkdtemp(prefix="ctx-budget-base-")) / "tree"
+            r = _git("worktree", "add", "--detach", "--quiet",
+                     str(tmp), self.base_sha)
+            if r.returncode == 0:
+                self._path = tmp
+            else:
+                print(
+                    f"note: could not materialize base tree "
+                    f"({r.stderr.decode('utf-8', 'replace').strip()}) — "
+                    "python-measured surfaces fall back to absolute budgets",
+                    file=sys.stderr,
+                )
+        return self._path
+
+    def close(self) -> None:
+        if self._path is not None:
+            _git("worktree", "remove", "--force", str(self._path))
+            _git("worktree", "prune")
+            self._path = None
+
+
+# ---------------------------------------------------------------------------
+# Baseline file
+# ---------------------------------------------------------------------------
+
+
+def _load_baseline() -> dict[str, int]:
+    if not BASELINE_PATH.exists():
+        return {}
+    baseline: dict[str, int] = {}
+    for line in BASELINE_PATH.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split("\t", 1)  # "<chars>\t<kind>:<spec>"
+        if len(parts) != 2:
+            continue
+        try:
+            baseline[parts[1]] = int(parts[0])
+        except ValueError:
+            continue
+    return baseline
+
+
+def _write_baseline(counts: dict[str, int]) -> None:
+    lines = [
+        "# context-budget-baseline — char budgets on the per-turn context surfaces",
+        "# (overhead-budget Phase D1, internal/spec-evolve-overhead-budget-2026-07-31.md).",
+        "# Generated by `tools/context-budget-ratchet --update-baseline`. The gate",
+        "# blocks any surface that GROWS past its budget; shrinks re-freeze lower.",
+        "# A deliberate raise is legal but must ride the PR diff — rerun",
+        "# --update-baseline and justify the extra per-turn weight in review.",
+        "# Format: <chars>\\t<kind>:<spec> where kind is file | marker | py",
+        "# (see the tool's docstring). Add a surface: append `0\\t<kind>:<spec>`",
+        "# and rerun --update-baseline.",
+        "",
+    ]
+    for surface in sorted(counts):
+        lines.append(f"{counts[surface]}\t{surface}")
+    BASELINE_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _describe(kind: str, spec: str) -> tuple[str, str]:
+    """(description, source hint) for the failure report."""
+    if kind == "file":
+        return "whole-file bootstrap template (deploys verbatim)", spec
+    if kind == "marker":
+        path, name = spec.split("#", 1)
+        return (
+            f"the `<!-- {name}:begin/end -->` block (session-injection source "
+            "extracted by session_surface.py)",
+            path,
+        )
+    entry = _PY_SURFACES.get(spec)
+    return (entry[0], entry[1]) if entry else ("(unknown)", "?")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description="No-growth char budgets on the per-turn context surfaces (D1)."
+    )
+    ap.add_argument(
+        "--all", action="store_true",
+        help="check every surface (the default; accepted for symmetry)",
+    )
+    ap.add_argument(
+        "--base", default=None, metavar="REF",
+        help=(
+            "diff-relative comparison base (a surface fails only if this "
+            "branch grew it past max(budget, chars-on-base)). Defaults to "
+            "$%s, then merge-base with origin/main." % BASE_ENV_VAR
+        ),
+    )
+    ap.add_argument(
+        "--update-baseline", action="store_true",
+        help="re-freeze budgets from current measurements (shrink, or a "
+             "deliberate reviewed raise)",
+    )
+    args = ap.parse_args()
+
+    baseline = _load_baseline()
+    if not baseline:
+        print(
+            f"✗ no budget list found at {BASELINE_PATH.relative_to(REPO_ROOT)}",
+            file=sys.stderr,
+        )
+        return 2
+
+    surfaces = [(s, *s.split(":", 1)) for s in baseline]  # (surface, kind, spec)
+    bad = [s for s, kind, spec in surfaces if kind not in ("file", "marker", "py")]
+    if bad:
+        print(f"✗ malformed baseline surface(s): {bad}", file=sys.stderr)
+        return 2
+
+    if args.update_baseline:
+        counts: dict[str, int] = {}
+        for surface, kind, spec in surfaces:
+            n, err = _measure_worktree(kind, spec)
+            if n is None:
+                print(f"✗ cannot measure {surface}: {err}", file=sys.stderr)
+                return 2
+            counts[surface] = n
+        _write_baseline(counts)
+        total = sum(counts.values())
+        print(
+            f"baseline written: {len(counts)} surface(s), {total:,} chars total"
+        )
+        return 0
+
+    base_sha = _resolve_base(args.base)
+    if base_sha:
+        print(
+            f"diff-relative mode: comparing against base {base_sha[:12]} "
+            "(a surface fails only if THIS branch grew it past its budget)."
+        )
+    else:
+        print(
+            "absolute-budget mode: no base ref resolved "
+            f"(pass --base <ref> or set ${BASE_ENV_VAR} for diff-relative)."
+        )
+
+    base_tree = _BaseTree(base_sha) if base_sha else None
+    violations = []   # (surface, kind, spec, n, budget, base_n)
+    errors = []       # (surface, err) — unmeasurable in the WORKING TREE
+    below = 0
+    inherited = 0
+    try:
+        for surface, kind, spec in surfaces:
+            budget = baseline[surface]
+            n, err = _measure_worktree(kind, spec)
+            if n is None:
+                errors.append((surface, err))
+                continue
+            base_n: int | None = None
+            if base_sha and n > budget:
+                # Only the over-budget case needs the base value (the ceiling
+                # is max(budget, base_n)); measuring lazily keeps the common
+                # all-green run cheap and worktree-free.
+                tree = base_tree.get() if (base_tree and kind == "py") else None
+                base_n, _ = _measure_base(kind, spec, base_sha, tree)
+            ceiling = budget if base_n is None else max(budget, base_n)
+            if n > ceiling:
+                violations.append((surface, kind, spec, n, budget, base_n))
+            elif n < budget:
+                below += 1
+            elif base_n is not None and base_n > budget:
+                inherited += 1
+    finally:
+        if base_tree:
+            base_tree.close()
+
+    if errors:
+        print("\n✗ context surface(s) unmeasurable in the working tree:\n")
+        for surface, err in errors:
+            print(f"  {surface}: {err}")
+        print(
+            "\nA budgeted surface must stay measurable — its injection builder"
+            "\nwould break the same way. Fix the markers/paths, or remove the"
+            f"\nsurface from {BASELINE_PATH.relative_to(REPO_ROOT)} if it was"
+            "\ndeliberately retired."
+        )
+        return 2
+
+    if violations:
+        print("\n✗ context surface(s) grew past their char budget (overhead-budget D1):\n")
+        for surface, kind, spec, n, budget, base_n in violations:
+            desc, src = _describe(kind, spec)
+            if base_n is not None and base_n > budget:
+                print(
+                    f"  {surface}: {n:,} chars, was {base_n:,} on base, budget "
+                    f"is {budget:,} (this branch added +{n - base_n:,} on top "
+                    "of an over-budget surface)"
+                )
+            else:
+                origin = "" if base_n is None else f", was {base_n:,} on base"
+                print(
+                    f"  {surface}: {n:,} chars{origin}, budget allows "
+                    f"{budget:,} (+{n - budget:,})"
+                )
+            print(f"      what:   {desc}")
+            print(f"      source: {src}")
+        print(
+            "\nEvery char in these surfaces is carried in bot context per turn"
+            "\n(internal/spec-evolve-overhead-budget-2026-07-31.md). Trim the"
+            "\naddition — or move it behind an on-demand surface (a workspace"
+            "\nreference file, meta.tools) as B1/B6/B7 did. If the growth is"
+            "\ndeliberate and worth its per-turn cost, re-freeze and let the"
+            "\nreviewer see the number rise:\n"
+            "  tools/context-budget-ratchet --update-baseline"
+        )
+        return 1
+
+    notes = []
+    if below:
+        notes.append(
+            f"{below} surface(s) now BELOW budget — run "
+            "`tools/context-budget-ratchet --update-baseline` to ratchet down"
+        )
+    if inherited:
+        notes.append(
+            f"{inherited} surface(s) over budget on the base but not grown here "
+            "(not this branch's debt)"
+        )
+    if notes:
+        print("✓ no context surface grew. " + "; ".join(notes) + ".")
+    else:
+        print("✓ no context surface grew past its char budget.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

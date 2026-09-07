@@ -1,0 +1,217 @@
+# Concept → files index for docs/help/.
+#
+# The weekly knowledge-refresh routine (see README.md) reads this file to map
+# concept terms appearing in merged PRs to the help files that own them.
+#
+# Rules:
+#   - Each concept appears in `concepts:` frontmatter of AT LEAST one file here.
+#   - A file may own multiple concepts; a concept may be owned by multiple files.
+#   - When a concept is split across files, the *primary* owner (the file that
+#     defines the concept) is listed first.
+#   - Add a concept here BEFORE adding it to any file's frontmatter — this list
+#     is the controlled vocabulary.
+
+version: 1
+last_built: 2026-06-23
+
+concepts:
+  # ── Architecture & orientation ───────────────────────────────────────────
+  what-is-evolve:        [overview.md, getting-started.md]
+  architecture:          [overview.md]
+  three-layer:           [overview.md]
+  install:               [installation.md, getting-started.md, quick-start.md]
+  orientation:           [getting-started.md]
+  quick-start:           [quick-start.md]
+  first-week:            [quick-start.md]
+  day-zero:              [quick-start.md]
+  openclaw:              [overview.md, getting-started.md]
+  evo:                   [overview.md]
+  pods:                  [overview.md]
+  better-engine:         [overview.md, recommendations.md, cost-optimization.md]
+
+  # ── Install & access ─────────────────────────────────────────────────────
+  installation:          [installation.md, install-macos.md, install-linux-vsp.md, install-with-an-agent.md]
+  clone-repo:            [installation.md]
+  prerequisites:         [installation.md]
+  api-keys:              [installation.md]
+  hardware:              [installation.md]
+  install-macos:         [install-macos.md]
+  install-linux:         [install-linux-vsp.md]
+  openclaw-versions:     [installation.md, install-macos.md, install-linux-vsp.md]
+  adopt-existing-bots:   [install-macos.md, install-linux-vsp.md, quick-start.md, installation.md]
+  vps:                   [install-linux-vsp.md]
+  ssh-tunnel:            [install-macos.md, install-linux-vsp.md]
+  remote-access:         [install-macos.md, install-linux-vsp.md]
+  tailscale:             [install-macos.md, pwa-install.md, board.md]
+  pwa:                   [pwa-install.md]
+  board:                 [board.md]
+  board-link:            [board.md]
+  tailnet-listener:      [board.md]
+  add-to-home-screen:    [pwa-install.md, board.md]
+  mobile-install:        [pwa-install.md]
+  https:                 [pwa-install.md, install-macos.md]
+  pods-app:              [pods-app.md]
+  desktop-app:           [pods-app.md]
+  multi-pod:             [pods-app.md]
+
+  # ── Operate bucket ───────────────────────────────────────────────────────
+  overview-page:         [overview-page.md]
+  pod-status:            [overview-page.md]
+  bot-tiles:             [overview-page.md]
+  dashboard:             [overview-page.md]
+
+  plugins:               [plugins.md]
+  channels:              [plugins.md]
+  credentials:           [plugins.md]
+  embeddings:            [plugins.md]
+  mcp-servers:           [plugins.md]
+  hooks:                 [plugins.md]
+
+  reports:               [reports.md]
+  subscriptions:         [reports.md]
+  digest:                [reports.md]
+  watchlist:             [reports.md]
+
+  terminal:              [terminal.md]
+
+  backup:                [backup.md]
+  cloud-backup:          [backup.md]
+  local-backup:          [backup.md]
+  recovery:              [backup.md]
+  data-classification:   [backup.md]
+  drift-detection:       [backup.md, security.md]
+
+  security:              [security.md]
+  audit:                 [security.md]
+  signals:               [security.md]
+  exec-policy:           [security.md]
+  sudoers:               [security.md]
+  posture:               [security.md]
+  auto-memory:           [security.md]
+  intentional-deviations: [security.md]
+  config-intent:         [security.md]
+  install-provenance:    [security.md, plugins.md]
+
+  maintenance:           [maintenance.md]
+  gateway-status:        [maintenance.md]
+  cron-jobs:             [maintenance.md]
+  openclaw-version:      [maintenance.md]
+  admin-server:          [maintenance.md]
+  logs:                  [maintenance.md, troubleshooting.md]
+
+  # ── Improve bucket ───────────────────────────────────────────────────────
+  recommendations:       [recommendations.md, coaches.md]
+  proposals:             [recommendations.md, reports.md]
+  arbiter:               [recommendations.md]
+  approval:              [recommendations.md]
+  snooze:                [recommendations.md]
+  coaches:               [coaches.md]
+  generators:            [coaches.md]
+  charters:              [coaches.md]
+  track-record:          [coaches.md]
+  authority-factor:      [coaches.md]
+
+  skills:                [skills.md]
+  skill-install:         [skills.md]
+  plugin-install:        [skills.md]
+  mcp-install:           [skills.md]
+  capability-maintenance: [skills.md]
+
+  apps:                  [apps.md]
+  applications:          [apps.md]
+  forge:                 [apps.md]
+  app-install:           [apps.md]
+  app-audit:             [apps.md, security.md]
+  app-gallery:           [apps.md]
+  app-reliability:       [apps.md]
+  app-coherence:         [apps.md]
+  app-reconciliation:    [apps.md]
+  app-provenance:        [apps.md]
+
+  issues:                [issues.md]
+  intake:                [issues.md]
+  intake-drafts:         [issues.md]
+  issue-tracking:        [issues.md]
+  triage:                [issues.md]
+  auto-response-policy:  [issues.md]
+
+  errors:                [errors.md]
+  crash-report:          [errors.md]
+  upstream-submission:   [errors.md]
+
+  cost:                  [cost-optimization.md, usage.md]
+  spend:                 [cost-optimization.md, usage.md]
+  budget:                [cost-optimization.md]
+  daily-cap:             [cost-optimization.md]
+  efficiency-score:      [cost-optimization.md]
+  context-pruning:       [cost-optimization.md]
+  tier-downgrade:        [cost-optimization.md]
+  cost-caps-matrix:      [cost-optimization.md]
+  graduated-remediation: [cost-optimization.md]
+  l2-breaker:            [cost-optimization.md]
+  cascade-toggle:        [cost-optimization.md, ai-optimization.md]
+  pod-defaults:          [cost-optimization.md]
+
+  ai-optimization:       [ai-optimization.md]
+  model-tiers:           [ai-optimization.md, cost-optimization.md]
+  providers:             [ai-optimization.md]
+  routing:               [ai-optimization.md]
+  model-catalog:         [ai-optimization.md]
+
+  continuity-engine:     [continuity.md]
+  continuity:            [continuity.md]
+  deferred-intent:       [continuity.md]
+  inline-python:         [continuity.md]
+  agent-session:         [continuity.md]
+  idle-detection:        [continuity.md]
+
+  # ── Settings bucket ──────────────────────────────────────────────────────
+  settings:              [settings.md]
+  pod-configuration:     [settings.md]
+  network-json:          [settings.md]
+  modules:               [settings.md]
+  primary-bot:           [settings.md]
+
+  users:                 [users.md]
+  pod-admins:            [users.md]
+  paired-users:          [users.md]
+  pairing-approval:      [users.md]
+  self-claim-passphrase: [users.md]
+  per-bot-owner:         [users.md]
+
+  # ── Bot-side surfaces ────────────────────────────────────────────────────
+  bot-page:              [profile.md]
+  bot-setup:             [profile.md]
+  archetype:             [profile.md]
+  surfacing-cadence:     [profile.md]
+  per-bot-monthly-cap:   [profile.md]
+  profile-binary:        [profile.md]
+
+  profile-inferrer:      [profile-inferrer.md]
+  per-bot-inference:     [profile-inferrer.md]
+  dnt:                   [profile-inferrer.md]
+  session-end-hook:      [profile-inferrer.md]
+  profile-extraction:    [profile-inferrer.md]
+
+  # ── Usage / billing ──────────────────────────────────────────────────────
+  usage:                 [usage.md]
+  billing:               [usage.md]
+  model-spend:           [usage.md]
+  cost-rollup:           [usage.md]
+  export:                [usage.md]
+
+  # ── Day-2 operations (beta corpus, 2026-07-28) ───────────────────────────
+  updating:              [updating.md]
+  releases:              [updating.md]
+  rollback:              [updating.md]
+  uninstall:             [uninstall.md]
+  troubleshooting:       [troubleshooting.md]
+  feedback:              [feedback.md]
+  bug-reports:           [feedback.md]
+  install-agent:         [install-with-an-agent.md]
+
+  # ── Deprecated / redirect ────────────────────────────────────────────────
+  meta-health:           [meta-health.md]
+  watchdog-events:       [meta-health.md, security.md]
+  alerts:                [reports.md, security.md, meta-health.md]
+  calibration-snapshots: [meta-health.md]

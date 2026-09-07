@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.evolve.audit.team_bot_b</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>sleep $((RANDOM % 300)); exec /Users/Shared/evolve-venv/bin/python3 /Users/Shared/evolve-repo/packages/analyzer/audit.py --mode 'full sweep'</string>
+    </array>
+    <key>UserName</key>
+    <string>team_bot_b</string>
+    <key>StartInterval</key>
+    <integer>1800</integer>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>/Users/team_bot_b/.openclaw/logs/evolve-audit.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/team_bot_b/.openclaw/logs/evolve-audit.err.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>PYTHONPATH</key>
+        <string>/Users/Shared/evolve-repo/packages/analyzer</string>
+        <key>EVOLVE_NETWORK</key>
+        <string>/Users/Shared/evolve/network.json</string>
+    </dict>
+</dict>
+</plist>

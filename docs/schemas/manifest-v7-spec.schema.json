@@ -1,0 +1,536 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://evolve.openclaw/manifest-v7-spec.schema.json",
+  "title": "AppSpec",
+  "description": "Schema v7-arc — App Spec: the canonical, shareable recipe for an app. See internal/spec-manifest-v7-2026-05-20.md §3.",
+  "type": "object",
+  "required": [
+    "spec_id",
+    "spec_version",
+    "name",
+    "schema_version",
+    "manifest_shape",
+    "objective",
+    "blueprint",
+    "dependencies",
+    "audience_scoping"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "spec_id": {
+      "type": "string",
+      "pattern": "^p-[a-f0-9]{8}$",
+      "description": "Stable Spec identifier. Persists across versions. Prefix 'p-' is legacy from 'package'; functional meaning is 'spec'."
+    },
+    "app_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,46}[a-z0-9]$",
+      "description": "AL-1.4a canonical identity. For a Spec this IS spec_id (design §3: spec_id == app_id). Written through the canonical-slug gate, so a non-conforming spec_id leaves it absent rather than minting a different id than the gallery path and provenance.spec_id already use."
+    },
+    "spec_version": {
+      "type": "string",
+      "pattern": "^[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-[0-9]+\\.[0-9]+$",
+      "description": "Spec version in YYYY.MM.DD-major.minor format (e.g., '2026.05.20-1.0')."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable name."
+    },
+    "description": {
+      "type": "string",
+      "description": "Operator-authored summary. Shown on app cards/tiles. Preserved from v13 by migration when present."
+    },
+    "app_version": {
+      "type": "string",
+      "description": "App's own semver, distinct from spec_version."
+    },
+    "schema_version": {
+      "type": "integer",
+      "const": 14,
+      "description": "v7-arc schema version stamp."
+    },
+    "manifest_shape": {
+      "type": "string",
+      "const": "v7-arc",
+      "description": "Structural shape discriminator."
+    },
+    "source": {
+      "type": "object",
+      "description": "Set on share. Absent for locally-original Specs that haven't been shared.",
+      "required": ["pod_id", "bot_id", "shared_at"],
+      "additionalProperties": false,
+      "properties": {
+        "pod_id": { "type": "string" },
+        "bot_id": { "type": "string" },
+        "shared_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "objective": {
+      "type": "object",
+      "required": ["primary"],
+      "additionalProperties": false,
+      "properties": {
+        "primary": {
+          "type": "string",
+          "minLength": 1,
+          "description": "One-sentence primary goal."
+        },
+        "sub_objectives": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Flat list. v1 uses flat structure; hierarchical may be added as a sibling field if forced."
+        }
+      }
+    },
+    "success_criteria": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "behavioral": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Observable behaviors that indicate success."
+        },
+        "observable": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Quantitative success metrics (signal references, counts, rates)."
+        },
+        "observable_outcomes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "v13-compat alias for observable; preserved through migration so existing operator-authored content isn't lost."
+        },
+        "failure_signals": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Conditions that indicate the app is broken or degraded. Preserved from v13."
+        },
+        "minimum_bar": {
+          "type": "string",
+          "description": "The lowest level of functionality the app must meet. Preserved from v13."
+        }
+      }
+    },
+
+    "identity": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Preserved-from-v13 block. Holds purpose / scope_includes / scope_excludes / user fields the operator authored. v7's `objective` block is the canonical replacement, but until UIs and downstream consumers migrate, the identity block is the safest place for richer prose.",
+      "properties": {
+        "purpose": { "type": "string" },
+        "scope_includes": { "type": "array", "items": { "type": "string" } },
+        "scope_excludes": { "type": "array", "items": { "type": "string" } },
+        "user": { "type": "string" }
+      }
+    },
+
+    "constraints": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Preserved-from-v13. Operator-authored safety / dependency / boundary prose. The `privacy` sub-block is canonicalized into top-level `privacy` (Atlas Gap 3); the rest passes through verbatim — 78% of real v13 manifests populate non-privacy fields here, so silent drop would lose meaningful operator content."
+    },
+
+    "test_cases": {
+      "type": "array",
+      "description": "Preserved-from-v13. Operator-authored test triggers + expected behaviors. 76% of real v13 manifests populate this; no clean v7 home yet, so passthrough keeps the content addressable until a richer test-records design lands.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+
+    "example_triggers": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Preserved-from-v13. Operator-curated example phrases that should activate the app. 76% populated in real v13 manifests; useful as Forge-time reference + operator documentation."
+    },
+
+    "owner": {
+      "type": "string",
+      "description": "Preserved-from-v13. The bot account that owns/runs the app — usually equals provenance.source_bot_id but operators sometimes set it explicitly."
+    },
+
+    "inputs": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Preserved-from-v13. App input port / data-source declarations the operator authored."
+    },
+
+    "outputs": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Preserved-from-v13. App output port / channel declarations the operator authored."
+    },
+
+    "scheduled_actions": {
+      "type": "array",
+      "description": "Preserved-from-v13 (schema v13 extraction). Structured records of recurring behaviors with trigger evidence anchors. Tier-2 audit assertions read these — keep the content addressable.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "blueprint": {
+      "type": "object",
+      "required": ["files"],
+      "additionalProperties": false,
+      "properties": {
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["logical_name", "role", "intent"],
+            "additionalProperties": false,
+            "properties": {
+              "logical_name": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Identifier used to reference this file from event_triggers, schedules, etc."
+              },
+              "role": {
+                "type": "string",
+                "enum": ["vital_to_blueprint", "instance_specific", "reference_only"],
+                "description": "vital_to_blueprint = Forge MUST recreate equivalent functionality; instance_specific = empty placeholder; reference_only = documentation only."
+              },
+              "intent": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Natural-language description of what this file accomplishes. Authoritative; the snippet is illustrative."
+              },
+              "code_snippet": {
+                "type": "string",
+                "description": "Optional reference implementation. Receiving LLM may implement identically, similarly, or differently."
+              },
+              "language": {
+                "type": "string",
+                "description": "File language/format (python, jsonl, bash, etc.)."
+              },
+              "expected_location": {
+                "type": "string",
+                "description": "Suggested workspace-relative path."
+              }
+            }
+          }
+        }
+      }
+    },
+    "dependencies": {
+      "type": "object",
+      "required": ["apps", "python_packages", "system_packages", "oc_plugins", "oc_skills", "integrations", "credentials"],
+      "additionalProperties": false,
+      "properties": {
+        "apps": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/appDependency" }
+        },
+        "python_packages": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/namedDependency" }
+        },
+        "system_packages": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/systemPackageDependency" }
+        },
+        "oc_plugins": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/ocPluginDependency" }
+        },
+        "oc_skills": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/ocSkillDependency" }
+        },
+        "integrations": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/integrationDependency" }
+        },
+        "credentials": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/credentialDependency" }
+        }
+      }
+    },
+    "event_triggers": {
+      "type": "array",
+      "description": "Chat-message → handler invocation pairs. Phase 2 of the agent-freelance-bypass spec (internal/spec-agent-freelance-bypass-phase2-2026-06-06.md) extended this with the 'match' shape lock + new 'invocation' sub-object so the same record drives the audit Signal producer AND the plugin's before_prompt_build interceptor.",
+      "items": {
+        "type": "object",
+        "required": ["id", "source", "match", "audience", "invokes"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "description": "Stable identifier unique within the manifest. Surfaces in audit Signal bodies + telemetry." },
+          "source": { "type": "string", "description": "Integration channel that produces the event (e.g., 'telegram')." },
+          "match": {
+            "type": "object",
+            "required": ["channel", "pattern"],
+            "additionalProperties": false,
+            "description": "Pattern matching contract. The trigger fires when channel matches AND pattern matches AND (exclude_pattern is null OR doesn't match).",
+            "properties": {
+              "channel": {
+                "type": "string",
+                "enum": ["telegram_dm", "telegram_group", "slack_dm", "slack_channel", "discord_dm", "discord_channel", "any"],
+                "description": "Lowercased channel kind. 'any' matches every channel — use sparingly."
+              },
+              "pattern": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Python-style regex. If re.search(pattern, message_text) matches, the trigger fires. Compiled at manifest load; broken patterns fail validation."
+              },
+              "exclude_pattern": {
+                "type": ["string", "null"],
+                "description": "When set and re.search matches, the trigger does NOT fire even if pattern would. Useful for excluding slash commands (e.g. /optout) from a broad DM catch-all."
+              }
+            }
+          },
+          "audience": { "type": "string", "description": "Role from audience_scoping.role_capabilities that's authorized to trigger." },
+          "invokes": { "type": "string", "minLength": 1, "description": "logical_name of the blueprint file to invoke. Validator confirms it refers to the same file as invocation.script." },
+          "invocation": {
+            "type": "object",
+            "required": ["script", "stdout_protocol", "on_failure"],
+            "additionalProperties": false,
+            "description": "Script execution contract. Required when the parent manifest's invocation_mode is 'plugin_intercept'.",
+            "properties": {
+              "script": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Path to the script under the bot's workspace/scripts/. Forge install pipeline already places these."
+              },
+              "request_file_template": {
+                "type": "string",
+                "description": "Path template the plugin writes the request JSON to. Substitutions: {message_id}, {from_id}, {chat_id}. Matches the PR #2192 JSON-request-file invocation pattern."
+              },
+              "request_payload": {
+                "type": "object",
+                "description": "JSON shape written to request_file_template. String values may carry {message_id}, {from_id}, {chat_id}, {chat_type}, {message_text}, {message_text_minus_mention}, {message_text_minus_command} placeholders."
+              },
+              "stdout_protocol": {
+                "type": "string",
+                "enum": ["atlas_research", "atlas_capture", "raw_text"],
+                "description": "Names the script's stdout protocol. Each protocol's parser is registered in plugin code (packages/plugin/src/observer/triggerProtocols.ts) — adding a new protocol requires a code change. 'raw_text' is the generic protocol forge stamps onto newly built script-backed apps (script prints its reply to stdout, exits 0; errors → stderr + non-zero exit)."
+              },
+              "on_failure": {
+                "type": "string",
+                "enum": ["post_fallback", "silent"],
+                "description": "What to do when the script exits non-zero or emits unparseable output. fallback_text is required when 'post_fallback'."
+              },
+              "fallback_text": {
+                "type": "string",
+                "description": "Reply posted on failure when on_failure is 'post_fallback'. Verbatim — no LLM rewording."
+              }
+            }
+          }
+        }
+      }
+    },
+    "invocation_mode": {
+      "type": "string",
+      "enum": ["agent_invokes", "plugin_intercept", "subagent"],
+      "default": "agent_invokes",
+      "description": "Which enforcement layer this manifest opts into for chat-routed handlers. 'agent_invokes' (default) = LLM reads bot_guidance prose and invokes via tool use. 'plugin_intercept' = TurnObserver runs the script via before_prompt_build and stays the LLM quiet; requires event_triggers[*].invocation. 'subagent' = reserved for deferred Layer B."
+    },
+    "schedules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "cron_intent", "cron_default", "invokes"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "cron_intent": { "type": "string", "description": "Natural-language description (e.g., 'Sunday 9am local time')." },
+          "cron_default": { "type": "string", "description": "Default cron line; Instance may override per local time zone." },
+          "invokes": { "type": "string", "description": "logical_name of the blueprint file to invoke." }
+        }
+      }
+    },
+    "bot_guidance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["section", "content"],
+        "additionalProperties": false,
+        "properties": {
+          "section": { "type": "string", "description": "Markdown heading where this guidance is spliced into the bot's AGENTS.md." },
+          "content": { "type": "string", "description": "Guidance text body." }
+        }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "user_data_collected": { "type": "array", "items": { "type": "string" } },
+        "opt_out_command": { "type": "string" },
+        "consent_notice": { "type": "string" },
+        "retention_days": { "type": "integer", "minimum": 1 },
+        "shareable_in_lessons": { "type": "boolean", "default": false, "description": "Gates whether observations from this app may appear in shareable Lessons artifacts." }
+      }
+    },
+    "audience_scoping": {
+      "type": "object",
+      "required": ["operator", "approved_surfaces", "role_capabilities"],
+      "additionalProperties": false,
+      "properties": {
+        "operator": {
+          "type": "string",
+          "enum": ["operator_only", "named_users", "open"],
+          "description": "Top-level audience class for the app."
+        },
+        "approved_surfaces": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Allowed surface IDs (e.g., 'telegram_dm', 'slack_channel'). Vocabulary is open in v1."
+        },
+        "role_capabilities": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "description": "Role name → capability list. Role names and capability vocabulary are open in v1."
+        },
+        "operator_bypasses": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Bypass identifiers permitting operator overrides. Vocabulary is open in v1."
+        }
+      }
+    },
+    "provided_capabilities": {
+      "type": "array",
+      "description": "Schema v29. App-declared capabilities — the app-declared half of the Layer-2 per-role tool-loading model (internal/spec-user-roster-and-roles-2026-06-07.md §4/§8). Optional; absent/empty means 'not yet declared'. Enforcement is a separate later build step; this is schema + validation only.",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "description": "Capability id, e.g. 'app.archive.add'. Vocabulary is open in v1." },
+          "description": { "type": "string", "description": "One-line human description of the capability." },
+          "requires_mcp_tools": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 },
+            "description": "MCP tools this capability requires loaded — the link into the gateway tool allowlist (Layer 2). Tool vocabulary is open in v1."
+          },
+          "default_role_binding": {
+            "type": ["string", "null"],
+            "enum": ["admin", "primary_user", "participant", "blocked", null],
+            "description": "Suggested initial role binding when the app installs; admin can override. Null/absent = unbound by default."
+          }
+        }
+      }
+    },
+    "scope_excludes": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Explicit out-of-scope statements."
+    },
+    "approval_audience": {
+      "type": "string",
+      "enum": ["pod_operator", "pod_member", "bot_user"],
+      "description": "Which user type approves changes proposed for this app."
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "seeded_from_pkg_version": {
+      "type": "string",
+      "description": "Builtin tier only. The repo gallery package's pkg_version this Spec was last seeded from, stamped by migrate_v7.migrate_gallery_package. The deploy-time re-seed (reseed_builtin_specs) compares it against the live repo package to detect a bumped gallery package and propagate it to the bound builtin Spec."
+    },
+    "seeded_from_pkg_sha256": {
+      "type": "string",
+      "description": "Builtin tier only. SHA-256 of the canonical repo gallery package content this Spec was seeded from. Lets the re-seed catch a same-pkg_version source edit (content drift without a version bump)."
+    }
+  },
+  "definitions": {
+    "baseDependency": {
+      "type": "object",
+      "properties": {
+        "required": { "type": "boolean", "default": true, "description": "Required deps fail install if missing; optional deps allow graceful degradation." },
+        "purpose": { "type": "string", "description": "Natural-language reason for this dependency. Shown to operator when prompting for resolution." }
+      }
+    },
+    "namedDependency": {
+      "allOf": [
+        { "$ref": "#/definitions/baseDependency" },
+        {
+          "type": "object",
+          "required": ["name"],
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "version": { "type": "string", "description": "PEP 440 version constraint." },
+            "required": { "type": "boolean" },
+            "purpose": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "appDependency": {
+      "type": "object",
+      "required": ["spec_id"],
+      "additionalProperties": false,
+      "properties": {
+        "spec_id": { "type": "string", "pattern": "^p-[a-f0-9]{8}$" },
+        "version": { "type": "string", "description": "PEP 440 version constraint." },
+        "required": { "type": "boolean", "default": true },
+        "purpose": { "type": "string" }
+      }
+    },
+    "systemPackageDependency": {
+      "type": "object",
+      "required": ["name", "host_check"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "description": "PEP 440 version constraint; host_check must verify version itself." },
+        "host_check": { "type": "string", "minLength": 1, "description": "Shell command run at install time; exit 0 = satisfied." },
+        "required": { "type": "boolean", "default": true },
+        "purpose": { "type": "string" }
+      }
+    },
+    "ocPluginDependency": {
+      "type": "object",
+      "required": ["plugin_id"],
+      "additionalProperties": false,
+      "properties": {
+        "plugin_id": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "description": "PEP 440 version constraint." },
+        "required": { "type": "boolean", "default": true },
+        "purpose": { "type": "string" }
+      }
+    },
+    "ocSkillDependency": {
+      "type": "object",
+      "required": ["skill_id"],
+      "additionalProperties": false,
+      "properties": {
+        "skill_id": { "type": "string", "minLength": 1, "description": "Substrate-namespaced skill ID (e.g., 'agentskills.io/email-summarize')." },
+        "version": { "type": "string", "description": "PEP 440 version constraint." },
+        "required": { "type": "boolean", "default": true },
+        "purpose": { "type": "string" }
+      }
+    },
+    "integrationDependency": {
+      "type": "object",
+      "required": ["integration_id"],
+      "additionalProperties": false,
+      "properties": {
+        "integration_id": { "type": "string", "minLength": 1 },
+        "scopes": { "type": "array", "items": { "type": "string" }, "description": "Required scopes/permissions on the integration channel." },
+        "required": { "type": "boolean", "default": true },
+        "purpose": { "type": "string" }
+      }
+    },
+    "credentialDependency": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "description": "Env var or secret-store key name." },
+        "required": { "type": "boolean", "default": true },
+        "purpose": { "type": "string" }
+      }
+    }
+  }
+}

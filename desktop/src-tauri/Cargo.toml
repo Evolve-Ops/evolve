@@ -1,0 +1,28 @@
+[package]
+name = "evolve-pods"
+version = "0.1.0"
+description = "Evolve Pods — desktop shell that tabs between sovereign Evolve pods"
+edition = "2021"
+rust-version = "1.77"
+
+[[bin]]
+name = "evolve-pods"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# `unstable` enables the multi-webview API (one window, N child webviews) used
+# from M2 onward. The remote pod webviews still get ZERO IPC access — that is
+# enforced by capability scoping, not by this feature flag (see capabilities/).
+tauri = { version = "2", features = ["unstable"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Pod discovery health probes (rustls TLS for tailscale-serve https endpoints).
+ureq = "2"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

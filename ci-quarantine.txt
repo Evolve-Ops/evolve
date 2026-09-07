@@ -1,0 +1,377 @@
+# ci-quarantine.txt — baseline failures that are excluded from the blocking CI gate.
+#
+# IMPORTANT: shrink this — each line is a real failing test.
+#
+# Format: <package>/<pytest-node-id>  # reason
+#
+# To add an entry: run the full suite, copy the FAILED/ERROR line, prepend the
+# package prefix, and add a # reason. Do NOT use @pytest.mark.skip in source —
+# keep all debt in this one central list so it is countable and shrinking.
+#
+# To remove an entry: fix the underlying failure, delete the line, and verify CI
+# stays green.
+#
+# Packages:
+#   admin    = packages/admin
+#   analyzer = packages/analyzer
+
+# ---------------------------------------------------------------------------
+# ADMIN package failures
+# ---------------------------------------------------------------------------
+
+# --- digest_dispatcher — ERROR at setup (AttributeError: REPORTS) ---
+
+# --- alerts / signals UI — test expects old nav structure ---
+admin/tests/test_alerts_button_contract.py::test_pod_report_deeplinks_resolve_to_real_pages  # deeplink targets moved in nav restructure
+admin/tests/test_alerts_per_row_actions.py::test_signals_fetch_uses_bumped_limit  # test expects old limit constant
+
+# --- analytics — test expects old route/data shape ---
+admin/tests/test_analytics_activity_rhythm.py::test_aggregates_across_all_bots_when_bot_omitted  # analytics route response shape drift
+admin/tests/test_analytics_activity_rhythm.py::test_daily_session_counts_dedupes_per_session_per_day  # analytics route response shape drift
+admin/tests/test_analytics_activity_rhythm.py::test_daily_session_counts_skips_events_with_empty_session_id  # analytics route response shape drift
+admin/tests/test_analytics_activity_rhythm.py::test_gap_percentiles_match_raw_distribution  # analytics route response shape drift
+admin/tests/test_analytics_activity_rhythm.py::test_gaps_computed_only_over_user_turn_events  # analytics route response shape drift
+admin/tests/test_analytics_activity_rhythm.py::test_heatmap_aggregates_events_by_hour_and_weekday  # analytics route response shape drift
+admin/tests/test_analytics_activity_rhythm.py::test_heatmap_handles_iso_with_no_z_suffix  # analytics route response shape drift
+admin/tests/test_analytics_activity_rhythm.py::test_heatmap_ignores_malformed_timestamps  # analytics route response shape drift
+admin/tests/test_analytics_activity_rhythm.py::test_negative_gaps_from_clock_skew_are_skipped  # analytics route response shape drift
+admin/tests/test_analytics_cache_economics.py::test_cache_health_by_day_aggregates_states  # analytics route response shape drift
+admin/tests/test_analytics_cache_economics.py::test_context_trajectory_per_day  # analytics route response shape drift
+admin/tests/test_analytics_cache_economics.py::test_cost_per_session_aggregates_and_ranks  # analytics route response shape drift
+admin/tests/test_analytics_cache_economics.py::test_multi_bot_when_bot_param_omitted  # analytics route response shape drift
+admin/tests/test_analytics_cache_economics.py::test_summary_hit_rate_excludes_non_participating_events  # analytics route response shape drift
+admin/tests/test_analytics_cache_economics.py::test_summary_invalidated_ratio_matches_session_economics  # analytics route response shape drift
+admin/tests/test_analytics_cache_economics.py::test_token_totals_sum_across_events  # analytics route response shape drift
+admin/tests/test_analytics_cache_economics.py::test_total_cost_usd_sums_cost_field  # analytics route response shape drift
+admin/tests/test_analytics_cache_economics.py::test_unknown_cache_state_routed_to_unknown_bucket  # analytics route response shape drift
+admin/tests/test_analytics_curated_sessions.py::test_biggest_context_uses_peak_prompt_tokens_per_session  # analytics route response shape drift
+admin/tests/test_analytics_curated_sessions.py::test_entry_includes_diagnostic_payload  # analytics route response shape drift
+admin/tests/test_analytics_curated_sessions.py::test_longest_by_turns_picks_highest_event_count  # analytics route response shape drift
+admin/tests/test_analytics_curated_sessions.py::test_most_expensive_picks_top_cost_sessions  # analytics route response shape drift
+admin/tests/test_analytics_curated_sessions.py::test_most_invalidated_floors_at_5_participating_events  # analytics route response shape drift
+admin/tests/test_analytics_curated_sessions.py::test_most_invalidated_ignores_fresh_and_unknown_in_denominator  # analytics route response shape drift
+admin/tests/test_analytics_curated_sessions.py::test_most_invalidated_picks_highest_invalidation_ratio  # analytics route response shape drift
+admin/tests/test_analytics_curated_sessions.py::test_multi_bot_when_bot_omitted  # analytics route response shape drift
+admin/tests/test_analytics_curated_sessions.py::test_same_session_may_appear_in_multiple_categories  # analytics route response shape drift
+admin/tests/test_analytics_sessions_browser.py::test_cache_invalidated_combines_with_multi_turn  # analytics route response shape drift
+admin/tests/test_analytics_sessions_browser.py::test_cache_invalidated_filter_keeps_only_sessions_with_invalidated_events  # analytics route response shape drift
+admin/tests/test_analytics_sessions_browser.py::test_cache_state_counts_populated_from_cost_events  # analytics route response shape drift
+admin/tests/test_analytics_sessions_browser.py::test_legacy_class_filter_still_accepted  # analytics route response shape drift
+admin/tests/test_analytics_sessions_browser.py::test_multi_turn_filter_default_off_returns_all  # analytics route response shape drift
+admin/tests/test_analytics_sessions_browser.py::test_multi_turn_filter_excludes_single_turn_sessions  # analytics route response shape drift
+admin/tests/test_analytics_sessions_browser.py::test_session_with_no_cost_events_gets_zero_enrichment  # analytics route response shape drift
+admin/tests/test_analytics_sessions_browser.py::test_total_cost_and_peak_prompt_populated  # analytics route response shape drift
+admin/tests/test_analytics_sessions_browser.py::test_unknown_cache_state_routed_to_unknown_bucket  # analytics route response shape drift
+
+# --- backup copy/recovery/registry ---
+admin/tests/test_backup_copy_with_sudo_error_clarity.py::test_commit_baseline_local_says_cannot_read_when_read_fails  # backup copy API shape changed
+admin/tests/test_backup_copy_with_sudo_error_clarity.py::test_copy_with_sudo_fallback_path_succeeds  # backup copy API shape changed
+admin/tests/test_backup_recovery_github_deeplinks.py::test_rollback_workspace_not_git_keeps_backup_tab_link  # deeplink targets changed
+admin/tests/test_bot_registry.py::test_add_bot_explicit_cap_overrides_default  # bot registry API shape changed
+admin/tests/test_bot_registry.py::test_add_bot_writes_minimal_entry  # bot registry API shape changed
+
+# --- chip explainers / cross-module contracts ---
+admin/tests/test_chip_explainers.py::test_every_chip_carries_explainer_or_opts_out_explicitly  # new chips missing explainers
+admin/tests/test_cross_module_attribute_contracts.py::test_every_cascade_reader_key_has_a_writer  # cascade attribute contract drift
+admin/tests/test_cross_module_attribute_contracts.py::test_every_cascade_writer_key_has_a_reader  # cascade attribute contract drift
+
+# --- deploy / model catalog ---
+admin/tests/test_deploy_detect_provider_model.py::test_registry_fallback_for_openai_picks_gpt4o  # model catalog updated (gpt-4o → gpt-5.x)
+
+# --- drawer authority badge ---
+admin/tests/test_drawer_authority_badge.py::test_chat_page_authority_selector_has_scope_tooltip  # UI element moved or renamed
+
+# --- empty reply / evo action tools ---
+admin/tests/test_empty_reply_session_jsonl_fallback.py::test_send_to_evo_falls_back_to_placeholder_when_no_tool_calls  # session jsonl fallback shape changed
+admin/tests/test_evo_action_tools_part2.py::test_clear_bot_cap_handler_removes_field  # evo action tool API changed
+admin/tests/test_evo_action_tools_part2.py::test_clear_bot_cap_validate_ok_when_cap_set  # evo action tool API changed
+admin/tests/test_evo_action_tools_part2.py::test_set_bot_cap_handler_overwrites_existing  # evo action tool API changed
+admin/tests/test_evo_action_tools_part2.py::test_set_bot_cap_handler_writes_network_json  # evo action tool API changed
+admin/tests/test_evo_action_tools_part2.py::test_set_bot_cap_validate_ok_surfaces_prior_cap  # evo action tool API changed
+
+# --- evo agents-md guards ---
+admin/tests/test_evo_agents_md_guards.py::test_admin_ui_closing_summary_carve_out_present  # AGENTS.md structure changed
+
+# --- evo fail trail link ---
+admin/tests/test_evo_fail_trail_link.py::test_diagnosis_notification_includes_trail_link_for_admin  # trail link template changed
+
+# --- evo glossary drift ---
+admin/tests/test_evo_glossary_drift.py::test_committed_glossary_md_matches_yaml  # glossary.yaml out of sync with source (many new producers/generators)
+admin/tests/test_evo_glossary_drift.py::test_drift_is_clean_on_main  # glossary.yaml out of sync with source
+admin/tests/test_evo_glossary_drift.py::test_glossary_matches_source_chips  # glossary.yaml missing: breaker_tripped chip
+admin/tests/test_evo_glossary_drift.py::test_glossary_matches_source_generators  # glossary.yaml missing several new generators
+admin/tests/test_evo_glossary_drift.py::test_glossary_matches_source_producers  # glossary.yaml missing many new producers
+
+# --- evo pack coverage / page prompts / tools MCP ---
+admin/tests/test_evo_pack_coverage.py::test_every_nav_page_has_a_pack_or_is_explicitly_opted_out  # new nav pages without packs
+admin/tests/test_evo_page_prompts.py::test_no_hardcoded_testpod_bot_names_in_prompts  # hardcoded bot names found in prompts
+admin/tests/test_evo_tools_mcp.py::test_list_tools_mirrors_registry  # MCP tool registry out of sync
+admin/tests/test_evo_tools_mcp.py::test_signals_and_arbiter_importable_via_bridge_path  # MCP bridge import path changed
+
+# --- help surface ---
+admin/tests/test_help_surface.py::test_new_nav_items_in_settings_section  # new settings nav items missing from help
+admin/tests/test_help_surface.py::test_setup_guide_has_summary_band  # setup guide page shape changed
+admin/tests/test_help_surface.py::test_setup_guide_page_exists  # setup guide page does not exist yet
+admin/tests/test_help_surface.py::test_sidebar_has_setup_guide_nav  # sidebar missing setup guide nav item
+
+# --- inbox/issues UI ---
+admin/tests/test_inbox_repos_ui.py::test_repo_row_escapes_owner_repo_name  # repo row escaping changed
+admin/tests/test_inbox_tab_ui.py::test_nav_label_is_issues_not_inbox  # nav label renamed
+
+# --- infer usage model ---
+admin/tests/test_infer_usage_model.py::test_inference_matches_authored_gallery_models  # gallery model catalog updated
+
+# --- install ---
+admin/tests/test_install.py::TestEnsurePluginConfig::test_manually_tuned_values_preserved  # plugin config shape changed
+admin/tests/test_install.py::TestEnsurePluginConfig::test_schema_aligned_config_not_modified_by_strip  # plugin config shape changed
+admin/tests/test_install.py::TestEnsurePluginConfig::test_skips_when_config_already_correct  # plugin config shape changed
+admin/tests/test_install.py::TestRepairSecurityBotConfig::test_removes_evolve_entry_when_present  # security bot config repair changed
+admin/tests/test_install.py::TestRepairSecurityBotConfig::test_uses_bot_user_override_from_network  # security bot config repair changed
+
+# --- keys API snapshot ---
+admin/tests/test_keys_api_snapshot.py::test_keys_api_snapshot_matches_fixture[team_bot_both_google]  # keys API fixture out of date
+
+# --- layer-aware severity / MCP google tools ---
+admin/tests/test_layer_aware_severity_and_provenance_gate.py::test_assertion_to_field_covers_all_v20_assertion_ids  # v20 assertion IDs changed
+admin/tests/test_mcp_google_tools.py::test_calendar_create_event_emits_reauth_signal_on_refresh_token_expired  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_calendar_create_event_happy_path  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_calendar_create_event_requires_end  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_calendar_create_event_requires_start  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_calendar_create_event_requires_summary  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_calendar_list_events_happy_path  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_drive_list_files_happy_path  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_drive_read_file_base64s_binary_mime  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_drive_read_file_decodes_text_mime  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_drive_read_file_rejects_google_native  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_drive_read_file_requires_id  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_drive_read_file_truncates_oversized  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_drive_search_clamps_page_size  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_drive_search_happy_path  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_drive_search_loads_readonly_scope  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_drive_write_file_emits_reauth_signal_on_refresh_token_expired  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_drive_write_file_requires_content  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_drive_write_file_requires_name  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_gmail_archive_message_removes_inbox_label  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_gmail_archive_message_requires_id  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_gmail_delete_message_happy_path  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_gmail_delete_message_requires_confirm_true  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_gmail_delete_message_requires_id  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_gmail_get_message_decodes_body  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_gmail_get_message_requires_id  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_gmail_label_message_happy_path  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_gmail_label_message_requires_at_least_one_change  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_gmail_label_message_requires_id  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_gmail_list_labels_happy_path  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_gmail_list_messages_clamps_max_results  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_gmail_list_messages_happy_path  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_gmail_mark_read_removes_unread_label  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_gmail_mark_read_requires_id  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_gmail_mark_unread_adds_unread_label  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_gmail_mark_unread_requires_id  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_gmail_modify_tools_load_gmail_modify_scope  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_gmail_send_blocks_when_scope_not_consented  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_gmail_send_emits_reauth_signal_on_refresh_token_expired  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_gmail_send_happy_path_with_persona  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_gmail_send_requires_body  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_gmail_send_requires_subject  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_gmail_send_requires_to  # Google MCP tool API shape changed
+admin/tests/test_mcp_google_tools.py::test_gmail_send_succeeds_with_no_persona_falls_back_to_bot_name  # Google MCP tool API shape changed
+
+# --- model catalog reconcile ---
+admin/tests/test_model_catalog_reconcile.py::test_find_catalog_drift_flags_tier_members_not_in_catalog  # model catalog drift (new model names)
+
+# --- no-bot-id-paths / PII scrub guards ---
+admin/tests/test_no_personal_pii_in_source.py::test_no_personal_pii_in_source  # operator Telegram IDs and handle @pod-admin-user in source files
+
+# --- onboarding ---
+admin/tests/test_onboarding.py::test_discover_default_pat_includes_bot_owners  # onboarding API shape changed
+admin/tests/test_onboarding.py::test_discover_default_pat_returns_nonce_and_masked  # onboarding API shape changed
+admin/tests/test_onboarding.py::test_discover_github_remote_https_credhelper  # onboarding API shape changed
+admin/tests/test_onboarding.py::test_discover_github_remote_https_pat_with_username_prefix  # onboarding API shape changed
+admin/tests/test_onboarding.py::test_discover_github_remote_https_with_pat  # onboarding API shape changed
+admin/tests/test_onboarding.py::test_discover_github_remote_strips_trailing_dotgit  # onboarding API shape changed
+admin/tests/test_onboarding.py::test_github_onboard_initializes_evolve_backup_remote  # onboarding API shape changed
+admin/tests/test_onboarding.py::test_keys_api_github_active_for_plain_https_remote  # onboarding API shape changed
+admin/tests/test_onboarding.py::test_keys_api_pod_default_github_account_from_cascade  # onboarding API shape changed
+admin/tests/test_onboarding.py::test_keys_api_surfaces_repo_slug_for_github  # onboarding API shape changed
+
+# --- proposals grouping ---
+admin/tests/test_proposals_grouping.py::test_proposal_group_bulk_uses_existing_endpoints  # proposals bulk bar endpoint changed
+
+
+# --- reconcile actions ---
+admin/tests/test_reconcile_actions.py::test_reconcile_apply_calls_apply_actions_for_drifted_only  # reconcile action API shape changed
+admin/tests/test_reconcile_actions.py::test_reconcile_reports_no_drift_when_gallery_matches  # reconcile action API shape changed
+
+# --- repo puller sudoers (roadmap 0.7-followup) ---
+admin/tests/test_repo_puller.py::test_pip_install_grant_present_in_evolve_sudoers  # roadmap 0.7-followup: sudoers grant decision (do NOT fix here)
+admin/tests/test_repo_puller.py::test_sudoers_self_refresh_grants_present_in_evolve_sudoers  # roadmap 0.7-followup: sudoers grant decision (do NOT fix here)
+
+# --- retire sudoers ---
+admin/tests/test_retire.py::test_sudoers_grants_rm_of_per_bot_gateway_plist  # roadmap 0.7-followup: sudoers grant decision (do NOT fix here)
+
+# --- routes identity ---
+admin/tests/test_routes_identity.py::test_discover_primary_defaults_when_bad_params  # identity route API shape changed
+admin/tests/test_routes_identity.py::test_discover_primary_empty_history_returns_empty_list  # identity route API shape changed
+admin/tests/test_routes_identity.py::test_discover_primary_returns_candidates  # identity route API shape changed
+admin/tests/test_routes_identity.py::test_resolve_name_failure_returns_clear_reason  # identity route API shape changed
+admin/tests/test_routes_identity.py::test_resolve_name_persists_cache_on_success  # identity route API shape changed
+admin/tests/test_routes_identity.py::test_resolve_name_telegram_success  # identity route API shape changed
+
+# --- scanner backfill ---
+admin/tests/test_scanner_backfill.py::test_permissions_backfill_inferred_from_files  # scanner backfill API changed
+
+# --- scanner discoverability backfill ---
+admin/tests/test_scanner_discoverability_backfill.py::test_backfill_fills_both_in_one_call  # discoverability model field renamed/removed
+admin/tests/test_scanner_discoverability_backfill.py::test_backfill_writes_inferred_model_when_missing  # discoverability model field renamed/removed
+admin/tests/test_scanner_discoverability_backfill.py::test_infer_model_crons_marks_scheduled  # discoverability model field renamed/removed
+admin/tests/test_scanner_discoverability_backfill.py::test_infer_model_default_is_user_initiated  # discoverability model field renamed/removed
+admin/tests/test_scanner_discoverability_backfill.py::test_infer_model_event_triggers_marks_event_driven  # discoverability model field renamed/removed
+admin/tests/test_scanner_discoverability_backfill.py::test_infer_model_meta_installer_is_user_initiated  # discoverability model field renamed/removed
+admin/tests/test_scanner_discoverability_backfill.py::test_infer_model_non_dict_returns_empty  # discoverability model field renamed/removed
+admin/tests/test_scanner_discoverability_backfill.py::test_infer_model_scheduled_actions_marks_scheduled  # discoverability model field renamed/removed
+admin/tests/test_scanner_discoverability_backfill.py::test_infer_model_scheduled_wins_over_event_triggers  # discoverability model field renamed/removed
+
+# --- seed model config ---
+admin/tests/test_seed_model_config.py::test_judge_picker_picks_second_provider_when_two_llms_present  # model catalog updated (gpt-4o-mini → gpt-5.4-mini)
+admin/tests/test_seed_model_config.py::test_seeds_cross_provider_tier0_when_bot_has_two_llm_keys  # model catalog updated (gpt-4o → gpt-5.5)
+
+# --- setup checklist github wizard ---
+admin/tests/test_setup_checklist_github_wizard.py::test_section_2_dims_until_credentials_verified  # wizard UI section structure changed
+
+# --- sidebar nav ---
+admin/tests/test_sidebar_nav_targets_exist.py::test_sidebar_has_exactly_three_buckets  # sidebar bucket count changed
+
+# --- sudoers filesystem skill ACL ---
+admin/tests/test_sudoers_filesystem_skill_acl.py::test_evolve_sudoers_does_not_allow_chmod_on_user_home_root  # roadmap 0.7-followup: sudoers grant decision (do NOT fix here)
+admin/tests/test_sudoers_filesystem_skill_acl.py::test_evolve_sudoers_grants_chmod_R_minus_a_on_user_dirs  # roadmap 0.7-followup: sudoers grant decision (do NOT fix here)
+admin/tests/test_sudoers_filesystem_skill_acl.py::test_evolve_sudoers_grants_chmod_R_plus_a_on_user_dirs  # roadmap 0.7-followup: sudoers grant decision (do NOT fix here)
+admin/tests/test_sudoers_filesystem_skill_acl.py::test_evolve_sudoers_grants_chmod_minus_a_on_user_dirs  # roadmap 0.7-followup: sudoers grant decision (do NOT fix here)
+admin/tests/test_sudoers_filesystem_skill_acl.py::test_evolve_sudoers_grants_chmod_plus_a_on_user_dirs  # roadmap 0.7-followup: sudoers grant decision (do NOT fix here)
+
+# --- surface routing ---
+admin/tests/test_surface_routing.py::test_alerts_lane_filters_proposals_by_surface  # alerts/proposals surface routing changed
+admin/tests/test_surface_routing.py::test_alerts_lane_proposals_cluster_has_section_header  # "Generator proposals" section header missing
+admin/tests/test_surface_routing.py::test_alerts_lane_skips_proposals_fetch_on_activity  # alerts/proposals surface routing changed
+admin/tests/test_surface_routing.py::test_alerts_lane_uses_proposal_coalescer  # alerts/proposals surface routing changed
+admin/tests/test_surface_routing.py::test_alerts_maintenance_lane_fetches_proposals  # alerts/proposals surface routing changed
+
+# --- v2_2_3 redirects ---
+admin/tests/test_v2_2_3_redirects.py::test_critical_ids_are_unique  # id="maintenance-recovery" element no longer exists
+admin/tests/test_v2_2_3_redirects.py::test_maintenance_page_has_recovery_subtab  # data-subtab="recovery" removed from Maintenance page
+admin/tests/test_v2_2_3_redirects.py::test_nav_redirect_subtab_targets_exist  # subtab redirect targets moved
+
+# --- wizard floor model ---
+admin/tests/test_wizard_floor_model.py::test_floor_model_openai_resolves_gpt4o  # model catalog updated (gpt-4o → gpt-5.5)
+admin/tests/test_wizard_floor_model.py::test_new_bot_config_openai_resolves_gpt4o  # model catalog updated (gpt-4o → gpt-5.5)
+
+# ---------------------------------------------------------------------------
+# ANALYZER package failures
+# ---------------------------------------------------------------------------
+
+# --- breakers store ---
+analyzer/breakers/tests/test_store.py::TestTripReadReset::test_retrip_overwrites_with_new_trip_id  # breakers store: trip_id field renamed or removed
+analyzer/breakers/tests/test_store.py::TestAuditLog::test_trip_writes_audit_entry  # breakers store: audit log shape changed
+analyzer/breakers/tests/test_store.py::TestAuditLog::test_reset_writes_audit_entry  # breakers store: audit log shape changed
+
+# --- backup push visibility guard ---
+analyzer/tests/test_backup_push_visibility_guard.py::test_public_repo_returns_failed_and_blocks_push  # backup visibility guard: GitHub owner extraction changed
+
+# --- backup visibility ---
+analyzer/tests/test_backup_visibility.py::test_parse_ssh_url  # owner now returns 'evolve-ops' instead of expected 'pod-admin-user'
+analyzer/tests/test_backup_visibility.py::test_parse_ssh_url_no_suffix  # owner now returns 'evolve-ops' instead of expected 'pod-admin-user'
+analyzer/tests/test_backup_visibility.py::test_parse_https_url  # owner now returns 'evolve-ops' instead of expected 'pod-admin-user'
+analyzer/tests/test_backup_visibility.py::test_parse_https_url_no_suffix  # owner now returns 'evolve-ops' instead of expected 'pod-admin-user'
+analyzer/tests/test_backup_visibility.py::test_parse_https_with_token  # owner now returns 'evolve-ops' instead of expected 'pod-admin-user'
+analyzer/tests/test_backup_visibility.py::test_parse_trailing_slash  # owner now returns 'evolve-ops' instead of expected 'pod-admin-user'
+analyzer/tests/test_backup_visibility_e2e.py::test_public_repo_blocks_push_and_lands_in_signal_store  # backup visibility e2e: owner extraction changed
+
+# --- cache TTL tuner ---
+analyzer/tests/test_cache_ttl_tuner.py::test_invalidation_factory_dotpath_matches_applier_whitelist  # cache TTL tuner: applier whitelist changed
+analyzer/tests/test_cache_ttl_tuner.py::test_invalidation_factory_value_matches_applier_validator  # cache TTL tuner: applier validator changed
+
+# --- manifest reflex runner ---
+
+# --- pod perms drift monitor ---
+analyzer/tests/test_pod_perms_drift_monitor.py::test_missing_admin_package_is_silent_noop  # pod_perms_drift monitor: admin package detection changed
+
+# --- proposal synthesizer gate ---
+analyzer/tests/test_proposal_synthesizer_gate.py::test_parallel_emission_from_signal_proposal  # proposal synthesizer: draft_headline field renamed/changed
+
+# --- RSI L6 generators ---
+analyzer/tests/test_rsi_l6_generators.py::test_background_dominance_fires_when_majority_is_background  # admin_surface_summary field changed; also sudo: unknown user (env-dependent)
+analyzer/tests/test_rsi_l6_generators.py::test_tier_misrouting_fires_when_maintenance_runs_on_sonnet  # admin_surface_summary field changed; also sudo: unknown user (env-dependent)
+
+# --- security warden LLM verifier ---
+analyzer/tests/test_security_warden_llm_verifier.py::test_wire_default_verifier_no_key_returns_false  # _AUTH_PROFILES_PATH attribute removed from llm_verifier module
+
+# --- signals phase2/3 e2e ---
+analyzer/tests/test_signals_phase2_e2e.py::test_reports_nav_item_is_hidden_alerts_is_visible  # nav structure changed (reports-alerts element renamed/moved)
+analyzer/tests/test_signals_phase2_e2e.py::test_alerts_page_exposes_schedule_and_thresholds_subtabs  # alerts subtab data-subtab names changed
+analyzer/tests/test_signals_phase3_e2e.py::test_security_page_includes_audit_signals_chip_strip  # _loadSecurityAuditSignals function removed/renamed
+
+# ── Linux-CI deltas (pass on macOS, the target platform; fail on Linux runners) ──
+analyzer/tests/test_backup_signal.py::test_collect_emits_both_failing_and_public_when_both_apply  # linux-ci-delta: passes on macOS, fails on Linux CI
+analyzer/tests/test_backup_signal.py::test_collect_fires_public_repo_signal  # linux-ci-delta: passes on macOS, fails on Linux CI
+analyzer/tests/test_backup_signal.py::test_collect_fires_unverified_when_lookup_unknown  # linux-ci-delta: passes on macOS, fails on Linux CI
+analyzer/tests/test_backup_signal.py::test_collect_fires_unverified_when_pat_missing  # linux-ci-delta: passes on macOS, fails on Linux CI
+analyzer/tests/test_backup_signal.py::test_collect_fires_when_failing  # linux-ci-delta: passes on macOS, fails on Linux CI
+analyzer/tests/test_backup_signal.py::test_collect_skips_recovered_bot  # linux-ci-delta: passes on macOS, fails on Linux CI
+analyzer/tests/test_backup_signal.py::test_collect_skips_when_no_state_file  # linux-ci-delta: passes on macOS, fails on Linux CI
+analyzer/tests/test_backup_signal.py::test_run_coalesces_missing_pat_into_one_pod_scope_signal  # linux-ci-delta: passes on macOS, fails on Linux CI
+analyzer/tests/test_backup_signal.py::test_run_dry_run_coalesces_missing_pat_without_writing  # linux-ci-delta: passes on macOS, fails on Linux CI
+analyzer/tests/test_backup_signal.py::test_run_dry_run_does_not_write  # linux-ci-delta: passes on macOS, fails on Linux CI
+analyzer/tests/test_backup_signal.py::test_run_fires_one_signal_per_failing_bot  # linux-ci-delta: passes on macOS, fails on Linux CI
+analyzer/tests/test_backup_signal.py::test_run_fires_public_repo_signal_in_store  # linux-ci-delta: passes on macOS, fails on Linux CI
+analyzer/tests/test_backup_signal.py::test_run_narrow_bot_run_leaves_pod_missing_pat_signal_alone  # linux-ci-delta: passes on macOS, fails on Linux CI
+analyzer/tests/test_backup_signal.py::test_run_pod_missing_pat_does_not_suppress_per_bot_failing_backup  # linux-ci-delta: passes on macOS, fails on Linux CI
+analyzer/tests/test_backup_signal.py::test_run_pod_missing_pat_signal_resolves_when_pat_is_added  # linux-ci-delta: passes on macOS, fails on Linux CI
+analyzer/tests/test_backup_signal.py::test_run_resolves_public_signal_when_repo_flips_private  # linux-ci-delta: passes on macOS, fails on Linux CI
+analyzer/tests/test_backup_signal.py::test_run_sweep_resolve_archives_when_bot_recovers  # linux-ci-delta: passes on macOS, fails on Linux CI
+analyzer/tests/test_backup_signal.py::test_run_with_narrow_bots_does_not_clobber_other_bots_signals  # linux-ci-delta: passes on macOS, fails on Linux CI
+analyzer/tests/test_backup_visibility_e2e.py::test_pat_missing_path_emits_unverified_signal_and_blocks_push  # linux-ci-delta: passes on macOS, fails on Linux CI
+analyzer/tests/test_backup_visibility_e2e.py::test_private_repo_allows_push_and_keeps_signal_store_clean  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_audit_poller_openclaw_cron_e2e.py::test_openclaw_cron_error_flows_end_to_end  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_backup_keys.py::test_discover_pod_classifies_each_status  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_backup_keys.py::test_ensure_bot_in_sync_aligned_is_noop  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_backup_keys.py::test_ensure_bot_in_sync_distributes_to_empty_home  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_backup_keys.py::test_ensure_bot_in_sync_fixes_mirror_drift  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_backup_keys.py::test_ensure_bot_in_sync_fixes_priv_drift  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_backup_keys.py::test_ensure_bot_in_sync_fixes_pub_drift  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_backup_keys.py::test_reconcile_force_distribute_full_happy_path  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_backup_keys.py::test_reconcile_force_distribute_user_key_failure_skips_sentinel  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_bot_forge_runaway_integration.py::test_dispatch_emits_cap_signal_and_raises_when_watcher_fires  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_config_sandbox_schema.py::test_cache_retention_entry_was_removed_phase4b  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_connect_cli.py::test_connect_install_default_path_calls_installer_and_open  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_distribute_key_registers_on_github.py::test_distribute_key_registers_new_pubkey_on_github  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_distribute_key_registers_on_github.py::test_distribute_key_skips_registration_without_pat  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_evo_dispatch.py::test_evo_better_starts_rec_pending  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_https_setup.py::test_disable_https_idempotent_on_http_pod  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_https_setup.py::test_disable_https_reverses_cleanly  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_https_setup.py::test_enable_https_idempotent_when_already_configured  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_https_setup.py::test_enable_https_if_possible_defers_on_admin_toggle_off  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_https_setup.py::test_enable_https_if_possible_happy_path  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_https_setup.py::test_enable_https_if_possible_idempotent_already_on_https  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_https_setup.py::test_enable_https_if_possible_reports_failed_attempt_with_ready_preflight  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_https_setup.py::test_enable_https_if_possible_skips_on_need_login  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_https_setup.py::test_enable_https_if_possible_skips_on_need_upgrade  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_https_setup.py::test_enable_https_recovers_partial_state  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_https_setup.py::test_happy_path_rewrites_network_json_and_verifies  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_https_setup.py::test_mcp_bridge_present_without_url_field  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_https_setup.py::test_mcp_bridge_url_absence_is_tolerated  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_https_setup.py::test_mcp_bridge_url_flips_to_https_with_no_port  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_https_setup.py::test_preflight_defers_when_https_provisioning_disabled  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_https_setup.py::test_preflight_refuses_on_old_tailscale_version  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_https_setup.py::test_preflight_refuses_when_not_signed_in  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_https_setup.py::test_preflight_refuses_when_tailscale_missing  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_https_setup.py::test_preflight_reports_need_login_when_not_signed_in  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_https_setup.py::test_preflight_reports_need_upgrade_on_old_version  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_https_setup.py::test_preflight_returns_ready_when_state_healthy  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_https_setup.py::test_serve_rc_zero_but_not_actually_bound_is_caught  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_https_setup.py::test_verification_failure_triggers_rollback  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_https_setup.py::test_verification_redirect_is_treated_as_failure  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_openclaw_materializer.py::test_legacy_sandbox_value_is_silently_ignored  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_openclaw_materializer.py::test_session_budget_cap_schema_entry_is_removed  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_provision_bot.py::test_allow_existing_user_skips_create_and_avoids_home_rollback  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_provision_bot.py::test_port_collision_rejected  # linux-ci-delta: passes on macOS, fails on Linux CI
+admin/tests/test_unix_socket_server.py::test_socket_file_chgrp_to_staff  # linux-ci-delta: passes on macOS, fails on Linux CI

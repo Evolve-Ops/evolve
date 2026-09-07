@@ -1,0 +1,6 @@
+
+── OpenClaw Upgrade ──────────────────────────────────
+  Installed:  2026.7.1
+  Checking npm registry…  Latest:     2026.7.1      
+  ✅ Already on latest (2026.7.1). Nothing to do.
+  Use --force to reinstall anyway.

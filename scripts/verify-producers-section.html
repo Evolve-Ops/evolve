@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<!--
+  Visual verification harness for the v23 Producers sub-section in the
+  Apps detail modal. Loaded via `python3 -m http.server` for screenshot
+  capture. Mirrors the variable scope inside viewManifest()'s closure
+  enough to render _buildFilesSection's output against a Daily-Logging-
+  style fixture.
+
+  Not wired into the build. Delete after the change ships if you don't
+  want it lingering — kept under scripts/ so it can be re-run later if
+  the section gets touched again.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Producers section — visual verify harness</title>
+  <style>
+    :root {
+      --bg: #fafaf9; --bg1: #f5f5f4; --bg2: #ffffff;
+      --text: #1c1917; --text1: #292524; --text2: #57534e; --text3: #78716c;
+      --border: #e7e5e4; --accent: #2563eb;
+      --green: #16a34a; --yellow: #ca8a04;
+    }
+    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); padding: 24px; }
+    .badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:0.7rem; font-weight:600; }
+    .badge-forge { background:#fef3c7; color:#92400e; }
+    .badge-agent { background:#dbeafe; color:#1e40af; }
+    .badge-autonomous { background:#fce7f3; color:#9d174d; }
+    .badge-security_bot { background:#fee2e2; color:#991b1b; }
+    .badge-inline { background:#e0e7ff; color:#3730a3; }
+    .badge-member { background:#f3f4f6; color:#374151; }
+    .badge-ok { background:#dcfce7; color:#15803d; }
+    .badge-warn { background:#fef3c7; color:#92400e; }
+    h2 { font-size: 1rem; margin-top: 24px; }
+  </style>
+</head>
+<body>
+  <h1 style="font-size:1.2rem">Producers — Files &amp; Resources sub-section</h1>
+  <div id="out"></div>
+  <script>
+    // Stubs for the helpers apps.js depends on (defined in core/).
+    const escHtml = (s) => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+    const esc = escHtml;
+    const badge = (text, cls) => `<span class="badge badge-${cls}">${escHtml(text)}</span>`;
+    const _layerBadgeCls = {
+      heartbeat: 'forge', launchd: 'autonomous', session_start: 'agent',
+      script: 'forge', skill: 'agent', policy: 'security_bot', orchestrator: 'autonomous',
+      test: 'inline', reference: 'member', data: 'ok', state: 'warn',
+    };
+    const secStyle = 'border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:12px;background:var(--bg2)';
+    const secHead = (title, why) => `<div style="font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);margin-bottom:2px">${title}</div><div style="font-size:0.72rem;color:var(--text2);margin-bottom:10px;font-style:italic">${why}</div>`;
+    const th = txt => `<th style="text-align:left;padding:3px 8px 6px 0;font-size:0.67rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3)">${txt}</th>`;
+    const thm = txt => `<th style="text-align:left;padding:3px 8px 6px;font-size:0.67rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3)">${txt}</th>`;
+
+    const cases = [
+      {
+        label: 'Daily Logging & Memory (heartbeat-driven + session-start)',
+        manifest: {
+          id: 'app-daily-logging',
+          name: 'Daily Logging & Memory',
+          pkg_id: 'p-1234abcd',
+          scheduled_actions: [
+            { id: 'daily-log-section', mechanism: 'oc_heartbeat_instruction',
+              trigger: {kind:'heartbeat', schedule:'every_heartbeat'},
+              install: {file:'HEARTBEAT.md', section_anchor:'## Memory Files'}, },
+            { id: 'session-read-prior', mechanism: 'oc_session_instruction',
+              trigger: {kind:'session_start', schedule:'session_start'},
+              install: {file:'AGENTS.md', section_anchor:'## Every Session'}, },
+          ],
+          heartbeat_evidence: {file_path:'HEARTBEAT.md', section_anchors:['Memory Files']},
+          cron_evidence: {},
+        },
+      },
+      {
+        label: 'Task Manager (launchd, cron_evidence populated by Layer B)',
+        manifest: {
+          id: 'task-manager',
+          name: 'Task Manager',
+          pkg_id: 'p-task-mgr',
+          scheduled_actions: [
+            { id: 'task-manager-check', mechanism: 'launchd',
+              trigger: {kind:'launchd', schedule:'every 14400 seconds'},
+              install: {plist_label:'com.team-bot-c.task-manager.check', command:'python3 scripts/tasks.py check'},
+            },
+          ],
+          heartbeat_evidence: {},
+          cron_evidence: {labels:['com.team-bot-c.task-manager.check']},
+        },
+      },
+      {
+        label: 'Empty Shell (Session-Turn-Logs style — no producers)',
+        manifest: {
+          id: 'i-empty', name: 'Empty Shell',
+          scheduled_actions: [], heartbeat_evidence: {}, cron_evidence: {},
+        },
+      },
+    ];
+
+    // ── Producer-row computation (copy of the implementation under test) ──
+    function computeProducerRows(m) {
+      const rawSchedActions = Array.isArray(m.scheduled_actions) ? m.scheduled_actions : [];
+      const heartbeatEvidence = (m.heartbeat_evidence && typeof m.heartbeat_evidence === 'object') ? m.heartbeat_evidence : {};
+      const cronEvidence = (m.cron_evidence && typeof m.cron_evidence === 'object') ? m.cron_evidence : {};
+      const producerRows = [];
+      const _seenProducers = new Set();
+      const _normAnchor = (a) => String(a || '').replace(/^#+\s*/, '').trim();
+      const _pushProducer = (source, anchor, kind, schedule) => {
+        if (!source) return;
+        const key = `${kind}::${source}::${_normAnchor(anchor)}`;
+        if (_seenProducers.has(key)) return;
+        _seenProducers.add(key);
+        producerRows.push({ source, anchor, kind, schedule });
+      };
+      for (const sa of rawSchedActions) {
+        if (!sa || typeof sa !== 'object') continue;
+        const install = (sa.install && typeof sa.install === 'object') ? sa.install : {};
+        const trigger = (sa.trigger && typeof sa.trigger === 'object') ? sa.trigger : {};
+        const kind = trigger.kind || sa.mechanism || '';
+        const schedule = trigger.schedule || '';
+        const file = install.file || '';
+        const anchor = install.section_anchor || '';
+        const plistLabel = install.plist_label || '';
+        if (file) _pushProducer(file, anchor, kind, schedule);
+        else if (plistLabel) _pushProducer(plistLabel, '', kind || 'launchd', schedule);
+        else if (install.command) _pushProducer(install.command, '', kind, schedule);
+      }
+      if (heartbeatEvidence.file_path && Array.isArray(heartbeatEvidence.section_anchors)) {
+        for (const a of heartbeatEvidence.section_anchors) {
+          _pushProducer(heartbeatEvidence.file_path, a || '', 'heartbeat', 'every_heartbeat');
+        }
+      }
+      const ceLabels = Array.isArray(cronEvidence.labels) ? cronEvidence.labels : [];
+      for (const label of ceLabels) _pushProducer(label, '', 'launchd', '');
+      return producerRows;
+    }
+
+    function renderProducersSection(producerRows) {
+      const hasProducers = producerRows.length > 0;
+      if (!hasProducers) {
+        return `<div style="font-size:0.78rem;color:var(--text3)">No producer surface declared. The v23 audit (app_no_producer_surface) will fire on this manifest.</div>`;
+      }
+      return `<div style="font-size:0.72rem;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px" title="Files and labels that drive this app — HEARTBEAT.md / AGENTS.md sections, launchd plists, etc. Distinct from owned files above.">Producers</div>
+        <div style="overflow-x:auto">
+          <table style="width:100%;border-collapse:collapse">
+            <thead><tr style="border-bottom:1px solid var(--border)">
+              ${th('Source')}${thm('Anchor')}${thm('Kind')}<th style="text-align:left;padding:3px 0 6px 8px;font-size:0.67rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3)">Schedule</th>
+            </tr></thead>
+            <tbody>${producerRows.map(p => {
+              const sourceFile = (p.source || '').split('/').pop() || p.source;
+              return `<tr style="border-bottom:1px solid var(--border)">
+                <td style="padding:5px 8px 5px 0;vertical-align:top">
+                  <div style="font-family:monospace;font-size:0.72rem;color:var(--text1)">${escHtml(sourceFile)}</div>
+                  ${sourceFile !== p.source ? `<div style="font-size:0.65rem;color:var(--text3);word-break:break-all">${escHtml(p.source)}</div>` : ''}
+                </td>
+                <td style="padding:5px 8px;vertical-align:top;font-family:monospace;font-size:0.7rem;color:var(--text2)">${escHtml(p.anchor || '—')}</td>
+                <td style="padding:5px 8px;vertical-align:top;white-space:nowrap">${p.kind ? badge(p.kind, _layerBadgeCls[p.kind] || 'member') : '<span style="color:var(--text3)">—</span>'}</td>
+                <td style="padding:5px 0 5px 8px;vertical-align:top;font-family:monospace;font-size:0.7rem;color:var(--text2)">${escHtml(p.schedule || '—')}</td>
+              </tr>`;
+            }).join('')}</tbody>
+          </table>
+        </div>`;
+    }
+
+    const out = document.getElementById('out');
+    out.innerHTML = cases.map(c => {
+      const rows = computeProducerRows(c.manifest);
+      return `<h2>${escHtml(c.label)}</h2>
+        <div style="${secStyle}">
+          ${secHead('Files & Resources', 'Component files and cron jobs the app owns, plus the Producers that drive it.')}
+          ${renderProducersSection(rows)}
+        </div>`;
+    }).join('');
+  </script>
+</body>
+</html>

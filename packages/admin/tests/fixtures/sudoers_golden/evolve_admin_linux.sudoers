@@ -1,0 +1,23 @@
+# Evolve admin access — allows reading bot config files without password
+# Written by evolve-admin setup wizard
+
+# Allow pod-admin to read team-bot-a config files
+pod-admin ALL=(team-bot-a) NOPASSWD: /bin/cat /home/team-bot-a/.openclaw/openclaw.json
+pod-admin ALL=(team-bot-a) NOPASSWD: /bin/cat /home/team-bot-a/.openclaw/agents/main/agent/auth-profiles.json
+pod-admin ALL=(team-bot-a) NOPASSWD: /usr/bin/crontab -l
+
+# Allow pod-admin to read team-bot-b config files
+pod-admin ALL=(team-bot-b) NOPASSWD: /bin/cat /home/team-bot-b/.openclaw/openclaw.json
+pod-admin ALL=(team-bot-b) NOPASSWD: /bin/cat /home/team-bot-b/.openclaw/agents/main/agent/auth-profiles.json
+pod-admin ALL=(team-bot-b) NOPASSWD: /usr/bin/crontab -l
+
+# Allow pod-admin to read evolve config files
+pod-admin ALL=(evolve) NOPASSWD: /bin/cat /home/evolve/.openclaw/openclaw.json
+pod-admin ALL=(evolve) NOPASSWD: /bin/cat /home/evolve/.openclaw/agents/main/agent/auth-profiles.json
+pod-admin ALL=(evolve) NOPASSWD: /usr/bin/crontab -l
+
+# Allow gateway restart operations (systemd verbs)
+pod-admin ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop ai.openclaw.*
+pod-admin ALL=(ALL) NOPASSWD: /usr/bin/systemctl start ai.openclaw.*
+pod-admin ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart ai.openclaw.*
+

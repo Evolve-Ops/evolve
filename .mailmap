@@ -1,0 +1,9 @@
+# .mailmap — git author/committer identity normalization
+#
+# Evolve's public repository is published as curated, squashed release
+# snapshots, all under a single project maintainer identity, so no
+# per-commit identity remapping is required here.
+#
+# If a future contributor identity ever needs normalizing for `git shortlog
+# --use-mailmap` / GitHub display, add it in the git-shortlog(1) form:
+#   Canonical Name <canonical@email> <commit@email>

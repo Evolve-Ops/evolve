@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.team_bot_a.evolve.daily</string>
+  <key>UserName</key>
+  <string>team_bot_a</string>
+  <key>GroupName</key>
+  <string>staff</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/Shared/evolve-venv/bin/python3</string>
+    <string>/Users/team_bot_a/.openclaw/workspace/evolve/scheduled/daily.py</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>7</integer>
+    <key>Minute</key>
+    <integer>15</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/team_bot_a/.openclaw/logs/daily.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/team_bot_a/.openclaw/logs/daily.err.log</string>
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>

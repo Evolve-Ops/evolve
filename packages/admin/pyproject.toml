@@ -1,0 +1,76 @@
+[build-system]
+requires = ["setuptools>=84.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "evolve-admin"
+version = "0.1.0"
+description = "Evolve network admin CLI and local web UI for OpenClaw bot networks"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "BUSL-1.1" }
+
+dependencies = [
+    # The analyzer sibling package (monorepo-internal, not on PyPI — install
+    # it first: `pip install -e ../analyzer --config-settings editable_mode=compat`).
+    # Admin imports its monitors, stores, and registries directly
+    # (audit, signals.*, arbiter.*, install_profile, model_registry, ...).
+    "evolve-analyzer",
+    "click>=8.5.0",
+    "flask>=3.0",
+    "rich>=13.0",
+    # RSI arbiter charter loader — charters are YAML on disk.
+    "PyYAML>=6.0",
+    # MCP bridge dependencies
+    "mcp>=1.0",
+    "starlette>=0.36",
+    "uvicorn>=0.27",
+    # Anthropic SDK — used by profile_inferrer (Haiku-backed) and the
+    # spec-routes app-spec generator. Optional at runtime: profile_inferrer
+    # falls back to its no-op stub if the SDK or API key is unavailable.
+    "anthropic>=1.0.0",
+    # Host health metrics (CPU/memory/disk/load/uptime) for /api/host-health
+    "psutil>=5.9",
+    # PWA Phase 1.2 — per-pod VAPID keypair (cryptography) + Web Push
+    # delivery (pywebpush). VAPID lives in evolve_admin/web/push_vapid.py,
+    # delivery in evolve_admin/alerts/push_sender.py.
+    "cryptography>=50.0.1",
+    "pywebpush>=2.0",
+    # PWA Phase 3 — embedded mini terminal. flask-sock wraps the
+    # WebSocket-to-PTY bridge in evolve_admin/web/terminal_routes.py;
+    # simple-websocket is its underlying transport. Both are small and
+    # already compatible with Werkzeug's dev server.
+    "flask-sock>=0.7",
+    "simple-websocket>=1.0",
+    # Google APIs (Gmail / Calendar / Drive) via path-C service-account +
+    # domain-wide delegation. See google_auth.py and mcp_bridge/google_tools.py
+    # plus internal/spec-google-integration-paths-2026-05-30.md.
+    "google-auth>=2.20",
+    "google-api-python-client>=2.100",
+    # QR-code rendering for the WhatsApp + Signal pairing wizards
+    # (skills/_qr_pairing.py). Captures the QR string from OC's
+    # `openclaw channels login` stdout and renders it as a PNG data URL
+    # the admin UI can show inline. Lightweight (~70 KB); PIL is the
+    # default backend.
+    "qrcode[pil]>=7.0",
+]
+
+[project.scripts]
+evolve-admin = "evolve_admin.cli:main"
+
+# uv workspace resolution (Phase 6.4): evolve-analyzer is the sibling
+# package in this monorepo, not a PyPI distribution. pip-based installs
+# (deploy boxes) ignore this table and rely on installing the analyzer
+# first, as documented in the README.
+[tool.uv.sources]
+evolve-analyzer = { workspace = true }
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["evolve_admin*"]
+
+[tool.setuptools.package-data]
+"evolve_admin.web" = ["*.html", "*.css", "*.js"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

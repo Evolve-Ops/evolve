@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "defaults": {},
+  "agents": {
+    "main": {
+      "allowlist": [
+        {
+          "pattern": "/usr/bin/python3*",
+          "comment": "smoke-test probe — read-only"
+        }
+      ]
+    }
+  }
+}

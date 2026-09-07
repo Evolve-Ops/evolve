@@ -1,0 +1,419 @@
+#!/usr/bin/env python3
+"""channel-literal-lint — ratchet gate on hardcoded messaging-channel id sets.
+
+Spec: internal/spec-users-meta-2026-06-15.md §5 invariant 7 — *channel identity is
+registry-driven, never a literal*. The set of messaging channels Evolve knows
+about lives in exactly one declarative registry
+(``packages/admin/evolve_admin/channel_registry.py``); every label / pairing
+rule / verify handler / notify-priority table is a **projection** over it,
+selected by capability. No module carries its own hardcoded channel-id set —
+that is what let ten tables drift to ten different subsets (M1 finding 1),
+each degrading silently when a platform was added.
+
+Mirrors ``tools/provider-literal-lint`` (the model-tiers "no provider literals
+in logic" invariant): same baseline-ratchet shape, same allow markers, same
+CLI. The two gates are the same idea applied to two vocabularies.
+
+HYBRID SEVERITY (repo convention — see CLAUDE.md on ui-style-lint)
+------------------------------------------------------------------
+  BLOCK  — a collection literal (tuple / list / set / dict keys) holding TWO
+           OR MORE known channel ids. That shape is a channel TABLE, and
+           false positives are rare: two unrelated channel names rarely share
+           one literal by accident. This is the rule that stops table #11.
+  WARN   — a per-channel conditional on a single id (``channel == "telegram"``,
+           ``ch in ("slack",)``, ``cfg.get("discord")``) in a channel-shaped
+           context. Real drift, but the heuristic has legitimate exceptions
+           (an adapter genuinely implementing one channel's API), so it
+           prints without failing. ``--strict`` promotes it to BLOCK (CI).
+
+Allowlisting (so a legitimate home doesn't count toward the baseline)
+---------------------------------------------------------------------
+  • The registry module itself and everything under a tests/ directory are
+    exempt outright — the registry IS the table, and tests must be able to
+    pin pre-refactor literals as a safety proof.
+  • Comments and docstrings never count (the file is parsed as an AST; only
+    real string constants are examined).
+  • A whole region:
+        # channel-literal-allow-begin: <reason>
+        ...
+        # channel-literal-allow-end
+  • A single line: append ``# channel-literal-allow``.
+
+Usage:
+  tools/channel-literal-lint [<file> ...]   # lint the given files
+  tools/channel-literal-lint --all          # lint the whole covered tree
+  tools/channel-literal-lint --staged       # lint git-staged covered files
+  tools/channel-literal-lint --all --strict # warn rules block too (CI)
+  tools/channel-literal-lint --all --update-baseline
+
+Exit status: 0 if no covered file exceeds its baseline; 1 if a new channel-id
+literal set appeared.
+"""
+from __future__ import annotations
+
+import argparse
+import ast
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+BASELINE_PATH = REPO_ROOT / "tools" / "channel-literal-baseline.txt"
+
+# Trees the guard walks. The admin package is where every one of the ten
+# drifted tables lived; the analyzer is included because generators and
+# appliers reach into the same channel vocabulary.
+_COVERED_TREES: tuple[str, ...] = (
+    "packages/admin/evolve_admin",
+    "packages/analyzer",
+)
+
+# Never counted: the registry is the one legitimate home for the table, and
+# tests must be able to pin the pre-refactor literals as the refactor's proof.
+_EXEMPT_SUFFIXES: tuple[str, ...] = (
+    "packages/admin/evolve_admin/channel_registry.py",
+)
+_EXEMPT_DIR_NAMES = frozenset({"tests", "test"})
+
+_ALLOW_LINE = "# channel-literal-allow"
+_ALLOW_BEGIN = "# channel-literal-allow-begin"
+_ALLOW_END = "# channel-literal-allow-end"
+
+# Names that make a single-literal comparison "channel-shaped" — the WARN
+# heuristic only fires when the literal is bound to one of these.
+_CHANNEL_RECEIVER = re.compile(r"(?:^|[^\w])(?:\w+\.)?(ch|chan|channel|platform|provider)\w*$")
+
+
+def _channel_vocabulary() -> frozenset[str]:
+    """Known channel ids: the registry's own rows plus every channel OpenClaw
+    ships (docs/skills/oc-channel-coverage.json), so a table of not-yet-
+    registered channels is caught too.
+
+    Read as DATA, never hardcoded here — this guard names no channel, so it
+    cannot go stale when a platform is added. Two ids are dropped because
+    they are common English/maths words that would fire on unrelated code.
+    """
+    ids: set[str] = set()
+
+    snapshot = REPO_ROOT / "docs" / "skills" / "oc-channel-coverage.json"
+    try:
+        data = json.loads(snapshot.read_text(encoding="utf-8"))
+        ids |= {
+            str(c["id"]).lower()
+            for c in data.get("channels", [])
+            if isinstance(c, dict) and c.get("id")
+        }
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+
+    # The registry's own ids, read WITHOUT importing evolve_admin (the guard
+    # must run with no venv, exactly like the other env-free lints).
+    registry = REPO_ROOT / "packages/admin/evolve_admin/channel_registry.py"
+    try:
+        tree = ast.parse(registry.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            fn = node.func
+            name = fn.id if isinstance(fn, ast.Name) else getattr(fn, "attr", "")
+            if name != "ChannelSpec":
+                continue
+            for kw in node.keywords:
+                if kw.arg == "id" and isinstance(kw.value, ast.Constant):
+                    if isinstance(kw.value.value, str):
+                        ids.add(kw.value.value.lower())
+    except (OSError, SyntaxError, ValueError):
+        pass
+
+    # "line" (LINE messenger) and "matrix" collide with ordinary English and
+    # linear algebra; excluding them costs coverage of two channels Evolve
+    # does not support and removes a large false-positive class.
+    return frozenset(ids - {"line", "matrix"})
+
+
+def _is_exempt(rel: str) -> bool:
+    if any(rel.endswith(s) for s in _EXEMPT_SUFFIXES):
+        return True
+    return bool(set(Path(rel).parts) & _EXEMPT_DIR_NAMES)
+
+
+def _allow_lines(text: str) -> set[int]:
+    """1-based line numbers that an allow marker exempts."""
+    out: set[int] = set()
+    in_region = False
+    for i, raw in enumerate(text.splitlines(), start=1):
+        if _ALLOW_BEGIN in raw:
+            in_region = True
+            out.add(i)
+            continue
+        if _ALLOW_END in raw:
+            in_region = False
+            out.add(i)
+            continue
+        if in_region or _ALLOW_LINE in raw:
+            out.add(i)
+    return out
+
+
+def _string_constants(node: ast.AST) -> list[str]:
+    vals = []
+    for elt in getattr(node, "elts", []):
+        if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+            vals.append(elt.value.lower())
+    return vals
+
+
+def _scan(path: Path, vocab: frozenset[str]) -> tuple[int, int, list[str]]:
+    """Return ``(blocking_hits, warn_hits, messages)`` for one file."""
+    try:
+        text = path.read_text(encoding="utf-8")
+        tree = ast.parse(text)
+    except (OSError, UnicodeDecodeError, SyntaxError, ValueError):
+        return 0, 0, []
+
+    exempt = _allow_lines(text)
+    src_lines = text.splitlines()
+    block = 0
+    warn = 0
+    msgs: list[str] = []
+    seen_lines: set[int] = set()
+
+    for node in ast.walk(tree):
+        line = getattr(node, "lineno", None)
+        if line is None or line in exempt:
+            continue
+
+        # ── BLOCK: a collection literal holding 2+ channel ids ──────────
+        found: list[str] = []
+        if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+            found = [v for v in _string_constants(node) if v in vocab]
+        elif isinstance(node, ast.Dict):
+            found = [
+                k.value.lower()
+                for k in node.keys
+                if isinstance(k, ast.Constant) and isinstance(k.value, str)
+                and k.value.lower() in vocab
+            ]
+        if len(set(found)) >= 2:
+            if line not in seen_lines:
+                seen_lines.add(line)
+                block += 1
+                msgs.append(
+                    f"  {path.name}:{line}  channel-id set literal "
+                    f"{sorted(set(found))[:4]} — derive it from "
+                    "channel_registry (capability projection), not a literal"
+                )
+            continue
+
+        # ── WARN: a per-channel conditional on one id ───────────────────
+        if isinstance(node, ast.Compare) and len(node.ops) == 1:
+            lits = [
+                c.value.lower()
+                for c in node.comparators
+                if isinstance(c, ast.Constant) and isinstance(c.value, str)
+            ]
+            if any(v in vocab for v in lits):
+                raw = src_lines[line - 1] if line <= len(src_lines) else ""
+                left = raw.split("==")[0].split("!=")[0].rstrip()
+                if _CHANNEL_RECEIVER.search(left.lower()) and line not in seen_lines:
+                    seen_lines.add(line)
+                    warn += 1
+                    msgs.append(
+                        f"  {path.name}:{line}  per-channel conditional on "
+                        f"{[v for v in lits if v in vocab][0]!r} — consider a "
+                        "registry capability column"
+                    )
+
+    return block, warn, msgs
+
+
+def _covered_files() -> list[Path]:
+    out: list[Path] = []
+    for tree in _COVERED_TREES:
+        root = REPO_ROOT / tree
+        if not root.exists():
+            continue
+        for p in sorted(root.rglob("*.py")):
+            rel = str(p.relative_to(REPO_ROOT))
+            if not _is_exempt(rel):
+                out.append(p)
+    return out
+
+
+def _load_baseline() -> dict[str, int]:
+    if not BASELINE_PATH.exists():
+        return {}
+    out: dict[str, int] = {}
+    for line in BASELINE_PATH.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split("\t", 1)
+        if len(parts) != 2:
+            continue
+        try:
+            out[parts[1]] = int(parts[0])
+        except ValueError:
+            continue
+    return out
+
+
+def _write_baseline(counts: dict[str, int]) -> None:
+    lines = [
+        "# channel-literal-baseline — hardcoded channel-id SET literals per",
+        "# module (spec-users-meta invariant 7: channel identity is",
+        "# registry-driven, never a literal).",
+        "# Generated by `tools/channel-literal-lint --all --update-baseline`.",
+        "# The lint BLOCKS any file that EXCEEDS its count, so this may only",
+        "# ratchet DOWN: convert a table into a channel_registry capability",
+        "# projection -> rerun --update-baseline -> the number drops.",
+        "# Goal state: this file is empty.",
+        "",
+    ]
+    for path in sorted(counts):
+        if counts[path] > 0:
+            lines.append(f"{counts[path]}\t{path}")
+    BASELINE_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _staged_files() -> list[Path]:
+    r = subprocess.run(
+        ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+    )
+    out = []
+    for name in r.stdout.splitlines():
+        if not name.endswith(".py") or _is_exempt(name):
+            continue
+        if not any(name.startswith(t) for t in _COVERED_TREES):
+            continue
+        p = REPO_ROOT / name
+        if p.exists():
+            out.append(p)
+    return out
+
+
+def _rel(p: Path) -> str:
+    try:
+        return str(p.resolve().relative_to(REPO_ROOT))
+    except ValueError:
+        return str(p)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description="Ratchet gate on hardcoded messaging-channel id sets "
+        "(spec-users-meta §5 invariant 7).",
+    )
+    ap.add_argument("files", nargs="*", help="specific files to lint")
+    ap.add_argument("--all", action="store_true", help="lint the whole covered tree")
+    ap.add_argument("--staged", action="store_true", help="lint git-staged covered files")
+    ap.add_argument(
+        "--strict", action="store_true",
+        help="promote WARN rules to BLOCK (used in CI)",
+    )
+    ap.add_argument(
+        "--update-baseline", action="store_true",
+        help="regenerate the baseline from current counts (requires --all)",
+    )
+    args = ap.parse_args()
+
+    vocab = _channel_vocabulary()
+    if not vocab:
+        print(
+            "channel-literal-lint: could not read the channel vocabulary "
+            "(registry + OC snapshot both unreadable) — refusing to pass "
+            "vacuously",
+            file=sys.stderr,
+        )
+        return 2
+
+    if args.update_baseline:
+        if not args.all:
+            print("--update-baseline requires --all", file=sys.stderr)
+            return 2
+        counts = {}
+        for p in _covered_files():
+            b, _w, _m = _scan(p, vocab)
+            if b:
+                counts[_rel(p)] = b
+        _write_baseline(counts)
+        print(
+            f"baseline written: {sum(counts.values())} channel-id set "
+            f"literal(s) across {len(counts)} module(s)"
+        )
+        return 0
+
+    if args.all:
+        targets = _covered_files()
+    elif args.staged:
+        targets = _staged_files()
+    else:
+        targets = []
+        for f in args.files:
+            p = Path(f)
+            rel = _rel(p)
+            if (
+                p.exists() and rel.endswith(".py")
+                and any(rel.startswith(t) for t in _COVERED_TREES)
+                and not _is_exempt(rel)
+            ):
+                targets.append(p)
+
+    baseline = _load_baseline()
+    violations: list[tuple[str, int, int]] = []
+    warnings: list[str] = []
+    block_msgs: list[str] = []
+
+    for p in targets:
+        rel = _rel(p)
+        b, w, msgs = _scan(p, vocab)
+        allowed = baseline.get(rel, 0)
+        if b > allowed:
+            violations.append((rel, b, allowed))
+            block_msgs.extend(m for m in msgs if "set literal" in m)
+        if w:
+            warnings.extend(m for m in msgs if "per-channel conditional" in m)
+
+    if warnings:
+        label = "✗" if args.strict else "⚠"
+        print(f"{label} per-channel conditionals (registry capability columns "
+              f"exist for exactly this):\n")
+        for m in warnings[:40]:
+            print(m)
+        if len(warnings) > 40:
+            print(f"  … and {len(warnings) - 40} more")
+        print()
+
+    if violations:
+        print("✗ new hardcoded channel-id set literal(s) "
+              "(spec-users-meta invariant 7):\n")
+        for rel, n, allowed in violations:
+            print(f"  {rel}: {n} set literal(s), baseline allows {allowed}")
+        print()
+        for m in block_msgs[:40]:
+            print(m)
+        print(
+            "\nFix: add the capability column your consumer needs to "
+            "packages/admin/evolve_admin/channel_registry.py and derive the "
+            "set with channel_registry.ids_where(...) / where(...).\n"
+            "If this really is a legitimate non-registry home, mark it with "
+            f"`{_ALLOW_LINE}` (or a "
+            f"{_ALLOW_BEGIN}/{_ALLOW_END} region) and say why."
+        )
+        return 1
+
+    if warnings and args.strict:
+        return 1
+
+    print(
+        f"✓ channel-literal-lint: {len(targets)} file(s) clean "
+        f"({len(warnings)} warning(s))"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

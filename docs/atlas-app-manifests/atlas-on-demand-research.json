@@ -1,0 +1,460 @@
+{
+  "pkg_id": "p-ec644a2a",
+  "pkg_version": "2026.07.09-1.2",
+  "gallery_version": "2026.07.09-1.2",
+  "schema_version": 13,
+  "manifest_shape": "v7-arc-pre",
+  "manifest_type": "evolve_application",
+  "display_name": "Atlas — On-Demand Research",
+  "author": "evolve",
+  "description": "Event-triggered research responder. When a verified group member @-mentions the bot with a focused question, runs scope + strategy gating, routes the question to the right source (Brave Search for ecosystem / current-events questions; the Evolve help corpus for product / OpenClaw concept questions), and synthesizes a Team_bot_a-style answer. Replies in-thread with 2-4 source links. Bounded by per-member rate limit and a pod-wide daily budget cap so the bot stays a research surface rather than a generic chat target.",
+  "objective": "Give community members a low-friction way to ask focused ecosystem or Evolve-product questions and get a same-thread sourced answer, without the bot becoming a free-form LLM chat target.",
+  "id": "app_atlas_on_demand_research",
+  "name": "Atlas On-Demand Research",
+  "status": "active",
+  "dependencies": [],
+  "app_dependencies": [
+    {
+      "spec_id": "p-7b26ba5e",
+      "interface": [
+        "scripts/atlas_lib/*.py (read)",
+        "atlas/operator.json (read)",
+        "atlas/.capture-salt (read, shared)"
+      ],
+      "version_compatibility": ">=1.0,<2.0"
+    }
+  ],
+  "requirements": {
+    "integrations": [
+      {
+        "id": "telegram",
+        "display_name": "Telegram",
+        "required": true,
+        "check_path": "openclaw.json → skills.telegram",
+        "setup_doc": "docs/skills/telegram-setup.md",
+        "reason": "Receives @-mentions and posts threaded replies"
+      },
+      {
+        "id": "brave",
+        "display_name": "Brave Search",
+        "required": true,
+        "check_path": "openclaw.json → plugins.entries.brave",
+        "setup_doc": "docs/integrations/brave.md",
+        "reason": "Research backend for ecosystem / current-events queries"
+      },
+      {
+        "id": "evolve_knowledge_corpus",
+        "display_name": "Evolve Help Corpus",
+        "kind": "filesystem_corpus",
+        "required": true,
+        "check_path": "filesystem → /Users/Shared/evolve-repo/docs/help/ (read access for atlas bot user)",
+        "setup_doc": "docs/help/README.md",
+        "reason": "Authoritative source for Evolve-product and OpenClaw-concept questions. Read-only; refreshed by the weekly knowledge-refresh routine (no app reinstall needed)."
+      }
+    ],
+    "secrets": [],
+    "system": [],
+    "python_packages": []
+  },
+  "identity": {
+    "purpose": "Provide same-thread sourced answers to focused questions about the broader ecosystem (OC / AI agents / agent tooling) and about Evolve itself (how the product works, how concepts fit together). The bot is gated by scope (only the in-lane topics) and strategy (no 'should I do X' opinions), rate-limited per member, and budget-capped pod-wide — so a single curious member can't burn the day's research budget and so the bot doesn't drift into being a generic chatbot.",
+    "scope_includes": [
+      "Detect @-mentions of the bot in the configured group; treat DMs from operator/member as research-only",
+      "Parse the question (text after the mention; or full DM body)",
+      "Off-topic refusal: anything not about OC / AI agents / agent tooling / case studies / warnings / community / Evolve product",
+      "Strategy refusal: 'should I use X?', 'is X better than Y?' — that's the operator's job, not Atlas's",
+      "Per-member rate limit (default 3 queries/hour, 10/day); pod-wide daily budget cap (default $1.00 / 100 queries)",
+      "Source routing: classify the on-topic question as 'evolve' (covered by docs/help/), 'ecosystem' (covered by Brave Search), or 'both' (need both). Route accordingly to avoid a Brave call when the corpus alone has the answer.",
+      "Evolve-corpus path: read docs/help/_index.yaml + the help files whose concepts match the question; synthesize a Team_bot_a-style answer with 1-3 corpus-file links (relative to the public help site).",
+      "Brave path: issue 1-3 Brave Search queries; synthesize top 5-8 results via Haiku into a Team_bot_a-style 4-6 line answer + 2-4 source links",
+      "Reply in-thread (or in DM for DM queries); never standalone",
+      "Log every query (hashed member, cost, outcome, source_used) to atlas/research-log.jsonl"
+    ],
+    "scope_excludes": [
+      "Free-form chat (the bot is not a conversational LLM target)",
+      "Strategy or evaluative questions",
+      "Personal-life or off-domain questions",
+      "Long-running multi-turn research (single-shot Q+A only)",
+      "Reading the archive directly (a future atlas-archive-search app handles that)"
+    ],
+    "bot_interaction_pattern": "Event-driven via AGENTS.md guidance. The bot's Telegram skill surfaces @-mentions + DMs; AGENTS.md tells the bot when to invoke scripts/atlas_research.py ask. The guard layer in atlas_lib enforces the trust boundary so DM strangers are silently ignored.",
+    "user": "Members of the configured Telegram group asking focused ecosystem questions; the operator also has DM access with rate-limit and budget bypass."
+  },
+  "success_criteria": {
+    "observable_outcomes": [
+      "An on-topic @-mention from a verified group member gets a threaded reply within 30 seconds containing 4-6 lines of body + 2-4 source links",
+      "Off-topic questions get a polite one-line refusal with the off_topic template; strategy questions get the strategy template",
+      "Members at their hourly rate limit get a one-line 'try again at HH:MM' reply",
+      "Daily budget exhausted → next queries return RESEARCH_BUDGET_EXCEEDED reply with the budget_exceeded template",
+      "research-log.jsonl gains one entry per @-mention regardless of outcome"
+    ],
+    "failure_signals": [
+      "RESEARCH_FAILED — Brave or LLM unreachable after retries; bot posts a generic 'try again later' reply",
+      "Member repeatedly gets RESEARCH_REFUSED on legitimately on-topic questions → scope-check classifier needs tuning",
+      "Daily cost exceeds cap but RESEARCH_BUDGET_EXCEEDED reply not surfaced → budget enforcement broken",
+      "Strangers in DM trigger any LLM call → guard layer broken (cost attack vector)"
+    ],
+    "quality_bar": {
+      "minimum": "On-topic questions get on-topic sourced answers; off-topic gets a clear refusal; rate-limit + budget enforced",
+      "excellent": "Sources are exactly the 2-4 most relevant links; refusals never feel arbitrary; operator finds the answers reliable enough to forward to their own teams"
+    }
+  },
+  "constraints": {
+    "privacy": [
+      "Member IDs hashed in research-log.jsonl using the shared atlas/.capture-salt",
+      "Queries are logged in full (no PII redaction at v1) — operator review only",
+      "Answers never reference other members' historical queries",
+      "Replies are threaded to the asker's message; never DM'd to other members; never broadcast"
+    ],
+    "safety": [
+      "Per-member rate limit: configurable; default 3/hour, 10/day",
+      "Pod-wide daily budget cap: configurable; default $1.00 / 100 queries",
+      "Scope check runs BEFORE any retrieval (cheap LLM check on the question alone — ~$0.0005)",
+      "Strategy check runs after scope check, before retrieval",
+      "Source router runs after strategy check, before retrieval (classifies: evolve | ecosystem | both)",
+      "Corpus retrieval is filesystem-only — no network call, no token spend beyond synthesis",
+      "Synthesis prompt explicitly forbids inventing sources; cites only URLs from Brave results or corpus file paths actually read",
+      "When Evolve-corpus is the source, the synthesizer is told to answer ONLY from the supplied corpus chunks; if the corpus doesn't cover it, say so and offer to file a docs gap",
+      "Hard timeout: 25 seconds total per query"
+    ],
+    "dependencies": [
+      "telegram (required) — @-mention detection and threaded reply",
+      "brave (required) — ecosystem research backend",
+      "evolve_knowledge_corpus (required) — Evolve-product / OpenClaw concept source; lives at /Users/Shared/evolve-repo/docs/help/",
+      "atlas_lib/* (via p-7b26ba5e) — guard, hashing, fetchers, config",
+      "atlas/.capture-salt (shared with p-df9d99a3) — for hashed member IDs",
+      "atlas/operator.json (required by guard.py)"
+    ],
+    "boundaries": [
+      "One-shot Q+A — no multi-turn refinement; member can re-ask but it counts against rate limit",
+      "Answers bounded: max 6 lines of body + 1 sources line",
+      "Refusals bounded: exactly one line",
+      "Does not write to archive/ — only to research-log.jsonl and research-budget.json"
+    ]
+  },
+  "privacy": {
+    "user_data_collected": [
+      "Member research queries (full text) — kept in the local research-log",
+      "Telegram user_id of the asker — stored only as a salted SHA-256 hash (first 16 hex chars; salt at atlas/.capture-salt, never logged)",
+      "Query outcome + cost — raw, local audit telemetry (daily research budget resets at midnight local time)",
+      "Brave search results — transient: used in synthesis, then dropped (held in memory only)"
+    ],
+    "consent_notice": "Atlas answers research queries in this group via @-mention or /ask (and by DM for verified members). Queries are logged with a salted hash of the asker — never the raw user id. Described in the pinned intro message (installed by atlas-daily-digest).",
+    "retention_days": 3650,
+    "shareable_in_lessons": true
+  },
+  "audience_scoping": {
+    "operator": "named_users",
+    "approved_surfaces": [
+      "telegram_supergroup:primary_group (@-mention + /ask; membership verified via getChatMember, cached 300s; chat ids in atlas/operator.json)",
+      "telegram_dm:member_dm (research queries; membership verified via getChatMember)",
+      "telegram_dm:operator_dm (research + admin commands)"
+    ],
+    "role_capabilities": {
+      "operator": [
+        "all",
+        "admin-commands"
+      ],
+      "member": [
+        "ask"
+      ],
+      "stranger": []
+    },
+    "operator_bypasses": [
+      "rate_limit",
+      "budget_cap",
+      "scope_check_strict"
+    ]
+  },
+  "invocation_mode": "plugin_intercept",
+  "event_triggers": [
+    {
+      "id": "at_mention",
+      "source": "telegram",
+      "audience": "member",
+      "invokes": "atlas_research",
+      "match": {
+        "channel": "telegram_group",
+        "pattern": "(?<![A-Za-z0-9_])@[A-Za-z][A-Za-z0-9_]{2,}\\b",
+        "exclude_pattern": null
+      },
+      "invocation": {
+        "script": "scripts/atlas_research.py",
+        "request_file_template": "/tmp/atlas-research-{message_id}.json",
+        "request_payload": {
+          "mode": "ask",
+          "query": "{message_text_minus_mention}",
+          "member_id": "{from_id}",
+          "message_id": "{message_id}",
+          "chat_id": "{chat_id}",
+          "chat_type": "{chat_type}"
+        },
+        "stdout_protocol": "atlas_research",
+        "on_failure": "post_fallback",
+        "fallback_text": "I couldn't research that — try again in a few minutes."
+      }
+    },
+    {
+      "id": "ask_command",
+      "source": "telegram",
+      "audience": "member",
+      "invokes": "atlas_research",
+      "match": {
+        "channel": "telegram_group",
+        "pattern": "^\\s*/ask\\b",
+        "exclude_pattern": null
+      },
+      "invocation": {
+        "script": "scripts/atlas_research.py",
+        "request_file_template": "/tmp/atlas-research-{message_id}.json",
+        "request_payload": {
+          "mode": "ask",
+          "query": "{message_text_minus_command}",
+          "member_id": "{from_id}",
+          "message_id": "{message_id}",
+          "chat_id": "{chat_id}",
+          "chat_type": "{chat_type}"
+        },
+        "stdout_protocol": "atlas_research",
+        "on_failure": "post_fallback",
+        "fallback_text": "I couldn't research that — try again in a few minutes."
+      }
+    },
+    {
+      "id": "dm_research",
+      "source": "telegram",
+      "audience": "member",
+      "invokes": "atlas_research",
+      "match": {
+        "channel": "telegram_dm",
+        "pattern": ".*",
+        "exclude_pattern": "^(?:\\s*/optout(?:-all)?\\b|\\[atlas:internal\\])"
+      },
+      "invocation": {
+        "script": "scripts/atlas_research.py",
+        "request_file_template": "/tmp/atlas-research-{message_id}.json",
+        "request_payload": {
+          "mode": "ask",
+          "query": "{message_text}",
+          "member_id": "{from_id}",
+          "message_id": "{message_id}",
+          "chat_id": "{chat_id}",
+          "chat_type": "{chat_type}"
+        },
+        "stdout_protocol": "atlas_research",
+        "on_failure": "post_fallback",
+        "fallback_text": "I couldn't research that — try again in a few minutes."
+      }
+    }
+  ],
+  "bot_guidance": [
+    {
+      "section": "Atlas — On-Demand Research",
+      "content": "**Triggers:** (a) a group message that **@-mentions you** (e.g. `@atlas_evo_bot what's new with Claude?`) OR that **starts with `/ask`** (e.g. `/ask what's new with Claude?`), OR (b) any DM that isn't an `/optout*` slash command.\n\nWhen triggered:\n\n1. Strip the @-mention or `/ask` prefix (in group) or use the full text (in DM) to get the bare question.\n2. Write a JSON file at `/tmp/atlas-research-<msg.id>.json` (substitute the actual message id) containing:\n   ```\n   {\"mode\": \"ask\",\n    \"query\": \"<the bare question>\",\n    \"member_id\": \"<from.id>\",\n    \"message_id\": \"<msg.id>\",\n    \"chat_id\": \"<chat.id>\",\n    \"chat_type\": \"<chat.type>\"}\n   ```\n   Use the `write_file` tool. The path **must** start with `/` and end with `.json`.\n3. Run **exactly**: `python3 scripts/atlas_research.py /tmp/atlas-research-<msg.id>.json`\n   (no flags, no quoted strings — OpenClaw's exec preflight blocks complex invocations per `openclaw#87371`.)\n4. The script reads the JSON, deletes it, and prints one of:\n   - `RESEARCH_ANSWERED:<base64-encoded-reply>` → decode and post as a threaded reply (DM reply for DM context).\n   - `RESEARCH_RATE_LIMITED:<reply-text>` → post the reply-text as a threaded/DM reply.\n   - `RESEARCH_BUDGET_EXCEEDED:<reply-text>` → post the reply-text.\n   - `RESEARCH_REFUSED:<reply-text>` → post the reply-text.\n   - `RESEARCH_FAILED` → post \"I couldn't research that — try again in a few minutes.\" as a threaded/DM reply.\n   - (No output / exit 0) → guard refused silently (stranger DM, foreign group). Don't reply. Don't acknowledge.\n\nDo NOT deviate from the script's reply texts. Do NOT add commentary. The terseness is intentional — these are bounded answers, not chat.\n\nDo NOT freelance with your general tools if the script invocation fails. If `python3 scripts/atlas_research.py …` errors, post the `RESEARCH_FAILED` fallback message — never substitute your own research. The script's rate limits, budget caps, and source grounding exist for a reason."
+    }
+  ],
+  "recursive_llm": {
+    "purposes": [
+      {
+        "name": "scope check (off-topic gate)",
+        "intent": "classify question as in_scope (OC / AI agents / agent tooling / Evolve product) or out; JSON-only output",
+        "expected_cost_per_day_usd": 0.05,
+        "notes": "Cheap classifier; ~$0.0005 per check."
+      },
+      {
+        "name": "strategy check (opinion gate)",
+        "intent": "classify question as factual vs strategy/opinion; JSON-only output",
+        "expected_cost_per_day_usd": 0.05,
+        "notes": "Runs after scope check passes."
+      },
+      {
+        "name": "source router (corpus vs brave gate)",
+        "intent": "classify question as 'evolve' | 'ecosystem' | 'both' source domain; JSON-only output",
+        "expected_cost_per_day_usd": 0.05,
+        "notes": "Lets the bot skip the Brave call when the corpus alone covers the answer; ~$0.0003 per check."
+      },
+      {
+        "name": "synthesizer (answer composer)",
+        "intent": "compose a Team_bot_a-style answer from supplied search results and/or corpus chunks; cite only URLs and file paths supplied; do not invent sources",
+        "expected_cost_per_day_usd": 0.8,
+        "notes": "Reads Brave results and/or corpus chunks + composes the answer. Forbidden from inventing sources; cites only URLs from Brave results or file paths from the supplied corpus chunks."
+      }
+    ],
+    "transport": "openclaw_headless",
+    "fallback_required": true,
+    "retry_policy": "exponential_backoff_max_3",
+    "fallback_strategy": "Scope/strategy checks fail-open (allow query) when bot gateway unreachable, so legitimate queries aren't blocked by a transient error. Synthesizer fail returns RESEARCH_FAILED. Hard timeout 45s end-to-end."
+  },
+  "shared_modules": [
+    {
+      "name": "atlas_lib.guard",
+      "owner_spec_id": "p-7b26ba5e",
+      "expected_exports": [
+        "classify"
+      ]
+    },
+    {
+      "name": "atlas_lib.hashing",
+      "owner_spec_id": "p-7b26ba5e",
+      "expected_exports": [
+        "read_or_create_salt",
+        "hash_member"
+      ]
+    },
+    {
+      "name": "atlas_lib.fetchers",
+      "owner_spec_id": "p-7b26ba5e",
+      "expected_exports": [
+        "brave_search"
+      ]
+    },
+    {
+      "name": "atlas_lib.config",
+      "owner_spec_id": "p-7b26ba5e",
+      "expected_exports": [
+        "research_config",
+        "brave_api_key",
+        "workspace_root",
+        "read_json",
+        "write_json_atomic"
+      ]
+    },
+    {
+      "name": "atlas_lib.oc_dispatch",
+      "owner_spec_id": "p-7b26ba5e",
+      "expected_exports": [
+        "dispatch",
+        "parse_json_reply"
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "scripts/atlas_research.py",
+      "layer": "script",
+      "data_kind": null,
+      "owned_by": "p-ec644a2a",
+      "shared_with": [],
+      "purpose": "Main CLI: ask | budget."
+    },
+    {
+      "path": "atlas/research-config.json",
+      "layer": "data",
+      "data_kind": "template",
+      "owned_by": "p-ec644a2a",
+      "shared_with": [],
+      "purpose": "Rate limits, budget cap, refusal templates. Operator-editable defaults."
+    },
+    {
+      "path": "atlas/research-log.jsonl",
+      "layer": "data",
+      "data_kind": "runtime-generated",
+      "owned_by": "p-ec644a2a",
+      "shared_with": [],
+      "purpose": "Append-only audit log of every query. Hashed member IDs only."
+    },
+    {
+      "path": "atlas/research-budget.json",
+      "layer": "data",
+      "data_kind": "runtime-generated",
+      "owned_by": "p-ec644a2a",
+      "shared_with": [],
+      "purpose": "Daily budget tracker. Reset at midnight local. Records cost + count + rate-limited member hashes."
+    }
+  ],
+  "build_spec": "# Atlas On-Demand Research — Blueprint\n\n## Overview\n\nEvent-driven research responder. When the bot sees an @-mention (group) or a non-/optout DM, AGENTS.md guidance tells it to invoke `scripts/atlas_research.py ask`. The script runs guard → scope check → strategy check → **source router** → rate-limit check → budget check → **retrieval (Brave Search OR Evolve corpus OR both)** → Haiku synthesis → reply. Bounded by rate limits per member and a pod-wide daily budget cap.\n\nDepends on p-7b26ba5e for atlas_lib (guard, hashing, fetchers, config) and on the Evolve help corpus at `/Users/Shared/evolve-repo/docs/help/` for product / OpenClaw concept questions. Does NOT own any shared module.\n\n## File layout\n\n```\nscripts/\n  atlas_research.py          ← main CLI: ask | budget\natlas/\n  research-config.json       ← template (rendered below)\n  research-log.jsonl         ← created on first ask\n  research-budget.json       ← created on first ask\n```\n\nExternal corpus (read-only; refreshed weekly by the docs(help) routine):\n```\n/Users/Shared/evolve-repo/docs/help/\n  _index.yaml                ← concept → files map\n  *.md                       ← help files with YAML frontmatter\n```\n\nNo cron, no plist — entirely event-driven.\n\n## Per-file specs\n\n### scripts/atlas_research.py\n- **Purpose:** Main CLI. Subcommands: `ask` (full pipeline), `budget` (read-only status).\n- **Inputs:** flags `--query`, `--member-id`, `--message-id`, `--chat-id`, `--chat-type`, `--bot-id`.\n- **ask pipeline:**\n  1. **Guard check** (defense-in-depth) — call `atlas_lib.guard.classify(member_id, chat_id, chat_type, bot_id=bot_id)`. If `context == 'foreign_group'` OR `(context == 'dm' AND role == 'stranger')`, return immediately with no stdout (silent ignore).\n  2. **Budget check** — read research-budget.json; if `cost_today_usd >= cap` or `queries_today >= cap`, emit `RESEARCH_BUDGET_EXCEEDED:<reply>`. Operators bypass this.\n  3. **Rate-limit check** — count member's queries in last hour and last day from research-log.jsonl; if at cap, emit `RESEARCH_RATE_LIMITED:<reply>`. Operators bypass.\n  4. **Scope check** (LLM) — Haiku classifies the question as on-topic / off-topic. In-lane = OC / AI agents / agent tooling / Evolve product. Off-topic → emit `RESEARCH_REFUSED:<off_topic_template>`.\n  5. **Strategy check** (LLM) — Haiku classifies the question as factual / strategy/opinion. Strategy → emit `RESEARCH_REFUSED:<strategy_template>`.\n  6. **Source router** (LLM) — Haiku classifies the question as `evolve` | `ecosystem` | `both`. The router gets the corpus's concept vocabulary (the keys of `_index.yaml`) in its prompt so it can recognize Evolve concepts cheaply. Defaults to 'both' when the LLM is unreachable (fail-safe — never hide a corpus-covered question behind Brave or vice versa).\n  7. **Retrieval branch:**\n     - `evolve`: read `docs/help/_index.yaml`; tokenize the question; score each concept by token overlap; load the top 1-3 owning files (full markdown bodies — corpus is small, ~100KB total). Pass them to the synthesizer with their relative paths as source attributions.\n     - `ecosystem`: 1-3 Brave Search queries; top 5-8 results combined.\n     - `both`: do both; supply both to the synthesizer.\n  8. **Synthesis** (LLM) — Haiku reads the supplied chunks + composes a Team_bot_a-style answer: 1-2 sentence direct answer, 2-4 bullets, 'Sources:' line. Corpus answers link to `docs/help/<file>.md` paths (renderable to public-help URLs once the static site ships); Brave answers link to result URLs. Forbidden from inventing sources or mixing corpus citations into a Brave answer.\n  9. **Update budget + log entry** (atomic writes; log includes a `source_used` field: `evolve` | `ecosystem` | `both`); emit `RESEARCH_ANSWERED:<base64(answer)>`.\n- **Corpus retrieval notes:**\n  - Read `_index.yaml` once per invocation; cache in memory for the rest of the call.\n  - Token-overlap matching: lowercase, strip stopwords, score each concept key by token-hit count. Tie-break by `last_reviewed` recency. Pick top-N (default 3, from `research-config.json::evolve_corpus.max_files_per_answer`).\n  - If no concept matches above a minimum threshold (default 1 token-hit), emit `RESEARCH_ANSWERED` with the `corpus_gap` template — do NOT fall through to Brave for an Evolve-routed question (avoids cross-source hallucinations).\n- **Corpus availability check:** at script startup, stat `<root_path>/_index.yaml`. If unreadable, log a one-time warning and emit `RESEARCH_FAILED` for any `evolve`-routed question. Ecosystem-routed questions continue to work via Brave.\n- **budget subcommand:** read-only print of today's cost / count / rate-limited-member-count. Side-effect-free (so smoke tests against a nonexistent bot don't crash).\n- **First-run safety:** if research-log.jsonl or research-budget.json don't exist, treat as fresh day, zero spend.\n\n### atlas/research-config.json (template — rendered below)\n\nOperator-editable defaults: rate limits, budget cap, refusal templates.\n\n## Configuration file templates\n\n## FILE: atlas/research-config.json\n```json\n{\n  \"_comment\": \"Atlas on-demand research limits + budget + refusal templates + corpus settings.\",\n  \"per_member_rate\": {\n    \"queries_per_hour\": 3,\n    \"queries_per_day\": 10\n  },\n  \"pod_budget\": {\n    \"max_cost_usd_per_day\": 1.00,\n    \"max_queries_per_day\": 100\n  },\n  \"evolve_corpus\": {\n    \"root_path\": \"/Users/Shared/evolve-repo/docs/help\",\n    \"index_file\": \"_index.yaml\",\n    \"max_files_per_answer\": 3,\n    \"min_concept_hits_for_match\": 1,\n    \"public_url_base\": \"https://help.evolve.ai\"\n  },\n  \"refusal_templates\": {\n    \"off_topic\": \"Not in my lane — I cover OC, AI agents, agent tooling, ecosystem case studies and warnings, and the Evolve product itself.\",\n    \"strategy\": \"Strategy questions go to the operator, not me. I can tell you what's happening; I can't tell you what to do about it.\",\n    \"rate_limited\": \"You've asked {n} questions in the last hour — limit is {cap}. Try again at {next_window}.\",\n    \"budget_exceeded\": \"Research budget for today is spent (${spent} of ${cap}). The daily digest will still run tomorrow at {time}.\",\n    \"corpus_gap\": \"I don't see that covered in the Evolve docs — want me to flag it as a docs gap?\"\n  }\n}\n```\n\n## Integration with atlas-daily-digest\n\nDepends on p-7b26ba5e for:\n- `atlas_lib.guard.classify` — trust boundary\n- `atlas_lib.hashing.read_or_create_salt` + `hash_member` — for hashing member IDs in the log (shares salt with capture)\n- `atlas_lib.fetchers.brave_search` — Brave Search wrapper\n- `atlas_lib.config.research_config / brave_api_key` — config loaders\n- `atlas_lib.oc_dispatch.dispatch` — one-shot LLM dispatch to the bot's local OC agent (openclaw_headless transport)\n\nNo shared state with digest (separate logs, separate budget). Salt is shared with capture so a hashed member ID is consistent across both apps.\n\n## Integration with the Evolve help corpus\n\nThe corpus lives outside the atlas workspace, in the deploy checkout at `/Users/Shared/evolve-repo/docs/help/`. Atlas does NOT own or write to it — the weekly knowledge-refresh routine maintains it via PR to `main`, and the repo-puller LaunchDaemon refreshes the deploy checkout every 15 minutes via `git pull --ff-only`. The atlas bot user only needs **read** access to the directory tree.\n\nDecoupling the corpus from the app's install means weekly content updates do not require an app reinstall — atlas picks up the new content on the next query.\n\nIf the corpus path is unreachable (missing, permissions wrong, deploy checkout absent), the startup check logs once and the script emits `RESEARCH_FAILED` for any Evolve-routed question. Ecosystem questions continue to work via Brave alone.\n\n## Recursive LLM concerns\n\nFour LLM purposes, all routed through `atlas_lib.oc_dispatch` (`openclaw_headless` transport). The bot's configured provider, model, tier-walk fallback, and `daily_cap_usd` govern every call. See [docs/principle-apps-inherit-bot-llm.md](../principle-apps-inherit-bot-llm.md).\n- Scope check (~$0.0005/query estimate, fail-open on unreachable to avoid blocking)\n- Strategy check (~$0.0005/query estimate, fail-open)\n- Source router (~$0.0003/query estimate, fail-safe: routes to `both` on unreachable so we never silently hide a corpus-covered question or burn Brave on an Evolve-only one)\n- Synthesizer (~$0.005-0.01/query estimate, fails to RESEARCH_FAILED on unreachable)\n\nPer recursive_llm contract: exponential backoff max 3, log every error with context, no infinite retry. Synthesizer prompt explicitly says 'cite only URLs from the Brave results, or file paths from the corpus chunks supplied below; do not invent sources; do not mix corpus citations into a Brave answer.'\n\n## Test surface\n\nValidate:\n- `atlas_research.py ask` from a stranger DM produces no stdout (silent guard refusal).\n- An on-topic ecosystem question from a verified member returns `RESEARCH_ANSWERED:<base64>` with decoded text containing at least one URL; log entry `source_used='ecosystem'`.\n- An on-topic Evolve-product question (e.g. \"how do recommendations work?\") returns `RESEARCH_ANSWERED:<base64>` whose decoded text cites at least one `docs/help/<file>.md` path; log entry `source_used='evolve'`; no Brave network call recorded for this query.\n- An off-topic question returns `RESEARCH_REFUSED:` with the off_topic template.\n- A strategy question returns `RESEARCH_REFUSED:` with the strategy template.\n- Hitting the per-member rate limit returns `RESEARCH_RATE_LIMITED:` with the next-window time.\n- An Evolve-routed question whose concepts are genuinely absent from `_index.yaml` returns the `corpus_gap` template — never a hallucinated answer, never a silent fallthrough to Brave.\n- With `_index.yaml` made unreadable, an Evolve-routed question returns `RESEARCH_FAILED`; an ecosystem-routed question still answers normally.\n- Raw member IDs never appear in research-log.jsonl.\n- `atlas_research.py budget` against an uninitialized bot returns zeros, exit 0 (no crash).\n\n## What NOT to include\n\n- No multi-turn conversation; one-shot Q+A only.\n- No archive search (a future atlas-archive-search app handles that).\n- No memory of prior queries (other than rate-limit accounting).\n- No proactive outreach; only responds to @-mentions and DMs.\n- No reaction-based opt-out (deferred per OC plugin limitation; not relevant here since research doesn't archive anything).\n- No corpus writes from atlas — corpus is owned by the weekly docs(help) routine; atlas is read-only.\n- No Brave fallback when the source router picks `evolve` and the corpus has no match — that would let a cross-source hallucination slip through. Honest `corpus_gap` reply instead.\n",
+  "example_triggers": [
+    "@atlas what's the latest with MCP? (ecosystem — Brave)",
+    "@atlas any new agent frameworks this week? (ecosystem — Brave)",
+    "@atlas case studies on multi-agent systems? (ecosystem — Brave)",
+    "@atlas what is Evolve and how does it work? (evolve — corpus)",
+    "@atlas how do recommendations get approved? (evolve — corpus)",
+    "@atlas what's the difference between the Recommendations page and the Coaches page? (evolve — corpus)",
+    "@atlas should I switch from Claude to GPT-5? (will be refused — strategy)",
+    "(DM) what is Brave Search? (member-DM ask, ecosystem)"
+  ],
+  "test_command": "python3 -m py_compile scripts/atlas_research.py && python3 scripts/atlas_research.py --help > /dev/null && python3 scripts/atlas_research.py budget > /dev/null",
+  "test_cases": [
+    {
+      "id": "tc-001",
+      "description": "Stranger DM produces no output (silent guard refusal)",
+      "trigger": "python3 scripts/atlas_research.py ask --query 'What is MCP?' --member-id 999999 --message-id m1 --chat-id 999999 --chat-type private",
+      "expected": "No stdout output. Exit 0. Silence is correct — strangers shouldn't even know the bot exists."
+    },
+    {
+      "id": "tc-002",
+      "description": "On-topic question from a verified member returns answer with sources",
+      "trigger": "python3 scripts/atlas_research.py ask --query 'What is MCP in the agent context?' --member-id <approved-member-id> --message-id m2 --chat-id <approved-chat-id> --chat-type supergroup",
+      "expected": "Stdout contains 'RESEARCH_ANSWERED:' + base64. Decoded text contains at least one URL. Exit 0."
+    },
+    {
+      "id": "tc-003",
+      "description": "Off-topic question is refused with off_topic template",
+      "trigger": "python3 scripts/atlas_research.py ask --query 'What is the weather in Tokyo?' --member-id <approved-member-id> --message-id m3 --chat-id <approved-chat-id> --chat-type supergroup",
+      "expected": "Stdout contains 'RESEARCH_REFUSED:' followed by the off_topic template text. Exit 0."
+    },
+    {
+      "id": "tc-004",
+      "description": "Strategy question is refused with strategy template",
+      "trigger": "python3 scripts/atlas_research.py ask --query 'Should I switch from Claude to GPT-5?' --member-id <approved-member-id> --message-id m4 --chat-id <approved-chat-id> --chat-type supergroup",
+      "expected": "Stdout contains 'RESEARCH_REFUSED:' followed by the strategy template text. Exit 0."
+    },
+    {
+      "id": "tc-005",
+      "description": "Operator DM bypasses rate limit (operator_bypasses)",
+      "trigger": "Run the same on-topic query as operator 5 times in 1 minute from DM",
+      "expected": "All 5 return RESEARCH_ANSWERED (no rate-limit applied to operator). Exit 0 each."
+    },
+    {
+      "id": "tc-006",
+      "description": "Member IDs hashed in research-log",
+      "trigger": "grep '<raw-member-id-from-tc-002>' atlas/research-log.jsonl || echo absent",
+      "expected": "Stdout contains 'absent'."
+    },
+    {
+      "id": "tc-007",
+      "description": "Budget command is read-only and survives uninitialized state",
+      "trigger": "python3 scripts/atlas_research.py budget --bot-id nonexistent",
+      "expected": "Exit 0. Stdout contains a date and zero counts. No crash, no workspace creation."
+    },
+    {
+      "id": "tc-008",
+      "description": "Evolve-corpus question is routed to corpus and answered without a Brave call",
+      "trigger": "python3 scripts/atlas_research.py ask --query 'How does the Recommendations page work in Evolve?' --member-id <approved-member-id> --message-id m8 --chat-id <approved-chat-id> --chat-type supergroup",
+      "expected": "Stdout contains 'RESEARCH_ANSWERED:' + base64. Decoded text cites at least one docs/help/ file path. research-log.jsonl entry has source_used='evolve'. No Brave network call recorded for this query."
+    },
+    {
+      "id": "tc-009",
+      "description": "Corpus gap is reported honestly, not hallucinated",
+      "trigger": "python3 scripts/atlas_research.py ask --query 'What is the Evolve flux capacitor configuration?' --member-id <approved-member-id> --message-id m9 --chat-id <approved-chat-id> --chat-type supergroup",
+      "expected": "Either RESEARCH_REFUSED with the off_topic template (router classified out-of-scope), or RESEARCH_ANSWERED whose decoded text explicitly says the corpus doesn't cover that and offers to file a docs gap. Never an invented answer."
+    },
+    {
+      "id": "tc-010",
+      "description": "Evolve corpus availability is a precondition checked at startup",
+      "trigger": "Move /Users/Shared/evolve-repo/docs/help/_index.yaml aside; run an Evolve-question ask",
+      "expected": "Script emits RESEARCH_FAILED (corpus unavailable). Does not silently fall back to Brave for Evolve questions; does not invent an answer."
+    }
+  ],
+  "rsigrade_signals": [
+    "queries_per_day",
+    "refusal_rate_off_topic",
+    "refusal_rate_strategy",
+    "rate_limit_hit_rate",
+    "average_query_cost_usd",
+    "average_response_latency_seconds",
+    "synthesizer_failure_rate",
+    "source_split_evolve_vs_ecosystem",
+    "corpus_gap_rate"
+  ],
+  "application_tags": [
+    "community-research",
+    "event-driven",
+    "telegram-community",
+    "rate-limited",
+    "budget-bounded",
+    "atlas",
+    "evolve-knowledge"
+  ],
+  "workspace_files_source": "docs/atlas-app-manifests/"
+}

@@ -1,0 +1,499 @@
+{
+  "pkg_id": "p-7b26ba5e",
+  "pkg_version": "2026.07.09-1.1",
+  "gallery_version": "2026.07.09-1.1",
+  "schema_version": 13,
+  "manifest_shape": "v7-arc-pre",
+  "manifest_type": "evolve_application",
+  "display_name": "Atlas — Daily Digest",
+  "author": "evolve",
+  "description": "Daily research crawler for a configured Telegram community. Once per day, scans configured RSS feeds, GitHub release pages, and a small set of search queries; classifies findings into five buckets (competitive landscape, new tools, use cases, case studies, warnings); posts a single concise Team_bot_a-style digest to the configured group. Companion to atlas-article-capture and atlas-weekly-recap, which share its archive.",
+  "objective": "Give a configured community a single concise morning digest of what changed in the agent ecosystem, classified for skimming.",
+  "id": "app_atlas_daily_digest",
+  "name": "Atlas Daily Digest",
+  "status": "active",
+  "dependencies": [],
+  "app_dependencies": [],
+  "requirements": {
+    "integrations": [
+      {
+        "id": "telegram",
+        "display_name": "Telegram",
+        "required": true,
+        "check_path": "openclaw.json → skills.telegram or .openclaw/skills/telegram.json",
+        "setup_doc": "docs/skills/telegram-setup.md",
+        "reason": "Posts the daily digest to the configured Telegram group"
+      },
+      {
+        "id": "brave",
+        "display_name": "Brave Search",
+        "required": true,
+        "check_path": "openclaw.json → plugins.entries.brave",
+        "setup_doc": "docs/integrations/brave.md",
+        "reason": "Issues focused queries when RSS/GitHub feeds don't surface enough signal"
+      },
+      {
+        "id": "github",
+        "display_name": "GitHub",
+        "required": false,
+        "check_path": "openclaw.json → plugins.entries.github",
+        "setup_doc": "docs/integrations/github.md",
+        "reason": "Reads release feeds; falls back to RSS if absent."
+      }
+    ],
+    "secrets": [],
+    "system": [],
+    "python_packages": []
+  },
+  "identity": {
+    "purpose": "This application surfaces ecosystem developments (OpenClaw, AI agents, agent tooling) to an enthusiast community in a single daily message, classified into five buckets so members and the operator can find what they care about in seconds. The operator typically uses the same digest as a market-intelligence feed; downstream synthesis happens in their own sessions, not in this app.",
+    "scope_includes": [
+      "Crawl configured RSS feeds once per day at the configured local time",
+      "Read recent GitHub releases for any configured repos",
+      "Issue 3-5 focused Brave Search queries to catch items the feeds missed",
+      "Classify each candidate into exactly one of: competitive_landscape, new_tools, use_cases, case_studies, warnings (or skip if not relevant)",
+      "De-duplicate against the existing archive (a previously-archived URL is not re-archived)",
+      "Write one Markdown file per classified item to archive/{bucket}/",
+      "Append to archive/index.json (append-only, atomic writes)",
+      "Compose a Team_bot_a-style digest and post it to the configured Telegram group",
+      "Write the posted digest to digest/{YYYY-MM-DD}.md as a local audit trail",
+      "Emit DIGEST_SENT: / DIGEST_FAILED: / DIGEST_PARTIAL: / DIGEST_EMPTY: signals for the verify daemon"
+    ],
+    "scope_excludes": [
+      "Synthesizing strategic recommendations — the digest is signal, not direction",
+      "Posting anywhere other than the configured group",
+      "Quoting community members by name in the digest",
+      "Archiving content from sources not listed in atlas/sources.json (no unbounded crawling)",
+      "Re-posting items already classified and archived",
+      "Operating outside the configured cadence (one digest per day; never two; never zero unless DIGEST_EMPTY)"
+    ],
+    "bot_interaction_pattern": "Cron-driven daemon. The bot is not invoked as a session except as a message-delivery target. Companion apps (atlas-article-capture, atlas-on-demand-research) handle interactive surfaces.",
+    "user": "Members of the configured Telegram group, plus the operator who receives the same digest."
+  },
+  "success_criteria": {
+    "observable_outcomes": [
+      "A digest message arrives in the configured group within 2 minutes of the configured time, every day",
+      "Each digest item appears under exactly one of the five buckets — no item falls through",
+      "Members can read the full digest in under 30 seconds (concise mode), under 60s (standard)",
+      "archive/index.json gains N entries per day where N matches the digest's item count",
+      "DIGEST_SENT: signal emitted every successful day; verify daemon shows no gap > 36h"
+    ],
+    "failure_signals": [
+      "DIGEST_FAILED: emitted — Telegram send failed, all source fetches failed, or no LLM key configured",
+      "DIGEST_EMPTY: emitted — sources fetched OK but no new items survived dedup (acceptable; post is skipped)",
+      "DIGEST_PARTIAL: emitted — one or more source fetches failed but a digest was still composed and sent",
+      "No DIGEST_SENT: in 36+ hours during normal operation — daemon not loaded",
+      "Members complain that obvious news is being missed — sources config needs tuning",
+      "Members complain about noise in the digest — classification thresholds need tuning"
+    ],
+    "quality_bar": {
+      "minimum": "A scannable, accurate, bucketed digest arrives once daily with no duplicate items and no items that should have been suppressed (e.g. 6-month-old reposts)",
+      "excellent": "Members react to the digest with discussion. Operator finds developments they hadn't seen elsewhere. Classification matches what humans would do >90% of the time."
+    }
+  },
+  "constraints": {
+    "privacy": [
+      "Never quote community members or their messages in the digest (Atlas crawls public sources, not the group)",
+      "Source credentials (GitHub PAT, Brave key, Anthropic API key) live only in their respective config files — never in archive or digest output"
+    ],
+    "safety": [
+      "Read-only against external sources — Atlas does not post comments, edit issues, or interact beyond fetching",
+      "Telegram posting only to the configured group — never DMs members; never posts to other channels",
+      "No external service calls outside the configured sources (no unbounded web crawling)"
+    ],
+    "dependencies": [
+      "telegram (required) — posting",
+      "brave (required) — supplementary search",
+      "github (optional) — release feeds; falls back to RSS if absent"
+    ],
+    "boundaries": [
+      "One digest per day; never two; never zero unless DIGEST_EMPTY",
+      "Five buckets, fixed taxonomy — extending the taxonomy is a manifest change, not a runtime choice",
+      "Does not handle on-demand queries — see app_atlas_on_demand_research",
+      "Does not synthesize a weekly view — see app_atlas_weekly_recap"
+    ]
+  },
+  "privacy": {
+    "user_data_collected": [
+      "URLs and metadata from public web sources — summarized + classified, archived under archive/ until removed via /optout (handled by atlas-article-capture)",
+      "Classification cost per item (token counts) — raw, local audit telemetry under digest/"
+    ],
+    "opt_out_command": "/optout <link> (handled by the companion atlas-article-capture app; a digest-only install has no opt-out surface and archives only public-source items)",
+    "consent_notice": "Atlas posts one daily digest of public web sources (RSS feeds, GitHub releases, web search) to this group. It does not read or archive member messages. Remove an archived item with /optout <link>.",
+    "retention_days": 3650,
+    "shareable_in_lessons": true
+  },
+  "audience_scoping": {
+    "operator": "named_users",
+    "approved_surfaces": [
+      "telegram_supergroup:primary_group (outbound post only — chat id + operator ids configured in atlas/operator.json)"
+    ],
+    "role_capabilities": {
+      "operator": [
+        "all"
+      ],
+      "member": [
+        "receive-digest (outbound-only surface — no incoming events, so no membership verification)"
+      ],
+      "stranger": []
+    },
+    "operator_bypasses": []
+  },
+  "event_triggers": [],
+  "bot_guidance": [],
+  "recursive_llm": {
+    "purposes": [
+      {
+        "name": "5-bucket classifier",
+        "intent": "classify item into one of 5 buckets or 'skip'; JSON-only output",
+        "expected_cost_per_day_usd": 0.1,
+        "notes": "One classification per candidate item; ~20-40 candidates/day."
+      }
+    ],
+    "transport": "openclaw_headless",
+    "fallback_required": true,
+    "retry_policy": "exponential_backoff_max_3",
+    "fallback_strategy": "If the bot gateway is unreachable after retries, emit DIGEST_FAILED: <date> classifier_unreachable and exit non-zero. Do NOT post an unclassified digest — better to skip a day than mislead members."
+  },
+  "shared_modules": [
+    {
+      "name": "atlas_lib.classifier",
+      "owner_spec_id": "p-7b26ba5e",
+      "expected_exports": [
+        "classify",
+        "BUCKETS",
+        "CLASSIFY_THRESHOLD"
+      ]
+    },
+    {
+      "name": "atlas_lib.oc_dispatch",
+      "owner_spec_id": "p-7b26ba5e",
+      "expected_exports": [
+        "dispatch",
+        "parse_json_reply"
+      ]
+    },
+    {
+      "name": "atlas_lib.fetchers",
+      "owner_spec_id": "p-7b26ba5e",
+      "expected_exports": [
+        "fetch_rss",
+        "fetch_github_releases",
+        "brave_search",
+        "fetch_url"
+      ]
+    },
+    {
+      "name": "atlas_lib.archive",
+      "owner_spec_id": "p-7b26ba5e",
+      "expected_exports": [
+        "read_index",
+        "find_duplicate",
+        "write_item",
+        "delete_by_url",
+        "delete_by_member",
+        "items_in_range",
+        "normalize_url"
+      ]
+    },
+    {
+      "name": "atlas_lib.composer",
+      "owner_spec_id": "p-7b26ba5e",
+      "expected_exports": [
+        "compose_digest",
+        "compose_recap"
+      ]
+    },
+    {
+      "name": "atlas_lib.hashing",
+      "owner_spec_id": "p-7b26ba5e",
+      "expected_exports": [
+        "read_or_create_salt",
+        "hash_member"
+      ]
+    },
+    {
+      "name": "atlas_lib.telegram_api",
+      "owner_spec_id": "p-7b26ba5e",
+      "expected_exports": [
+        "send_message",
+        "set_message_reaction",
+        "get_chat_member"
+      ]
+    },
+    {
+      "name": "atlas_lib.config",
+      "owner_spec_id": "p-7b26ba5e",
+      "expected_exports": [
+        "read_json",
+        "write_json_atomic",
+        "workspace_root",
+        "telegram_token",
+        "sources_config",
+        "brave_api_key",
+        "github_token"
+      ]
+    },
+    {
+      "name": "atlas_lib.guard",
+      "owner_spec_id": "p-7b26ba5e",
+      "expected_exports": [
+        "classify",
+        "read_operator_config"
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "scripts/atlas_digest.py",
+      "layer": "script",
+      "data_kind": null,
+      "owned_by": "p-7b26ba5e",
+      "shared_with": [],
+      "purpose": "Main CLI: send | preview | status."
+    },
+    {
+      "path": "scripts/atlas-digest-cron.sh",
+      "layer": "script",
+      "data_kind": null,
+      "owned_by": "p-7b26ba5e",
+      "shared_with": [],
+      "purpose": "Cron trigger invoked by LaunchDaemon."
+    },
+    {
+      "path": "scripts/atlas_lib/__init__.py",
+      "layer": "script",
+      "data_kind": null,
+      "owned_by": "p-7b26ba5e",
+      "shared_with": [
+        "p-df9d99a3",
+        "p-ec644a2a",
+        "p-c866a3cd"
+      ],
+      "purpose": "Package marker + the BUCKETS / BUCKET_EMOJI constants."
+    },
+    {
+      "path": "scripts/atlas_lib/oc_dispatch.py",
+      "layer": "script",
+      "data_kind": null,
+      "owned_by": "p-7b26ba5e",
+      "shared_with": [
+        "p-df9d99a3",
+        "p-ec644a2a",
+        "p-c866a3cd"
+      ],
+      "purpose": "One-shot LLM dispatch to the bot's local OpenClaw agent. Implements the openclaw_headless transport from docs/principle-apps-inherit-bot-llm.md. No provider API calls; no API keys."
+    },
+    {
+      "path": "scripts/atlas_lib/classifier.py",
+      "layer": "script",
+      "data_kind": null,
+      "owned_by": "p-7b26ba5e",
+      "shared_with": [
+        "p-df9d99a3",
+        "p-ec644a2a",
+        "p-c866a3cd"
+      ],
+      "purpose": "5-bucket LLM classifier — routes through the bot's OpenClaw agent via atlas_lib.oc_dispatch (openclaw_headless transport; no direct provider API calls)."
+    },
+    {
+      "path": "scripts/atlas_lib/fetchers.py",
+      "layer": "script",
+      "data_kind": null,
+      "owned_by": "p-7b26ba5e",
+      "shared_with": [
+        "p-df9d99a3",
+        "p-ec644a2a",
+        "p-c866a3cd"
+      ],
+      "purpose": "Source fetchers: RSS, GitHub releases, Brave Search, generic URL fetch."
+    },
+    {
+      "path": "scripts/atlas_lib/archive.py",
+      "layer": "script",
+      "data_kind": null,
+      "owned_by": "p-7b26ba5e",
+      "shared_with": [
+        "p-df9d99a3",
+        "p-ec644a2a",
+        "p-c866a3cd"
+      ],
+      "purpose": "Read/write archive/index.json + per-item Markdown files. Atomic writes."
+    },
+    {
+      "path": "scripts/atlas_lib/composer.py",
+      "layer": "script",
+      "data_kind": null,
+      "owned_by": "p-7b26ba5e",
+      "shared_with": [
+        "p-c866a3cd"
+      ],
+      "purpose": "Team_bot_a-style digest and weekly recap composition."
+    },
+    {
+      "path": "scripts/atlas_lib/hashing.py",
+      "layer": "script",
+      "data_kind": null,
+      "owned_by": "p-7b26ba5e",
+      "shared_with": [
+        "p-df9d99a3",
+        "p-ec644a2a"
+      ],
+      "purpose": "Salted member-ID hashing."
+    },
+    {
+      "path": "scripts/atlas_lib/telegram_api.py",
+      "layer": "script",
+      "data_kind": null,
+      "owned_by": "p-7b26ba5e",
+      "shared_with": [
+        "p-df9d99a3",
+        "p-ec644a2a",
+        "p-c866a3cd"
+      ],
+      "purpose": "Telegram Bot API client (sendMessage, setMessageReaction, getChatMember)."
+    },
+    {
+      "path": "scripts/atlas_lib/config.py",
+      "layer": "script",
+      "data_kind": null,
+      "owned_by": "p-7b26ba5e",
+      "shared_with": [
+        "p-df9d99a3",
+        "p-ec644a2a",
+        "p-c866a3cd"
+      ],
+      "purpose": "Config loaders: network.json, openclaw.json, atlas/*.json. No LLM credentials — see oc_dispatch."
+    },
+    {
+      "path": "scripts/atlas_lib/guard.py",
+      "layer": "script",
+      "data_kind": null,
+      "owned_by": "p-7b26ba5e",
+      "shared_with": [
+        "p-df9d99a3",
+        "p-ec644a2a"
+      ],
+      "purpose": "Sender + context classification (operator / member / stranger × approved_group / dm / foreign_group)."
+    },
+    {
+      "path": "atlas/sources.json",
+      "layer": "data",
+      "data_kind": "template",
+      "owned_by": "p-7b26ba5e",
+      "shared_with": [],
+      "purpose": "Per-pod source configuration (RSS feeds, GitHub repos, Brave queries). Operator edits."
+    },
+    {
+      "path": "atlas/operator.json",
+      "layer": "data",
+      "data_kind": "template",
+      "owned_by": "p-7b26ba5e",
+      "shared_with": [
+        "p-df9d99a3",
+        "p-ec644a2a",
+        "p-c866a3cd"
+      ],
+      "purpose": "Operator user_id + approved group chat_ids — trust boundary config. Required for guard.py."
+    },
+    {
+      "path": "archive/index.json",
+      "layer": "data",
+      "data_kind": "runtime-generated",
+      "owned_by": "p-7b26ba5e",
+      "shared_with": [
+        "p-df9d99a3",
+        "p-c866a3cd"
+      ],
+      "purpose": "Append-only index across all archive captures. Recipient bot creates fresh on install."
+    },
+    {
+      "path": "archive/{bucket}/*.md",
+      "layer": "data",
+      "data_kind": "user-data",
+      "owned_by": "p-7b26ba5e",
+      "shared_with": [],
+      "purpose": "Per-item archive entries. Specific to this Instance — does not travel on export."
+    },
+    {
+      "path": "digest/{YYYY-MM-DD}.md",
+      "layer": "data",
+      "data_kind": "user-data",
+      "owned_by": "p-7b26ba5e",
+      "shared_with": [],
+      "purpose": "Daily digest log (one per day). Local audit only — does not travel."
+    }
+  ],
+  "build_spec": "# Atlas Daily Digest — Blueprint\n\n## Overview\n\nA cron-driven daemon that crawls configured sources once per day, classifies findings into five fixed buckets via Haiku, writes one Markdown archive file per classified item, appends to the shared archive index, and posts a Team_bot_a-style digest to the configured Telegram group. This app is also the **owner** of the shared `atlas_lib/` modules used by atlas-article-capture, atlas-on-demand-research, and atlas-weekly-recap.\n\n## File layout\n\n```\nscripts/\n  atlas_digest.py            ← main CLI: send | preview | status\n  atlas-digest-cron.sh       ← cron trigger (rendered below)\n  atlas_lib/                 ← shared modules (this app is the owner)\n    __init__.py              ← BUCKETS, BUCKET_EMOJI constants\n    classifier.py            ← 5-bucket LLM classifier (calls oc_dispatch)\n    oc_dispatch.py           ← one-shot dispatch to the bot's local OC agent\n    fetchers.py              ← RSS / GitHub / Brave / URL fetch\n    archive.py               ← archive read/write with atomic writes\n    composer.py              ← Team_bot_a-style digest + recap composition\n    hashing.py               ← salted member-ID hashing\n    telegram_api.py          ← Telegram API client\n    config.py                ← config loaders\n    guard.py                 ← sender + context classification\natlas/\n  sources.json               ← template (rendered below)\n  operator.json              ← template (rendered below)\narchive/                     ← created fresh; index.json starts empty\ndigest/                      ← created fresh\n/Library/LaunchDaemons/\n  com.{bot_id}.atlas-daily-digest.plist  ← LaunchDaemon (rendered below)\n```\n\n## Per-file specs\n\n### scripts/atlas_digest.py\n- **Purpose:** Main CLI. Subcommands: `send` (full pipeline), `preview` (skip Telegram post + archive write), `status` (read today's digest log).\n- **Inputs:** flags `--bot-id`, `--chat-id`, `--time-zone`, `--detail concise|standard|detailed`, `--max-items-per-bucket N`, `--max-classify N`. Reads `atlas/sources.json` for source config. LLM calls route through the bot's gateway via `atlas_lib.oc_dispatch` — no per-app credentials.\n- **Pipeline (send):** gather candidates from all sources → de-dup against archive/index.json → classify via `atlas_lib.classifier.classify` (skip items returning bucket='skip') → sort within bucket by confidence → cap per bucket → archive winners via `atlas_lib.archive.write_item` → compose digest via `atlas_lib.composer.compose_digest` → post to Telegram via `atlas_lib.telegram_api.send_message` → write `digest/<date>.md` → emit `DIGEST_SENT: <date> <count> <bucket_counts>`.\n- **Failure signals:** `DIGEST_FAILED:<reason>`, `DIGEST_PARTIAL:<sources>`, `DIGEST_EMPTY:<date>`. Exit code 0 for SENT/EMPTY/PARTIAL, 2 for FAILED.\n- **First-run safety:** if archive/index.json doesn't exist, treat as empty. If sources.json has empty source lists, exit DIGEST_EMPTY.\n\n### scripts/atlas-digest-cron.sh\nA tiny bash trigger called by LaunchDaemon. Rendered as a `## FILE:` block below — variable-substituted at install time.\n\n### scripts/atlas_lib/__init__.py\n- **Purpose:** package marker; exports the five-bucket taxonomy as constants.\n- **Required exports:** `BUCKETS = (\"competitive_landscape\", \"new_tools\", \"use_cases\", \"case_studies\", \"warnings\")`; `BUCKET_EMOJI = {\"competitive_landscape\": \"⚔️\", \"new_tools\": \"🛠\", \"use_cases\": \"🏆\", \"case_studies\": \"📚\", \"warnings\": \"⚠️\"}`.\n\n### scripts/atlas_lib/oc_dispatch.py\n- **Purpose:** one-shot LLM dispatch to the bot's local OpenClaw agent. Implements the `openclaw_headless` transport from [docs/principle-apps-inherit-bot-llm.md](../principle-apps-inherit-bot-llm.md). No provider API calls; no API keys; no `api.anthropic.com` URL anywhere.\n- **Required exports:** `dispatch(prompt: str, timeout_s: int = 30) -> tuple[str, dict]` (returns `(text, telemetry)` where telemetry has `tokens` / `cost_usd` / `error`); `parse_json_reply(text: str) -> dict | None` (helper for JSON-only prompts; handles markdown fence stripping).\n- **CLI form:** `openclaw agent --local --agent main --json --timeout N --message \"<body>\"` with `cwd=\"/tmp\"`. No `--system` flag (doesn't exist); fold any framing into the message body. Reference: `packages/analyzer/app_audit_tier3.py::_dispatch_via_oc_full` is the same shape used by the Evolve heartbeat / tier-3 audit dispatch.\n- **Output parsing:** handles both the current OC shape (`{\"payloads\":[{\"text\":\"...\"}], \"meta\":{\"agentMeta\":{\"usage\":{\"input\":N,\"output\":N}}}}`) and the pre-2026.5 shape (`{\"text\":\"...\", \"usage\":{\"input_tokens\":N,\"output_tokens\":N}}`). Token count rolls up into the optional cost telemetry.\n\n### scripts/atlas_lib/classifier.py\n- **Purpose:** classify an item dict (with `title`, `source`, `snippet`) into one of the five buckets or 'skip'.\n- **Required exports:** `classify(item: dict) -> dict` returning `{bucket, confidence, reason, tokens, cost_usd}`; `CLASSIFY_THRESHOLD = 0.6` (constant).\n- **Calls the LLM** via `atlas_lib.oc_dispatch.dispatch(prompt)` — routes through the bot's local OpenClaw agent (`openclaw_headless` transport). The bot's configured provider, model, tier-walk fallback, and `daily_cap_usd` govern the call. Apply the standard recursive_llm contract (retry, backoff, log, fallback to bucket='skip' on permanent failure).\n- **Prompt shape (literal):** \"Classify this item into exactly one of these five buckets, or 'skip' if it's not relevant to an OpenClaw/AI-agent enthusiast community...\" — emit JSON only.\n\n### scripts/atlas_lib/fetchers.py\n- **Purpose:** source fetching. All stdlib-only (urllib + xml.etree).\n- **Required exports:**\n  - `fetch_rss(url: str, per_feed: int = 10) -> list[dict]` — returns items with `title`, `url`, `source`, `snippet`, `published_at`.\n  - `fetch_github_releases(repo: str, token: str = \"\", since_days: int = 14) -> list[dict]` — same shape.\n  - `brave_search(query: str, api_key: str, count: int = 8) -> list[dict]` — same shape.\n  - `fetch_url(url: str, timeout: int = 10, max_bytes: int = 5_000_000) -> tuple[int, str]` — returns (status, text).\n- **All fetchers are best-effort:** failures return `[]` (or `(0, \"\")`) and log to stderr. Never raise.\n\n### scripts/atlas_lib/archive.py\n- **Purpose:** durable archive storage.\n- **Required exports:** `read_index(archive_dir)`, `find_duplicate(url, index)`, `write_item(item, archive_dir, captured_by, ...)`, `delete_by_url(url, archive_dir)`, `delete_by_member(hash, archive_dir)`, `items_in_range(start, end, archive_dir)`, `normalize_url(url)`.\n- **Atomic writes:** all writes use temp-file + os.replace. URL normalization strips tracking params before dedup.\n- **Layout:** `archive/{bucket}/{YYYY-MM-DD}-{slug}-{hash}.md` per item, with YAML frontmatter; `archive/index.json` as the append-only index.\n\n### scripts/atlas_lib/composer.py\n- **Purpose:** turn a list of archived items into Team_bot_a-style digest/recap text.\n- **Required exports:** `compose_digest(items, detail, today)`, `compose_recap(items, patterns, detail, week_start, week_end)`.\n- **Format:** see digest template at end of this build_spec.\n- **Limits:** max items per bucket configurable (default 5 standard, 3 concise, 8 detailed). Each line ≤ 220 chars.\n\n### scripts/atlas_lib/telegram_api.py\n- **Purpose:** Telegram Bot API client (urllib-based).\n- **Required exports:** `send_message(token, chat_id, text, reply_to_message_id=None, parse_mode=None)`, `set_message_reaction(token, chat_id, message_id, emoji)`, `get_chat_member(token, chat_id, user_id)`, `get_me(token)`.\n- **All methods return** the Telegram response dict on success, `{}` on failure. Errors logged with method + Telegram error description.\n\n### scripts/atlas_lib/config.py\n- **Purpose:** config readers for network.json, the bot's openclaw.json, and atlas/*.json.\n- **Required exports:** `read_json(path, default)`, `write_json_atomic(path, data)`, `workspace_root(bot_id) -> Path`, `telegram_token(bot_id)`, `sources_config(bot_id)`, `brave_api_key(bot_id)`, `github_token(bot_id)`. (No `llm_config` — Atlas inherits the bot's LLM stack via `oc_dispatch`.)\n- **read_json** returns the default (empty dict) on FileNotFoundError or JSON decode error; logs warnings on other OS errors.\n\n### scripts/atlas_lib/guard.py\n- **Purpose:** sender + context classification. Trust boundary enforcement.\n- **Required exports:** `classify(user_id, chat_id, chat_type, *, bot_id) -> tuple[str, str]` returning `(context, role)` where context ∈ {approved_group, dm, foreign_group} and role ∈ {operator, member, stranger}; `read_operator_config(bot_id) -> dict`.\n- **Used by atlas-article-capture and atlas-on-demand-research** at the top of every CLI invocation. Caches Telegram getChatMember results for 5 minutes.\n\n## Configuration file templates\n\n## FILE: atlas/sources.json\n```json\n{\n  \"_comment\": \"Atlas daily-digest source configuration. Edit to add/remove sources.\",\n  \"rss\": [\n    {\"name\": \"anthropic-blog\", \"url\": \"https://www.anthropic.com/news/rss.xml\"},\n    {\"name\": \"openai-blog\", \"url\": \"https://openai.com/blog/rss.xml\"},\n    {\"name\": \"google-blog-ai\", \"url\": \"https://blog.google/technology/ai/rss\"},\n    {\"name\": \"hn-frontpage\", \"url\": \"https://hnrss.org/frontpage?q=agent+OR+MCP+OR+LLM\"},\n    {\"name\": \"r-LocalLLaMA\", \"url\": \"https://www.reddit.com/r/LocalLLaMA/.rss\"}\n  ],\n  \"github_releases\": [\n    {\"name\": \"openclaw-core\", \"repo\": \"anthropics/openclaw\"}\n  ],\n  \"brave_queries\": [\n    \"openclaw case study\",\n    \"AI agent security incident\",\n    \"MCP server release\"\n  ]\n}\n```\n\n## FILE: atlas/operator.json\n```json\n{\n  \"_comment\": \"Atlas operator + approved-groups config. Required for guard.py. Without this, ALL events are treated as stranger and atlas does nothing.\",\n  \"operator_telegram_user_id\": 0,\n  \"approved_group_chat_ids\": [],\n  \"_security_notes\": [\n    \"Operator gets full access in DMs and groups.\",\n    \"Group members get research access in groups + DMs (verified via getChatMember).\",\n    \"Strangers in DM are silently ignored.\",\n    \"Membership checks cached for 5 minutes.\"\n  ]\n}\n```\n\n## FILE: scripts/atlas-digest-cron.sh\n```bash\n#!/bin/bash\n# atlas-digest-cron.sh — daily-digest cron trigger. Installed by atlas-daily-digest.\nWORKSPACE=\"/Users/{bot_id}/.openclaw/workspace\"\nLOGFILE=\"/tmp/{bot_id}-atlas-digest.log\"\n\npython3 \"$WORKSPACE/scripts/atlas_digest.py\" send \\\n  --bot-id \"{bot_id}\" \\\n  --chat-id \"{telegram_chat_id}\" \\\n  --time-zone \"{time_zone}\" \\\n  --detail \"{digest_detail}\" \\\n  >> \"$LOGFILE\" 2>&1\n\nexit 0\n```\n\n\n## Integration with other apps\n\nThis app is the **owner** of the shared `atlas_lib/` modules. The other three Atlas apps (`p-df9d99a3`, `p-ec644a2a`, `p-c866a3cd`) import from these modules. Build them as a normal cohesive library: each module exports the names listed in `shared_modules.expected_exports`. Other Atlas apps do NOT redefine these.\n\nThe `archive/` directory and `archive/index.json` are shared state. Article-capture also writes to it; weekly-recap reads from it. Use atomic writes (temp-file + os.replace) in archive.py to avoid corruption under concurrent access. The recap reads but does not write.\n\n## Recursive LLM concerns\n\nThe classifier in `atlas_lib/classifier.py` routes through the bot's local OC agent via `atlas_lib/oc_dispatch.py` (`openclaw_headless` transport). Per the [apps-inherit-bot-llm principle](../principle-apps-inherit-bot-llm.md), there is no per-app credential and no direct provider API call. The bot's configured provider, model, tier-walk fallback, and `daily_cap_usd` govern every classification. Per the recursive_llm contract:\n- Exponential backoff with max 3 retries for transient errors (gateway timeout, OC dispatch failure).\n- On permanent failure: return `{bucket: 'skip', confidence: 0.0, reason: '<error>', tokens: 0, cost_usd: 0.0}`. The digest then runs with whatever items WERE classified; if ALL classifications fail, atlas_digest.py emits `DIGEST_FAILED: <date> classifier_unreachable`.\n- Log each dispatch error with timestamp + a short description of what was being classified.\n- Token count from the OC `--json` output (`meta.agentMeta.usage`). True cost lives on the bot's `daily_total_usd`; Atlas's per-call estimate is for local audit roll-up only.\n\n## Digest format (Team_bot_a-style)\n\n```\n📰 Atlas digest — {weekday}, {YYYY-MM-DD}\n{count} item(s) today.\n\n⚔️ Competitive landscape\n• {title} — {short-url}\n• …\n\n🛠 New tools\n• …\n\n🏆 Use cases\n• …\n\n📚 Case studies\n• …\n\n⚠️ Warnings\n• …\n\nReply with /ask <query> for focused research, or /optout <link> to remove a captured item.\n```\n\nBuckets with zero items are omitted entirely. Detail levels: concise (3/bucket, no snippets), standard (5/bucket, 1-line snippets), detailed (8/bucket, 2-line snippets).\n\n## Test surface\n\nValidate:\n- `atlas_digest.py preview --detail concise` produces output with at least one bucket header when sources have data.\n- `atlas_digest.py status` reports 'no digest sent yet' before first send, and reports the posted time after.\n- Classifier returns a valid bucket name for a known item (e.g. \"Anthropic releases Claude Opus 4.7\" → `competitive_landscape`).\n- archive.write_item is idempotent under same URL + same date.\n- archive.delete_by_url removes both the .md file and the index entry.\n- Plist passes `plutil -lint` after rendering.\n\nThe `test_command` is a fast compile + help + status check (does not hit network or LLM); behavioral assertions are in `test_cases`.\n\n## What NOT to include\n\n- No interactive surface (no @-mention handler, no slash commands, no DM listener). All interaction is handled by `p-ec644a2a` and `p-df9d99a3`.\n- No multi-channel posting; one digest, one group.\n- No 'enrich' step beyond classification (no follow-up fetching of full article content).\n- No Memory writes outside the workspace (`archive/`, `digest/`, `atlas/`).\n- No sleeping, no infinite loops, no daemons spawned from this app (the LaunchDaemon is the only scheduler).\n",
+  "example_triggers": [
+    "Preview today's digest",
+    "Did the digest run this morning?",
+    "How many items did atlas find today?",
+    "When does the digest post?"
+  ],
+  "test_command": "python3 -m py_compile scripts/atlas_digest.py scripts/atlas_lib/*.py && python3 scripts/atlas_digest.py --help > /dev/null && python3 scripts/atlas_digest.py status > /dev/null",
+  "test_cases": [
+    {
+      "id": "tc-001",
+      "description": "Preview produces a non-empty bucketed digest when sources are configured",
+      "trigger": "python3 scripts/atlas_digest.py preview --detail concise",
+      "expected": "Stdout contains 'Atlas digest', at least one bucket header (e.g. '🛠 New tools'), and at least one item line. Exit 0."
+    },
+    {
+      "id": "tc-002",
+      "description": "Status before first send reports 'not sent yet'",
+      "trigger": "python3 scripts/atlas_digest.py status",
+      "expected": "Stdout contains 'not sent' or 'no digest sent'. Exit 0."
+    },
+    {
+      "id": "tc-003",
+      "description": "Classifier returns competitive_landscape for a model release",
+      "trigger": "python3 -c \"from atlas_lib.classifier import classify; r = classify({'title':'Anthropic releases Claude Opus 4.7','source':'anthropic-blog','snippet':'New model release'}); print(r['bucket'])\"",
+      "expected": "Stdout is 'competitive_landscape'. Exit 0."
+    },
+    {
+      "id": "tc-004",
+      "description": "Archive dedup: same URL twice produces only one index entry",
+      "trigger": "python3 -c \"from atlas_lib.archive import write_item, find_duplicate, read_index; from pathlib import Path; d = Path('/Users/atlas/.openclaw/workspace/archive'); write_item({'title':'X','url':'https://example.com/x','source':'test','bucket':'new_tools','summary':'.'}, d, 'tc-004'); idx = read_index(d); print(len([e for e in idx if e['url']=='https://example.com/x']))\"",
+      "expected": "Stdout is '1' (no duplicate). Exit 0."
+    }
+  ],
+  "rsigrade_signals": [
+    "digest_items_per_day",
+    "classification_skip_rate",
+    "source_fetch_success_rate",
+    "telegram_post_latency_ms",
+    "classifier_cost_usd_per_day"
+  ],
+  "application_tags": [
+    "community-research",
+    "daily-digest",
+    "openclaw-ecosystem",
+    "telegram-community",
+    "atlas",
+    "owner-of-atlas-lib"
+  ],
+  "scheduled_actions": [
+    {
+      "id": "atlas-daily-digest",
+      "mechanism": "launchd",
+      "trigger": {
+        "kind": "launchd"
+      },
+      "install": {
+        "plist_label": "ai.evolve.${bot_id}.atlas-daily-digest",
+        "command": "/bin/bash ${workspace}/scripts/atlas-digest-cron.sh",
+        "cwd": "${workspace}",
+        "schedule": {
+          "cron": {
+            "Hour": 7,
+            "Minute": 0
+          }
+        },
+        "exec_policy": "inherit"
+      },
+      "summary": "Daily 7 AM digest — edit install.schedule.cron to change the time."
+    }
+  ],
+  "workspace_files_source": "docs/atlas-app-manifests/"
+}

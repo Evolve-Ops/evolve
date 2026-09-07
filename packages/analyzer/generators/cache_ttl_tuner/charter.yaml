@@ -1,0 +1,51 @@
+id: cache_ttl_tuner
+schema_version: 1
+type: optimizer
+dimension: efficiency
+# Surface routing: drift. Cache_invalidation_elevated means the bot is
+# paying for prompt-cache reads that get invalidated before they pay
+# back — the config is drifted from the bot's actual usage rhythm and
+# costing money. That's drift, not "improvement" (which would imply
+# the current state is fine). The flip from "short" → "long" is the
+# canonical drift fix: restore the bot to a sensible config. Moved
+# from improvement → drift in the 2026-06-04 charter-surface
+# recalibration after the user observation that several "improvement"
+# generators actually describe broken state. Spec:
+# internal/spec-recommendations-rework-2026-06-02.md §"Generator routing".
+surface: drift
+purpose: >
+  Detect Anthropic prompt-cache patterns that indicate cacheRetention is
+  mis-tuned for the bot's actual usage rhythm. Consumes Signals from
+  session_economics (cache_invalidation_elevated, cache_hit_rate_low).
+  When cache_invalidation_elevated fires, emits an UpdateAgentDefaults
+  proposal flipping ``agents.defaults.models.*.params.cacheRetention``
+  from ``"short"`` to ``"long"`` — the autonomous fix path (per-bot,
+  single enum knob, fully reversible, eligibility resolves to
+  auto-small via PR B). When cache_hit_rate_low fires, surfaces an
+  Investigation pointing at prompt-structure churn (no single knob to
+  flip autonomously). Distinct from efficiency_hawk, which consumes
+  cost_watchdog Signals and covers spend, automation cadence, and
+  workspace bloat. This generator owns the cache-economics corner of
+  the same dimension.
+cadence: daily
+invariants:
+  - id: action_kind_allowed
+    description: >
+      Emits UpdateAgentDefaults for the autonomous-fix path on
+      cache_invalidation_elevated. Investigation is permitted as a
+      fallback (cache_hit_rate_low always, and cache_invalidation_elevated
+      when the autonomous fix is suppressed by config-intent or by the
+      proposal_history dedup window). No other action kinds.
+    check_kind: action_kind_allowed
+    params:
+      allowlist: [Investigation, UpdateAgentDefaults]
+  - id: touches_forbidden
+    description: >
+      Cache TTL Tuner does not touch auth, tools, channel config, or
+      gateway core — only the agents.defaults.models.*.params block
+      via UpdateAgentDefaults's narrow whitelist. The ``model_config``
+      touch is permitted because UpdateAgentDefaults's applier enforces
+      its own per-dotpath whitelist + value validator.
+    check_kind: touches_forbidden
+    params:
+      forbidden: [auth, tools, channel_config, gateway_core]

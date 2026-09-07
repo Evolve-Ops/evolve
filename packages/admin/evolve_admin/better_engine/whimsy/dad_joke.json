@@ -1,0 +1,65 @@
+[
+  {
+    "id": "whimsy_seed_003",
+    "type": "dad_joke",
+    "content": "Why do programmers prefer dark mode? Because light attracts bugs.",
+    "answer": null,
+    "created_at": "2026-04-16T00:00:00Z"
+  },
+  {
+    "id": "whimsy_seed_082",
+    "type": "dad_joke",
+    "content": "I told my doctor I broke my arm in two places. He told me to stop going to those places.",
+    "answer": null,
+    "created_at": "2026-04-16T00:00:00Z"
+  },
+  {
+    "id": "whimsy_seed_083",
+    "type": "dad_joke",
+    "content": "I used to have a fear of hurdles, but I got over it.",
+    "answer": null,
+    "created_at": "2026-04-16T00:00:00Z"
+  },
+  {
+    "id": "whimsy_seed_084",
+    "type": "dad_joke",
+    "content": "I'm reading a book about anti-gravity. It's impossible to put down.",
+    "answer": null,
+    "created_at": "2026-04-16T00:00:00Z"
+  },
+  {
+    "id": "whimsy_seed_085",
+    "type": "dad_joke",
+    "content": "Time flies like an arrow. Fruit flies like a banana.",
+    "answer": null,
+    "created_at": "2026-04-16T00:00:00Z"
+  },
+  {
+    "id": "whimsy_seed_086",
+    "type": "dad_joke",
+    "content": "What do you call a fish without eyes? A fsh.",
+    "answer": null,
+    "created_at": "2026-04-16T00:00:00Z"
+  },
+  {
+    "id": "whimsy_seed_087",
+    "type": "dad_joke",
+    "content": "I wanted to tell a chemistry joke but I knew I wouldn't get a reaction.",
+    "answer": null,
+    "created_at": "2026-04-16T00:00:00Z"
+  },
+  {
+    "id": "whimsy_seed_088",
+    "type": "dad_joke",
+    "content": "What do you call a dinosaur that crashes their car? Tyrannosaurus wrecks.",
+    "answer": null,
+    "created_at": "2026-04-16T00:00:00Z"
+  },
+  {
+    "id": "whimsy_seed_089",
+    "type": "dad_joke",
+    "content": "I've been trying to write a joke about infinity, but I don't know where to start.",
+    "answer": null,
+    "created_at": "2026-04-16T00:00:00Z"
+  }
+]

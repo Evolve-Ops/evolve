@@ -1,0 +1,44 @@
+id: pod_capability_lift
+schema_version: 1
+type: optimizer
+dimension: capabilities
+bucket: improve
+# Surface routing: improvement. Pod-wide synthesis of cross-bot
+#   capability gaps and amplification patterns. Operator decides on
+#   pod-wide rollout vs. per-bot.
+# Spec: internal/spec-rsi-proposal-eligibility-2026-06-05.md §"Phase 2".
+surface: improvement
+purpose: >
+  Aggregate firing app_suggester_gap and
+  engagement_amplification_opportunity Signals across the pod. When at
+  least MIN_BOTS_FOR_LIFT bots share the same capability gap or
+  conversational pattern, emit one pod-wide Investigation Proposal
+  that names every bot involved and proposes pod-wide capability work.
+  Coexists with the per-bot proposals from app_suggester /
+  engagement_amplifier — different scopes of the same finding.
+cadence: daily
+# Event-driven dispatch: the signal-subscriber daemon invokes this
+# generator within seconds of a new app_suggester_gap or
+# engagement_amplification_opportunity Signal landing. Daily
+# generator_runner sweep stays as the safety net.
+subscribes_to:
+  - app_suggester_gap
+  - engagement_amplification_opportunity
+invariants:
+  - id: action_kind_allowed
+    description: >
+      Pod-wide capability lift emits Investigation proposals only —
+      the operator decides whether to install pod-wide, draft a shared
+      app, or dismiss. Auto-apply on a pod-scope change would touch
+      every bot at once, which is a class of change that always wants
+      human review.
+    check_kind: action_kind_allowed
+    params:
+      allowlist: [Investigation]
+  - id: touches_forbidden
+    description: >
+      Pod-wide lift does not touch auth, tools, channel config, or
+      gateway core. Same posture as per-bot capability generators.
+    check_kind: touches_forbidden
+    params:
+      forbidden: [auth, tools, channel_config, gateway_core]

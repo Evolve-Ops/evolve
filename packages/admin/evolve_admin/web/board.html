@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Board">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<!-- Per-theme address-bar / title-bar colour. These are the same --bg pair
+     the stylesheet below defines; the manifest can carry only one value, so
+     these are what make the installed app match the phone's theme. -->
+<meta name="theme-color" content="#f4f5f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#131614" media="(prefers-color-scheme: dark)">
+<meta name="referrer" content="no-referrer">
+<link rel="apple-touch-icon" href="/board/icon-192.png">
+<link rel="icon" href="/board/icon-192.png" type="image/png">
+<title>Board</title>
+<style>
+  /* Standalone user page: defines its own dark/light token pairs (the
+     admin SPA's base.css is deliberately not loaded here — this surface
+     must never depend on operator assets). Sizes stay on the canonical
+     scale: 0.75 / 0.85 / 1 / 1.2. */
+  :root {
+    --bg: #f4f5f2;
+    --bg2: #ffffff;
+    --text: #1d221e;
+    --muted: #62695f;
+    --line: #dcdfd8;
+    --accent: #2f7d4e;
+    --accent-soft: #e3efe7;
+    --warn: #a3661c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #131614;
+      --bg2: #1c201d;
+      --text: #e6eae5;
+      --muted: #98a29a;
+      --line: #2a302b;
+      --accent: #5fb585;
+      --accent-soft: #22322a;
+      --warn: #d69a50;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
+    font-size: 1rem;
+    line-height: 1.4;
+    padding-bottom: 5rem;
+  }
+  header {
+    position: sticky; top: 0;
+    background: var(--bg);
+    border-bottom: 1px solid var(--line);
+    padding: 0.85rem 1rem 0.6rem;
+    z-index: 2;
+  }
+  header h1 { font-size: 1.2rem; margin: 0; font-weight: 700; }
+  header .sub { font-size: 0.75rem; color: var(--muted); margin-top: 0.15rem; }
+  #status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+                background: var(--accent); margin-right: 0.35rem; }
+  #status-dot.stale { background: var(--warn); }
+  .chips { display: flex; gap: 0.4rem; overflow-x: auto; padding: 0.6rem 1rem 0.2rem;
+           -webkit-overflow-scrolling: touch; }
+  .chip {
+    font-size: 0.75rem; padding: 0.25rem 0.7rem; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--bg2); color: var(--muted);
+    white-space: nowrap; cursor: pointer; user-select: none;
+  }
+  .chip.on { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+  main { padding: 0 1rem; }
+  section.lane { margin-top: 1.1rem; }
+  .lane-head { display: flex; align-items: baseline; gap: 0.5rem; }
+  .lane-head h2 {
+    font-size: 0.75rem; letter-spacing: 0.09em; text-transform: uppercase;
+    color: var(--muted); margin: 0 0 0.4rem; font-weight: 600;
+  }
+  .lane-head .count { font-size: 0.75rem; color: var(--muted); }
+  .card {
+    background: var(--bg2); border: 1px solid var(--line); border-radius: 10px;
+    padding: 0.7rem 0.85rem; margin-bottom: 0.5rem; cursor: pointer;
+  }
+  .card:active { border-color: var(--accent); }
+  .card .title { font-size: 1rem; font-weight: 600; }
+  .card .note { font-size: 0.85rem; color: var(--muted); margin-top: 0.2rem;
+                overflow-wrap: anywhere; }
+  .card .meta { display: flex; gap: 0.5rem; margin-top: 0.4rem; align-items: center; }
+  .tag {
+    font-size: 0.75rem; padding: 0.1rem 0.5rem; border-radius: 999px;
+    background: var(--accent-soft); color: var(--accent);
+  }
+  .badge { font-size: 0.75rem; color: var(--warn); }
+  .empty { font-size: 0.85rem; color: var(--muted); padding: 0.3rem 0; }
+  #error {
+    display: none; margin: 1rem; padding: 0.7rem 0.85rem; border-radius: 10px;
+    border: 1px solid var(--warn); color: var(--warn); font-size: 0.85rem;
+  }
+  /* ── action sheet + dialogs ── */
+  #backdrop {
+    display: none; position: fixed; inset: 0; z-index: 9;
+    background: var(--bg); opacity: 0.7;
+  }
+  .sheet {
+    display: none; position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+    background: var(--bg2); border-top: 1px solid var(--line);
+    border-radius: 14px 14px 0 0; padding: 1rem 1rem calc(1rem + env(safe-area-inset-bottom));
+  }
+  .sheet h3 { font-size: 0.85rem; color: var(--muted); margin: 0 0 0.7rem;
+              font-weight: 600; overflow-wrap: anywhere; }
+  .sheet .row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .sheet button {
+    font: inherit; font-size: 0.85rem; font-weight: 600;
+    padding: 0.55rem 0.9rem; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--text);
+    cursor: pointer;
+  }
+  .sheet button.primary { background: var(--accent); border-color: var(--accent); color: var(--bg2); }
+  .sheet button.quiet { border: none; background: none; color: var(--muted); }
+  .sheet label { display: block; font-size: 0.75rem; color: var(--muted); margin: 0.7rem 0 0.2rem; }
+  .input-w-text { width: 100%; }
+  .input-w-md { width: 160px; }
+  .sheet input, .sheet select {
+    font: inherit; font-size: 1rem; padding: 0.45rem 0.6rem;
+    border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg); color: var(--text);
+  }
+  #add-btn {
+    position: fixed; right: 1rem; bottom: calc(1rem + env(safe-area-inset-bottom));
+    z-index: 8; width: 3.2rem; height: 3.2rem; border-radius: 50%;
+    font-size: 1.2rem; font-weight: 700; line-height: 1;
+    border: 1px solid var(--accent); background: var(--accent); color: var(--bg2);
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Board</h1>
+  <div class="sub"><span id="status-dot"></span><span id="status-text">loading…</span></div>
+</header>
+<div class="chips" id="chips"></div>
+<div id="error"></div>
+<main id="lanes"></main>
+<button id="add-btn" aria-label="Add a card">＋</button>
+
+<div id="backdrop"></div>
+<div class="sheet" id="move-sheet">
+  <h3 id="move-title"></h3>
+  <div class="row" id="move-row"></div>
+  <div class="row" style="margin-top:0.7rem">
+    <button id="split-open">Split…</button>
+    <button class="quiet" data-close>Cancel</button>
+  </div>
+</div>
+<div class="sheet" id="split-sheet">
+  <h3>Split into your part and the bot's part</h3>
+  <label for="split-user">Yours (goes to Today)</label>
+  <input id="split-user" class="input-w-text" autocomplete="off">
+  <label for="split-bot">Bot's (goes to Bot)</label>
+  <input id="split-bot" class="input-w-text" autocomplete="off" placeholder="what should the bot do?">
+  <div class="row" style="margin-top:0.9rem">
+    <button class="primary" id="split-go">Split</button>
+    <button class="quiet" data-close>Cancel</button>
+  </div>
+</div>
+<div class="sheet" id="add-sheet">
+  <h3>New card</h3>
+  <label for="add-title">Title</label>
+  <input id="add-title" class="input-w-text" autocomplete="off">
+  <label for="add-cluster">Cluster</label>
+  <select id="add-cluster" class="input-w-md"></select>
+  <div class="row" style="margin-top:0.9rem">
+    <button class="primary" id="add-go">Add to Inbox</button>
+    <button class="quiet" data-close>Cancel</button>
+  </div>
+</div>
+
+<script>
+"use strict";
+(function () {
+  var botId = location.pathname.split("/").filter(Boolean).pop();
+  // Normally empty: the server swaps a ?t= link for an HttpOnly cookie and
+  // 302s here, so the credential never reaches this script. Still read (and
+  // then erased from the address bar) for the case where the redirect did
+  // not happen — a cached page, or a client that does not keep cookies.
+  var token = new URLSearchParams(location.search).get("t") || "";
+  if (token && window.history && history.replaceState) {
+    history.replaceState(null, "", location.pathname);
+  }
+
+  // Add-to-home-screen. The manifest is per-bot (its start_url and scope are
+  // this board), so the link is built here rather than written statically —
+  // the page stays one file with no server-side templating.
+  (function () {
+    var l = document.createElement("link");
+    l.rel = "manifest";
+    l.href = "/board/" + encodeURIComponent(botId) + "/manifest.webmanifest";
+    document.head.appendChild(l);
+  })();
+
+  var LANES = [
+    ["today", "Today"], ["bot", "Bot"], ["inbox", "Inbox"],
+    ["later", "Later"], ["done", "Done"]
+  ];
+  var CLUSTERS = ["health", "fitness", "travel", "work", "social",
+                  "hobbies", "family", "home", "admin"];
+  var etag = null;
+  var board = null;
+  var filter = null;
+  var activeCard = null;
+
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined) n.textContent = text;
+    return n;
+  }
+
+  // Same-origin credentials so the HttpOnly board cookie rides along — it is
+  // how every request after the one-time ?t= upgrade authenticates. Board
+  // paths are exempt from the admin CSRF gate (server.py) precisely because
+  // this surface has no admin session to forge; the board's own defenses are
+  // the SameSite=Strict cookie plus the same-origin check on cookie-authed
+  // writes (web/board_auth.py).
+  function api(path, opts) {
+    opts = opts || {};
+    opts.credentials = "same-origin";
+    opts.headers = Object.assign({}, opts.headers || {});
+    // Only when the cookie upgrade has not happened (see above).
+    if (token) opts.headers["Authorization"] = "Bearer " + token;
+    return fetch("/api/board/" + encodeURIComponent(botId) + path, opts);
+  }
+
+  function post(path, body) {
+    return api(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }).then(function (r) {
+      if (!r.ok) return r.json().catch(function () { return {}; }).then(function (b) {
+        throw new Error(b.error || ("write failed (" + r.status + ")"));
+      });
+      return r.json();
+    });
+  }
+
+  function render() {
+    if (!board) return;
+    var clusters = {};
+    board.cards.forEach(function (c) { clusters[c.cluster] = true; });
+    var chips = document.getElementById("chips");
+    chips.replaceChildren();
+    var all = el("span", "chip" + (filter === null ? " on" : ""), "all");
+    all.onclick = function () { filter = null; render(); };
+    chips.appendChild(all);
+    Object.keys(clusters).sort().forEach(function (cl) {
+      var ch = el("span", "chip" + (filter === cl ? " on" : ""), cl);
+      ch.onclick = function () { filter = (filter === cl ? null : cl); render(); };
+      chips.appendChild(ch);
+    });
+
+    var lanes = document.getElementById("lanes");
+    lanes.replaceChildren();
+    LANES.forEach(function (pair) {
+      var laneId = pair[0], label = pair[1];
+      var cards = board.cards.filter(function (c) {
+        return c.lane === laneId && (filter === null || c.cluster === filter);
+      });
+      if (laneId === "done" && cards.length === 0) return;
+      var sec = el("section", "lane");
+      var head = el("div", "lane-head");
+      head.appendChild(el("h2", null, label));
+      head.appendChild(el("span", "count", String(cards.length)));
+      sec.appendChild(head);
+      if (cards.length === 0) sec.appendChild(el("div", "empty", "nothing here"));
+      cards.forEach(function (c) {
+        var card = el("div", "card");
+        card.appendChild(el("div", "title", c.title));
+        if (c.note) card.appendChild(el("div", "note", c.note));
+        var meta = el("div", "meta");
+        meta.appendChild(el("span", "tag", c.cluster));
+        if (c.delegation && c.delegation.state) {
+          meta.appendChild(el("span", "badge", c.delegation.state.replace(/_/g, " ")));
+        }
+        card.appendChild(meta);
+        card.onclick = function () { openMoveSheet(c); };
+        sec.appendChild(card);
+      });
+      lanes.appendChild(sec);
+    });
+    var when = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    document.getElementById("status-text").textContent =
+      board.cards.length + " cards - updated " + when;
+    document.getElementById("status-dot").classList.remove("stale");
+  }
+
+  function fail(msg) {
+    var e = document.getElementById("error");
+    e.textContent = msg;
+    e.style.display = "block";
+    document.getElementById("status-dot").classList.add("stale");
+    document.getElementById("status-text").textContent = "not connected";
+  }
+
+  function refresh(force) {
+    var headers = {};
+    if (etag && !force) headers["If-None-Match"] = etag;
+    api("", { headers: headers })
+      .then(function (r) {
+        if (r.status === 304) return null;
+        if (r.status === 401) { fail("This link's token was not accepted. Ask the operator for a fresh board link."); return null; }
+        if (r.status === 429) { fail("Too many changes at once - give it a minute."); return null; }
+        if (!r.ok) { fail("Board unavailable (" + r.status + ")."); return null; }
+        etag = r.headers.get("ETag");
+        return r.json();
+      })
+      .then(function (data) {
+        if (data) {
+          board = data;
+          document.getElementById("error").style.display = "none";
+          render();
+        }
+      })
+      .catch(function () { fail("No connection to the pod. Are you on the home network / tailnet?"); });
+  }
+
+  // ── sheets ──
+  function showSheet(id) {
+    document.getElementById("backdrop").style.display = "block";
+    document.getElementById(id).style.display = "block";
+  }
+  function closeSheets() {
+    document.getElementById("backdrop").style.display = "none";
+    ["move-sheet", "split-sheet", "add-sheet"].forEach(function (id) {
+      document.getElementById(id).style.display = "none";
+    });
+    activeCard = null;
+  }
+  document.getElementById("backdrop").onclick = closeSheets;
+  Array.prototype.forEach.call(document.querySelectorAll("[data-close]"), function (b) {
+    b.onclick = closeSheets;
+  });
+
+  function openMoveSheet(card) {
+    activeCard = card;
+    document.getElementById("move-title").textContent = card.title;
+    var row = document.getElementById("move-row");
+    row.replaceChildren();
+    LANES.forEach(function (pair) {
+      if (pair[0] === card.lane) return;
+      var b = el("button", pair[0] === "bot" ? "primary" : null, pair[1]);
+      b.onclick = function () {
+        var id = card.id;
+        closeSheets();
+        post("/cards/" + id + "/move", { to_lane: pair[0] })
+          .then(function () { refresh(true); })
+          .catch(function (e) { fail(e.message); });
+      };
+      row.appendChild(b);
+    });
+    showSheet("move-sheet");
+  }
+
+  document.getElementById("split-open").onclick = function () {
+    if (!activeCard) return;
+    var card = activeCard;
+    closeSheets();
+    activeCard = card;
+    document.getElementById("split-user").value = card.title;
+    document.getElementById("split-bot").value = "";
+    showSheet("split-sheet");
+  };
+  document.getElementById("split-go").onclick = function () {
+    if (!activeCard) return;
+    var id = activeCard.id;
+    var userPart = document.getElementById("split-user").value;
+    var botPart = document.getElementById("split-bot").value;
+    closeSheets();
+    post("/cards/" + id + "/split", { user_part: userPart, bot_part: botPart })
+      .then(function () { refresh(true); })
+      .catch(function (e) { fail(e.message); });
+  };
+
+  document.getElementById("add-btn").onclick = function () {
+    var sel = document.getElementById("add-cluster");
+    if (!sel.options.length) {
+      CLUSTERS.forEach(function (cl) {
+        var o = document.createElement("option");
+        o.value = cl; o.textContent = cl;
+        sel.appendChild(o);
+      });
+    }
+    document.getElementById("add-title").value = "";
+    showSheet("add-sheet");
+  };
+  document.getElementById("add-go").onclick = function () {
+    var title = document.getElementById("add-title").value.trim();
+    if (!title) return;
+    var cluster = document.getElementById("add-cluster").value;
+    closeSheets();
+    post("/cards", { title: title, cluster: cluster, lane: "inbox" })
+      .then(function () { refresh(true); })
+      .catch(function (e) { fail(e.message); });
+  };
+
+  refresh();
+  setInterval(refresh, 30000);
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) refresh();
+  });
+})();
+</script>
+</body>
+</html>

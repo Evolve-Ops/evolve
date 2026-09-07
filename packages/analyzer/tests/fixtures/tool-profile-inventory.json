@@ -1,0 +1,175 @@
+{
+  "_comment": [
+    "Shared fixture for the tool-profile table. BOTH sides read this file:",
+    "  * packages/plugin/tests/toolProfiles.test.mjs asserts TOOL_PROFILES and",
+    "    PROFILE_BY_KIND in src/tools/ToolProfiles.ts match it exactly;",
+    "  * packages/analyzer/tests/test_context_census.py builds the before/after",
+    "    census proof from it.",
+    "A profile edit that lands in only one place reddens the other suite.",
+    "",
+    "`tools` is a REAL measured inventory: the union of what a Google-enabled",
+    "member bot and the primary bot register, with the chars of each tool's",
+    "{name, description, parameters} as the plugin's own context-footprint.json",
+    "recorded them on the reference pod, 2026-09-02. Bot names are placeholders;",
+    "the weights are the measurement."
+  ],
+  "measured": {
+    "pod": "reference pod",
+    "on": "2026-09-02",
+    "source": "{shared_dir}/{bot}/turns/context-footprint.json"
+  },
+  "tools": [
+    {
+      "name": "session_set_tier",
+      "chars": 2825
+    },
+    {
+      "name": "record_application",
+      "chars": 2772
+    },
+    {
+      "name": "directory_upsert",
+      "chars": 2471
+    },
+    {
+      "name": "pod_state",
+      "chars": 2435
+    },
+    {
+      "name": "submit_intake",
+      "chars": 1910
+    },
+    {
+      "name": "defer",
+      "chars": 1454
+    },
+    {
+      "name": "channel_set_newcomer_mode",
+      "chars": 1276
+    },
+    {
+      "name": "evolve_help_search",
+      "chars": 1170
+    },
+    {
+      "name": "roster_set_role",
+      "chars": 1159
+    },
+    {
+      "name": "roster_block",
+      "chars": 1033
+    },
+    {
+      "name": "expand_app",
+      "chars": 862
+    },
+    {
+      "name": "calendar_create_event",
+      "chars": 809
+    },
+    {
+      "name": "gmail_send",
+      "chars": 785
+    },
+    {
+      "name": "directory_lookup",
+      "chars": 764
+    },
+    {
+      "name": "roster_unblock",
+      "chars": 731
+    },
+    {
+      "name": "evolve_help_read",
+      "chars": 692
+    },
+    {
+      "name": "calendar_list_events",
+      "chars": 576
+    },
+    {
+      "name": "gmail_list_messages",
+      "chars": 543
+    },
+    {
+      "name": "drive_write_file",
+      "chars": 483
+    },
+    {
+      "name": "drive_search",
+      "chars": 449
+    },
+    {
+      "name": "drive_list_files",
+      "chars": 431
+    },
+    {
+      "name": "gmail_label_message",
+      "chars": 424
+    },
+    {
+      "name": "gmail_trash_message",
+      "chars": 416
+    },
+    {
+      "name": "drive_read_file",
+      "chars": 395
+    },
+    {
+      "name": "gmail_delete_message",
+      "chars": 380
+    },
+    {
+      "name": "gmail_get_message",
+      "chars": 246
+    },
+    {
+      "name": "gmail_archive_message",
+      "chars": 214
+    },
+    {
+      "name": "gmail_list_labels",
+      "chars": 197
+    },
+    {
+      "name": "gmail_mark_unread",
+      "chars": 190
+    },
+    {
+      "name": "gmail_mark_read",
+      "chars": 186
+    }
+  ],
+  "profiles": {
+    "full": "full",
+    "no_live_speaker": [
+      "defer",
+      "record_application",
+      "expand_app",
+      "directory_lookup",
+      "pod_state",
+      "gmail_list_messages",
+      "gmail_get_message",
+      "gmail_list_labels",
+      "gmail_label_message",
+      "gmail_mark_read",
+      "gmail_mark_unread",
+      "gmail_archive_message",
+      "gmail_trash_message",
+      "gmail_delete_message",
+      "gmail_send",
+      "calendar_list_events",
+      "calendar_create_event",
+      "drive_list_files",
+      "drive_search",
+      "drive_read_file",
+      "drive_write_file"
+    ],
+    "evolve_dispatch": []
+  },
+  "kind_profiles": {
+    "scheduled": "no_live_speaker",
+    "oneshot": "no_live_speaker",
+    "evolve_internal": "evolve_dispatch"
+  }
+}
