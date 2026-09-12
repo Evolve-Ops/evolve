@@ -1,0 +1,32 @@
+{
+  "format_version": "1.0",
+  "snapshot_source": {
+    "pkg_id": "p-be5885a2",
+    "pkg_version": "2026.09.11-1.7",
+    "snapshot_at": "2026-09-11T00:00:00Z",
+    "snapshot_by": "crossplay-coach first-party deterministic files-pack"
+  },
+  "files": [
+    {
+      "path": "scripts/crossplay_coach.py",
+      "mode": "0755",
+      "sha256": "dee30ef286e88abe0bc699337242fc79f5547a2c8348a9aba9034fac2e8da055",
+      "size_bytes": 58407,
+      "placeholders": []
+    },
+    {
+      "path": "scripts/crossplay_coach",
+      "mode": "0755",
+      "sha256": "0996fae5cf9df88569fb280dc69c59e528576da0ada56087d247cad1d7a9cac7",
+      "size_bytes": 132,
+      "placeholders": []
+    },
+    {
+      "path": "docs/crossplay-coach.md",
+      "mode": "0644",
+      "sha256": "504685d79ff682fb4ef462ebfb937602f3c3336518a5bffddb38f5a0de848205",
+      "size_bytes": 10677,
+      "placeholders": []
+    }
+  ]
+}

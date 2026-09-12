@@ -1,0 +1,210 @@
+# docs/help/_pages.yaml — canonical admin-page ↔ help-doc registry.
+#
+# THE single source of truth that ties together, for every admin UI page:
+#   page_id      ←→  the internal `data-page="…"` id in
+#                    packages/admin/evolve_admin/web/index.html
+#   label        ←→  the sidebar nav label the operator sees
+#   bucket       ←→  the sidebar section it lives under
+#   help_slug    ←→  the docs/help/<slug>.md that documents it (or null)
+#   ui_surface   ←→  the `admin.<page_id>` string a help doc declares in its
+#                    frontmatter to back-link to this page
+#
+# Why this file exists: those five facts were previously implicit and scattered
+# across index.html, the help-doc frontmatter (`ui_surface:`), the Evo tray's
+# per-page context, and AGENTS.md — with no registry tying them together. They
+# drifted (help docs still pointed `ui_surface:` at retired page ids). This
+# registry is the anti-drift backbone; `tools/help-coverage-lint` validates the
+# live UI, this registry, and the help corpus against each other.
+#
+# Contract for each entry:
+#   page_id     (str)  REQUIRED. Must match a literal data-page="…" in index.html.
+#   label       (str)  REQUIRED. The sidebar label (operator-facing).
+#   bucket      (str)  REQUIRED. Sidebar section: top | Operate | Improve |
+#                      Settings | Developer. ("top" = the un-sectioned items
+#                      above the first nav-section divider: Chat, Dashboard.)
+#   help_slug   (str|null) REQUIRED. The docs/help slug documenting this page,
+#                      or null when the page has no public help doc.
+#   doc_status  (str)  REQUIRED. One of:
+#                        present  — a docs/help/<help_slug>.md MUST exist; the
+#                                   lint BLOCKS if it's missing (catches a doc
+#                                   deleted/renamed out from under the registry).
+#                        planned  — help_slug names the INTENDED slug for a doc
+#                                   that doesn't exist yet; the lint WARNS
+#                                   (actionable backlog), never blocks.
+#                        none     — help_slug is null on purpose; the page
+#                                   legitimately has no public doc.
+#   purpose     (str)  REQUIRED. One line describing what the page is for.
+#
+# When you add or rename an admin page: add/edit its row here in the same PR.
+# `tools/help-coverage-lint` will BLOCK a `data-page` in index.html that has no
+# row here (and a row whose page_id no longer exists in index.html).
+
+version: 1
+last_reviewed: 2026-06-23
+
+pages:
+  # ── Top (un-sectioned, above the first nav divider) ──────────────────────
+  - page_id: home
+    label: Chat
+    bucket: top
+    help_slug: null
+    doc_status: none          # the evo chat surface; orientation lives in overview.md / getting-started.md
+    purpose: Talk to the evo primary bot — the pod's conversational admin surface.
+
+  - page_id: overview
+    label: Dashboard
+    bucket: top
+    help_slug: overview-page
+    doc_status: present
+    purpose: Pod status at a glance — bot tiles, health, and pod-wide rollups.
+
+  # ── Operate ──────────────────────────────────────────────────────────────
+  - page_id: cost
+    label: Usage
+    bucket: Operate
+    help_slug: usage
+    doc_status: present
+    purpose: Spend and billing rollups by bot, model, and time window.
+
+  - page_id: reports
+    label: Reports
+    bucket: Operate
+    help_slug: reports
+    doc_status: present
+    purpose: Operator review of alerts, proposals, and subscriptions.
+
+  - page_id: integrations-keys
+    label: Plugins
+    bucket: Operate
+    help_slug: plugins
+    doc_status: present       # keys/connections surface; capability-install framing split out to skills.md
+    purpose: Channels, credentials/keys, MCP servers, embeddings, and hooks per bot.
+
+  - page_id: users
+    label: Users
+    bucket: Operate
+    help_slug: users
+    doc_status: present
+    purpose: Pod admins, paired users, roles, and pairing approval.
+
+  - page_id: security
+    label: Security
+    bucket: Operate
+    help_slug: security
+    doc_status: present
+    purpose: Audit findings, exec policy, posture, and intentional deviations.
+
+  - page_id: maintenance
+    label: Maintenance
+    bucket: Operate
+    help_slug: maintenance
+    doc_status: present
+    purpose: Gateway status, cron jobs, OpenClaw version, admin server, and logs.
+
+  - page_id: backup
+    label: Backup
+    bucket: Operate
+    help_slug: backup
+    doc_status: present
+    purpose: Cloud and local backup, recovery, and data classification.
+
+  - page_id: terminal
+    label: Terminal
+    bucket: Operate
+    help_slug: terminal
+    doc_status: present
+    purpose: Embedded mini terminal for pod shell access (PWA Phase 3).
+
+  # ── Improve ──────────────────────────────────────────────────────────────
+  - page_id: skills
+    label: Skills
+    bucket: Improve
+    help_slug: skills
+    doc_status: present
+    purpose: OpenClaw skills, plugins, and MCP install + maintenance.
+
+  - page_id: apps
+    label: Apps
+    bucket: Improve
+    help_slug: apps
+    doc_status: present
+    purpose: Application manifests, forge, gallery, and per-app lifecycle.
+
+  - page_id: self-improvement
+    label: Recommendations
+    bucket: Improve
+    help_slug: recommendations
+    doc_status: present       # recommendations.md (primary) + coaches.md both back-link via ui_surface: admin.self-improvement
+    purpose: The arbiter's proposals — approve, snooze, or reject improvements.
+
+  - page_id: intelligence
+    label: Intelligence
+    bucket: Improve
+    help_slug: pod-intelligence
+    doc_status: planned       # the page ships first; its help doc is a follow-up chip
+    purpose: What the pod has learned over time — the weekly dossier, as insight cards.
+
+  - page_id: ai-optimization
+    label: AI Optimization
+    bucket: Improve
+    help_slug: ai-optimization
+    doc_status: present
+    purpose: Model tiers, providers, routing, and the model catalog.
+
+  - page_id: model-economics
+    label: Model Economics
+    bucket: Improve
+    help_slug: model-economics
+    doc_status: present
+    purpose: Cost/quality tradeoffs across the model rungs.
+
+  - page_id: cost-measures
+    label: Cost Optimization
+    bucket: Improve
+    help_slug: cost-optimization
+    doc_status: present
+    purpose: Budgets, daily caps, context pruning, tier downgrade, and remediation.
+
+  # ── Settings ─────────────────────────────────────────────────────────────
+  - page_id: getting-started
+    label: Getting Started
+    bucket: Settings
+    help_slug: getting-started
+    doc_status: present       # getting-started.md is also general orientation, so its own ui_surface stays null
+    purpose: First-run orientation and install walkthrough.
+
+  - page_id: settings
+    label: Settings
+    bucket: Settings
+    help_slug: settings
+    doc_status: present
+    purpose: Pod configuration — network.json, modules, primary bot.
+
+  - page_id: help
+    label: Help
+    bucket: Settings
+    help_slug: null
+    doc_status: none          # this page renders the help corpus itself; no self-referential doc
+    purpose: In-app rendering of the docs/help knowledge corpus.
+
+  # ── Developer ────────────────────────────────────────────────────────────
+  - page_id: inbox
+    label: Issues
+    bucket: Developer
+    help_slug: issues
+    doc_status: present       # data-page="inbox" kept for URL back-compat; label moved Inbox → Issues
+    purpose: Intake drafts, filed GitHub issues, triage, and reply tracking.
+
+  - page_id: errors
+    label: Errors
+    bucket: Developer
+    help_slug: errors
+    doc_status: present
+    purpose: Surfaced runtime errors and crash reports across the pod.
+
+  - page_id: feedback
+    label: Feedback
+    bucket: Developer
+    help_slug: feedback
+    doc_status: present
+    purpose: Submit feedback on Evolve from inside the admin UI.

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Evolve weekly analysis job — runs on the PRIMARY bot only.
+  Replace PRIMARY_USER and WORKSPACE_PATH before installing.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.openclaw.evolve.analyze.PRIMARY_USER</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>WORKSPACE_PATH/evolve/analyze.py</string>
+        <string>--network</string>
+        <string>WORKSPACE_PATH/evolve/network.json</string>
+    </array>
+
+    <key>UserName</key>
+    <string>PRIMARY_USER</string>
+
+    <!-- Sundays at 2:00 AM -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>2</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/PRIMARY_USER/.openclaw/logs/evolve-analyze.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/PRIMARY_USER/.openclaw/logs/evolve-analyze.err.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>

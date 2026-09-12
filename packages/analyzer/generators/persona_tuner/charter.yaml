@@ -1,0 +1,26 @@
+id: persona_tuner
+schema_version: 1
+type: optimizer
+dimension: voice_fit
+bucket: improve
+# Surface routing: improvement. Voice/tone/operational-style mismatches with user preferences.
+#   AGENTS.md + SoulEdit proposals are product-shaped UX changes.
+# Spec: internal/spec-recommendations-rework-2026-06-02.md §"Generator routing".
+surface: improvement
+purpose: >
+  Detect mismatches between the bot's voice, tone, and operational style
+  versus the user's observed preferences. Propose AGENTS.md additions
+  when sustained frustration patterns are visible; SoulEdit proposals
+  (always human-approval) for deeper voice recalibrations.
+cadence: weekly
+invariants:
+  - id: action_kind_allowed
+    description: Persona Tuner only emits voice-fit interventions (SoulEdit, AgentsAppend) and investigations.
+    check_kind: action_kind_allowed
+    params:
+      allowlist: [SoulEdit, AgentsAppend, Investigation]
+  - id: touches_forbidden
+    description: Persona Tuner does not touch auth, tools, channel config, or gateway core.
+    check_kind: touches_forbidden
+    params:
+      forbidden: [auth, tools, channel_config, gateway_core]

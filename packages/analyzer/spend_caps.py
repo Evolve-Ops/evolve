@@ -1,0 +1,794 @@
+"""
+spend_caps.py — Hard spend cap enforcement for Evolve pods.
+
+Writes an enforcement flag when a bot's daily spend hits the configured hard cap.
+The flag is read by the OpenClaw plugin (ModelRouter) to downgrade tier or by
+other enforcement actions (pause crons, suspend bot).
+
+Flag format: {sharedDir}/spend-caps/{bot_id}-{YYYY-MM-DD}.json
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import tempfile
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
+
+
+VALID_ACTIONS = (
+    "checkpoint", "alert-only", "downgrade-tier", "pause-crons", "suspend-bot",
+)
+
+# What a tripped cap does when the operator has expressed no preference.
+#
+# Was ``downgrade-tier`` — a stopgap for OpenClaw's missing turn-abort hook
+# (openclaw#92296) that became the schema default and was labelled
+# "(recommended)". On 2026-09-03 it pinned a real user's bot to the cheapest
+# model for the rest of the day, undisclosed, still billing every turn, and
+# the cheap model then broke an app's fail-closed rule. Operator decision
+# D-CC2 (internal/decision-cost-cap-checkpoint-2026-09-04.md) makes the
+# default a CHECKPOINT: background work stops as before, and the first
+# interactive turn is held behind a fixed, model-free "cap reached" reply
+# offering continue (+increment, until the day boundary) or stop.
+#
+# ``downgrade-tier`` remains selectable as an explicit operator choice.
+DEFAULT_SPEND_CAP_ACTION = "checkpoint"
+
+# Default "continue" grant, as a fraction of the base cap (D-CC3).
+DEFAULT_CHECKPOINT_INCREMENT_FRACTION = 0.50
+
+
+def resolve_spend_cap_action(
+    network: dict | None, *, pod_budget: dict | None = None,
+) -> str:
+    """THE single reader for "what does a tripped daily cap do?".
+
+    Every consumer — the enforcement-flag writer, ``GET /api/spend-caps``,
+    the admin UI — must come through here, so the action the operator sees
+    is the action the enforcer performs (the #3498 single-resolver
+    precedent; a divergence here is how the UI showed a cap that wasn't
+    real).
+
+    Resolution order:
+      1. An explicit, valid ``network.json::thresholds.spendCapAction``.
+         An operator who typed a choice keeps it — including
+         ``downgrade-tier``.
+      2. Better-Engine ``pod_defaults.budget`` inference, for pods whose
+         legacy choice the 2026-06 normalization migrated into a rung:
+         ``l2_breaker_usd`` → ``suspend-bot``, ``tier_downgrade_usd`` →
+         ``downgrade-tier``.
+      3. :data:`DEFAULT_SPEND_CAP_ACTION` — the checkpoint.
+
+    An unrecognised string falls through to the default rather than
+    raising: an enforcement path must never crash on a typo, and holding
+    the turn is the safe reading of an unreadable preference.
+    """
+    thresholds = (network or {}).get("thresholds") or {}
+    raw = thresholds.get("spendCapAction")
+    if isinstance(raw, str) and raw.strip() in VALID_ACTIONS:
+        return raw.strip()
+    budget = pod_budget or {}
+    if budget.get("l2_breaker_usd"):
+        return "suspend-bot"
+    if budget.get("tier_downgrade_usd"):
+        return "downgrade-tier"
+    return DEFAULT_SPEND_CAP_ACTION
+
+
+def checkpoint_increment_usd(cap: float) -> float:
+    """The dollar increment a "continue" answer grants on top of ``cap``.
+
+    D-CC3: "a stated increment on today's cap (default +50% of the cap,
+    shown in the prompt)". Rounded to cents so the number in the
+    cap-reached message is the number written to the ledger.
+    """
+    return round(max(0.0, float(cap)) * DEFAULT_CHECKPOINT_INCREMENT_FRACTION, 2)
+
+
+# ── Flag file management ──────────────────────────────────────────────────────
+
+def _caps_dir(shared_dir: Path) -> Path:
+    d = shared_dir / "spend-caps"
+    d.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(d, 0o755)
+    except OSError:
+        pass
+    return d
+
+
+def _flag_path(shared_dir: Path, bot_id: str, today: date) -> Path:
+    return _caps_dir(shared_dir) / f"{bot_id}-{today}.json"
+
+
+def get_active_enforcement(shared_dir: Path, bot_id: str, today: date | None = None) -> dict | None:
+    """Return active enforcement flag for bot_id today, or None if not active."""
+    today = today or date.today()
+    fp = _flag_path(shared_dir, bot_id, today)
+    if not fp.exists():
+        return None
+    try:
+        data = json.loads(fp.read_text())
+        if data.get("cleared"):
+            return None
+        return data
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def get_all_active_enforcement(shared_dir: Path, members: list[str]) -> dict[str, dict]:
+    """Return {bot_id: flag_data} for all bots with active enforcement today."""
+    today = date.today()
+    result = {}
+    for bot_id in members:
+        flag = get_active_enforcement(shared_dir, bot_id, today)
+        if flag:
+            result[bot_id] = flag
+    return result
+
+
+def write_enforcement_flag(
+    shared_dir: Path,
+    bot_id: str,
+    action: str,
+    spend_at_trigger: float,
+    cap: float,
+    today: date | None = None,
+    *,
+    accepted: "AcceptedThrough | None" = None,
+    spend_total: float | None = None,
+) -> Path:
+    """Write (or overwrite) the enforcement flag for bot_id today.
+
+    ``spend_at_trigger`` is the number that CROSSED the cap — which, once
+    the operator has reactivated the bot, is spend measured **since the
+    acceptance marker**, not the day's raw total. Both are recorded:
+    ``spend_at_trigger`` is what the copy compares against ``cap``, and
+    ``spend_total`` (when supplied) is the untouched day total, so a
+    reader can render "accepted $X at HH:MM; counting from then" without
+    having to re-derive either number. Absent ``accepted``, the two are
+    the same figure and ``accepted_usd`` / ``accepted_at`` are null.
+    """
+    today = today or date.today()
+    fp = _flag_path(shared_dir, bot_id, today)
+    payload = {
+        "bot_id": bot_id,
+        "date": str(today),
+        "triggered_at": datetime.now(timezone.utc).isoformat(),
+        "action": action,
+        "spend_at_trigger": round(spend_at_trigger, 4),
+        "cap": cap,
+        "spend_total": (
+            round(spend_total, 4) if spend_total is not None
+            else round(spend_at_trigger, 4)
+        ),
+        "accepted_usd": (
+            round(accepted.accepted_usd, 4) if accepted is not None else None
+        ),
+        "accepted_at": accepted.accepted_at if accepted is not None else None,
+        "cleared": False,
+        "cleared_at": None,
+    }
+    _write_caps_json(fp, payload)
+    return fp
+
+
+def _write_caps_json(fp: Path, payload: dict) -> None:
+    """Atomically write a spend-caps JSON file, world-readable.
+
+    Temp + rename so a half-written file is never observable: every
+    reader in this module treats a malformed file as ABSENT, and for the
+    acceptance marker "absent" means "measure the raw window" — a torn
+    write must not become a silent discount. 0644 because the OpenClaw
+    plugin (a different uid) reads these; a chmod failure is not worth
+    failing the write over, since the content is already committed and
+    the mode is inherited-correct on every pod we run.
+    """
+    tmp = fp.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, indent=2))
+    os.replace(tmp, fp)
+    try:
+        os.chmod(fp, 0o644)
+    except OSError:
+        pass
+
+
+def clear_enforcement(shared_dir: Path, bot_id: str, today: date | None = None) -> bool:
+    """Mark the enforcement flag as cleared. Returns True if a flag was found and cleared."""
+    today = today or date.today()
+    fp = _flag_path(shared_dir, bot_id, today)
+    if not fp.exists():
+        return False
+    try:
+        data = json.loads(fp.read_text())
+        data["cleared"] = True
+        data["cleared_at"] = datetime.now(timezone.utc).isoformat()
+        fp.write_text(json.dumps(data, indent=2))
+        return True
+    except (json.JSONDecodeError, OSError):
+        return False
+
+
+def enforcement_already_triggered(shared_dir: Path, bot_id: str, today: date | None = None) -> bool:
+    """Return True if an enforcement flag (cleared or not) exists for today."""
+    today = today or date.today()
+    return _flag_path(shared_dir, bot_id, today).exists()
+
+
+# ── Reactivation acceptance marker ("count from now") ────────────────────────
+#
+# Operator, 2026-09-07: "if a bot is consciously brought back after a breaker
+# has tripped, then the operator is indicating that the previous spike is ok
+# (or is over). So it should not use that data to break again."
+#
+# Before this, reactivating a bot cleared the breaker file and nothing else.
+# The next enforcement tick re-read the SAME window — today's raw spend — saw
+# it still over the cap, and tripped again on the very spend the operator had
+# just accepted. Observed live: three reactivations, three immediate re-trips
+# on a "$27.49 >= $5.00" cap.
+#
+# The marker is the fix. Reactivation records the spend total at that instant;
+# every subsequent breaker evaluation measures `today_total - accepted_usd`.
+# A genuinely new spike still crosses the cap and still trips — the marker
+# moves the origin, it does not raise the ceiling (that is what the D-CC3
+# checkpoint increment does, and the two are deliberately separate).
+#
+# EXPIRY is structural, not a timer: the file is named for the pod-local day,
+# which is the window the daily cap measures. At the day boundary today's
+# spend restarts at $0 and the marker for that day is simply never read
+# again. ``read_accepted_through`` re-checks the stamped day anyway, so a
+# marker that somehow outlives its window reads as absent rather than as a
+# silent, permanent discount.
+
+
+@dataclass(frozen=True)
+class AcceptedThrough:
+    """One bot's "spend up to here is accepted" marker for one pod-local day."""
+
+    bot_id: str
+    day: str
+    #: Today's spend total at the instant the operator reactivated ($).
+    accepted_usd: float
+    #: ISO-8601 UTC timestamp of the reactivation.
+    accepted_at: str
+
+    def to_json(self) -> dict:
+        return {
+            "bot_id": self.bot_id,
+            "day": self.day,
+            "accepted_usd": round(self.accepted_usd, 4),
+            "accepted_at": self.accepted_at,
+        }
+
+    def local_time_label(self) -> str:
+        """``HH:MM`` in the pod's timezone, for the card copy. ``?`` if unparseable."""
+        try:
+            dt = datetime.fromisoformat(self.accepted_at.replace("Z", "+00:00"))
+        except ValueError:
+            return "?"
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        try:
+            from pod_time import pod_tz  # type: ignore[import]
+            tz = pod_tz()
+        except Exception:  # noqa: BLE001
+            tz = None
+        return (dt.astimezone(tz) if tz is not None else dt.astimezone()).strftime("%H:%M")
+
+
+def accepted_through_path(shared_dir: Path, bot_id: str, day: date) -> Path:
+    """``{shared_dir}/spend-caps/accepted-<bot>-<YYYY-MM-DD>.json``.
+
+    Sits beside the enforcement flag on purpose — same directory, same
+    ownership, same day-keyed rollover, one place for an operator to look.
+    The ``accepted-`` prefix keeps it out of ``<bot>-<day>.json``'s glob.
+    """
+    return _caps_dir(shared_dir) / f"accepted-{bot_id}-{day}.json"
+
+
+def write_accepted_through(
+    shared_dir: Path,
+    bot_id: str,
+    *,
+    spend_usd: float,
+    day: date | None = None,
+    now: datetime | None = None,
+) -> AcceptedThrough:
+    """Record that ``spend_usd`` of today's spend is accepted for ``bot_id``.
+
+    Called at reactivation. Overwrites any earlier marker for the same day:
+    a second reactivation accepts everything spent up to the second one, so
+    the newest marker is always the right origin. Atomic (temp + rename) —
+    a half-written marker would read as absent, which fails toward
+    re-tripping rather than toward a silent discount.
+    """
+    day = day or _pod_today()
+    now = now or datetime.now(timezone.utc)
+    marker = AcceptedThrough(
+        bot_id=bot_id,
+        day=str(day),
+        accepted_usd=max(float(spend_usd), 0.0),
+        accepted_at=now.isoformat(),
+    )
+    _write_caps_json(accepted_through_path(shared_dir, bot_id, day), marker.to_json())
+    return marker
+
+
+def read_accepted_through(
+    shared_dir: Path, bot_id: str, day: date | None = None,
+) -> AcceptedThrough | None:
+    """This bot's acceptance marker for ``day``, or None.
+
+    None for: no marker, an unreadable / malformed one, a marker stamped
+    for a different day, or a negative amount. Every one of those means
+    "measure the raw window" — the pre-marker behaviour. A marker must
+    never be *manufactured* out of unreadable data: that would discount
+    real spend and hold the breaker open on a genuine spike.
+    """
+    day = day or _pod_today()
+    fp = accepted_through_path(shared_dir, bot_id, day)
+    try:
+        data = json.loads(fp.read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    stamped_day = data.get("day")
+    if stamped_day != str(day):
+        return None
+    raw = data.get("accepted_usd")
+    if not isinstance(raw, (int, float)) or raw < 0:
+        return None
+    accepted_at = data.get("accepted_at")
+    if not isinstance(accepted_at, str) or not accepted_at:
+        return None
+    return AcceptedThrough(
+        bot_id=str(data.get("bot_id") or bot_id),
+        day=str(stamped_day),
+        accepted_usd=float(raw),
+        accepted_at=accepted_at,
+    )
+
+
+def clear_accepted_through(
+    shared_dir: Path, bot_id: str, day: date | None = None,
+) -> bool:
+    """Delete the marker. True iff one was there. Idempotent."""
+    fp = accepted_through_path(shared_dir, bot_id, day or _pod_today())
+    try:
+        fp.unlink()
+        return True
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return False
+
+
+def spend_since_accepted(
+    spend_usd: float | None, accepted: AcceptedThrough | None,
+) -> float | None:
+    """Today's spend measured from the acceptance marker.
+
+    ``None`` in stays ``None`` out — "I could not measure" is not zero.
+    Clamped at 0: a total below the accepted figure means spend was
+    re-priced downward, not that the bot earned credit.
+    """
+    if spend_usd is None:
+        return None
+    if accepted is None:
+        return spend_usd
+    return max(spend_usd - accepted.accepted_usd, 0.0)
+
+
+def breaker_ui_entry(record: Any, shared_dir: Path) -> dict:
+    """Project a ``breakers.store.BreakerRecord`` for the dashboard.
+
+    Lives here rather than in ``server.py`` because the projection now
+    carries the spend-cap acceptance overlay, and ``server.py`` is under a
+    no-growth cap. Cost breakers on a real bot get ``accepted_usd`` /
+    ``accepted_at`` so the tile and the Circuit Breakers panel can say
+    "accepted $X at HH:MM; counting from then"; every other record gets
+    the same keys as null, so the frontend has one shape to render.
+    """
+    entry = {
+        "type": record.type,
+        "trip_id": record.trip_id,
+        "tripped_at": record.tripped_at,
+        "expires_at": record.expires_at,
+        "initiated_by": record.initiated_by,
+        "reason": record.reason,
+        "accepted_usd": None,
+        "accepted_at": None,
+        "accepted_at_label": None,
+    }
+    if record.bot_id == "pod" or not str(record.type).startswith("cost"):
+        return entry
+    marker = read_accepted_through(shared_dir, record.bot_id)
+    if marker is None:
+        return entry
+    entry["accepted_usd"] = round(marker.accepted_usd, 2)
+    entry["accepted_at"] = marker.accepted_at
+    entry["accepted_at_label"] = marker.local_time_label()
+    return entry
+
+
+# ── Cap-status helpers (used by the Cost Measures chips) ──────────────────────
+
+
+def _pod_today() -> date:
+    """Today on the pod's calendar — the day caps roll on (``pod_time``).
+
+    Every day-valued default in the cap-warning path goes through this one
+    helper. The spend lookup buckets turns by the pod-local day, so a caller
+    that defaulted to a DIFFERENT day would ask for a bucket that is always
+    empty and get a confident $0.00 — the silent zero, reintroduced through
+    the calendar instead of the file.
+    """
+    try:
+        from pod_time import pod_today  # type: ignore[import]
+        return pod_today()
+    except Exception:
+        return date.today()
+
+
+def get_today_spend(
+    shared_dir: Path,  # noqa: ARG001 — kept for callers that pass it
+    bot_id: str,
+    today: date | None = None,
+) -> float | None:
+    """Return today's running spend for a bot from live turn JSONL.
+
+    Returns None when live-JSONL discovery failed — "I could not look",
+    which callers must not read as $0 spend.
+
+    This used to read ``{shared_dir}/metrics/{date}/{bot_id}.json``. That
+    file cannot answer the question. ``measure.py`` writes it from launchd
+    at 01:00 pod-local with ``--date`` defaulting to ``date.today()``, so
+    the file named for day D is written one hour into D and never
+    regenerated. Measured on the mini for 2026-09-03 it held $0.95 of the
+    pod's $55.52 — 1.7% — and $0.0078 of the heaviest bot's $51.45. A
+    warning chip that fires at 80% of the daily cap was therefore reading
+    a number that is a floor of roughly zero, and could not fire at all.
+
+    ``live_spend`` is the shared reader (``spend_alert`` cannot be imported
+    here — it imports this module).
+    """
+    from live_spend import load_day_spend  # local: keeps the import lazy
+    return load_day_spend(bot_id, today or _pod_today())
+
+
+def get_cap_warnings(
+    shared_dir: Path,
+    members: list[str],
+    cap: float | None,
+    *,
+    threshold_pct: float = 0.80,
+    today: date | None = None,
+) -> dict[str, dict]:
+    """Bots at ``threshold_pct`` of the daily cap, NOT already enforced.
+
+    Bots with active enforcement today are excluded — those are surfaced
+    by the cap_active chip instead. Returns ``{bot_id: {spend, cap, pct}}``
+    for each bot that crossed the warning threshold but hasn't tripped
+    the hard cap yet. Returns ``{}`` when no daily cap is configured
+    (None or 0).
+    """
+    if not cap or cap <= 0:
+        return {}
+    today = today or _pod_today()
+    result: dict[str, dict] = {}
+    for bot_id in members:
+        if get_active_enforcement(shared_dir, bot_id, today):
+            continue
+        spend = get_today_spend(shared_dir, bot_id, today)
+        if spend is None:
+            continue
+        pct = spend / cap
+        if pct >= threshold_pct:
+            result[bot_id] = {
+                "spend": round(spend, 4),
+                "cap": cap,
+                "pct": round(pct, 4),
+            }
+    return result
+
+
+def get_recent_enforcement_history(
+    shared_dir: Path,
+    members: list[str],
+    *,
+    days: int = 7,
+    today: date | None = None,
+) -> dict[str, int]:
+    """Per-bot count of enforcement trips in the last ``days`` days,
+    excluding today's active flags (those are surfaced by cap_active).
+
+    Counts the existence of a flag file regardless of cleared status —
+    a flag was *triggered* even if the operator manually cleared it
+    afterward. Useful for spotting recurring offenders.
+    """
+    today = today or date.today()
+    result: dict[str, int] = {}
+    for bot_id in members:
+        # Skip if currently active today — already surfaced by cap_active.
+        active_today = get_active_enforcement(shared_dir, bot_id, today)
+        count = 0
+        for i in range(days):
+            d = today - timedelta(days=i)
+            if i == 0 and active_today:
+                continue
+            if _flag_path(shared_dir, bot_id, d).exists():
+                count += 1
+        if count > 0:
+            result[bot_id] = count
+    return result
+
+
+# ── Breaker state helpers ─────────────────────────────────────────────────────
+
+def _breaker_expired(expires_at: Any) -> bool:
+    """True iff ``expires_at`` is a parseable ISO timestamp in the past.
+
+    Local copy of the same helper in cost_opt_tiles._breaker_expired so
+    the spend-caps summary and the per-bot tile chip can't disagree on
+    whether an L1 breaker has timed out. Fail-open on parse errors —
+    better to surface a stale trip than to drop a chip on malformed JSON.
+    """
+    if not expires_at:
+        return False
+    raw = str(expires_at)
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        exp = datetime.fromisoformat(raw)
+    except (ValueError, TypeError):
+        return False
+    if exp.tzinfo is None:
+        exp = exp.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) >= exp
+
+
+def get_active_breakers(
+    shared_dir: Path, members: list[str]
+) -> dict[str, dict]:
+    """Return ``{bot_id: {tripped_at, reason, cleared_at?}}`` for every bot
+    whose L1 cost breaker is currently in the tripped state.
+
+    A breaker file at ``{shared}/breakers/<bot>/cost.json`` is considered
+    active when it has ``tripped_at`` set AND either ``cleared_at`` is
+    missing or is strictly older than ``tripped_at`` (re-trip after a
+    clear is allowed) AND its ``expires_at`` hasn't passed (TTL trips
+    auto-clear at the TTL even if the reaper hasn't deleted the file
+    yet). Mirrors ``detect_breaker_tripped_chip`` in cost_opt_tiles.py
+    so the tile chip and the summary band never disagree about whether
+    a breaker is up.
+
+    Pre-fix, the expires_at gate was missing — auto-resetting L1 trips
+    (24h TTL on the daily-hard-cap rung) showed as "active" on the
+    summary band and chips long after they'd expired, contradicting the
+    per-bot tile chips which had the gate. Surfaced 2026-06-06 on the
+    Cost Optimization page header chip + summary band.
+
+    Distinct from ``get_all_active_enforcement`` — that reads the
+    spend-cap enforcement flag (today's daily_cap_usd was crossed),
+    whereas breakers can be tripped manually or by detectors other
+    than the spend-cap action (e.g. the bloat detector, the 2026-05-23
+    safety-net sprint). The Cost Optimization summary band needs both.
+    """
+    result: dict[str, dict] = {}
+    for bot_id in members:
+        breaker_path = shared_dir / "breakers" / bot_id / "cost.json"
+        try:
+            data = json.loads(breaker_path.read_text())
+        except (OSError, json.JSONDecodeError, PermissionError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        tripped_at = data.get("tripped_at")
+        cleared_at = data.get("cleared_at")
+        if not tripped_at:
+            continue
+        # ISO 8601 strings sort lexicographically, so a string compare
+        # is the canonical "is the trip still in effect?" check.
+        if cleared_at and str(cleared_at) >= str(tripped_at):
+            continue
+        # TTL trips auto-clear at expires_at; the file persists until the
+        # reaper sweeps it. Treat past-expiry as cleared so the summary
+        # drops the count without waiting on the reaper.
+        if _breaker_expired(data.get("expires_at")):
+            continue
+        result[bot_id] = {
+            "tripped_at": tripped_at,
+            "reason": data.get("reason") or data.get("trigger") or "",
+        }
+    return result
+
+
+# ── Cap config helpers ────────────────────────────────────────────────────────
+
+def get_caps_config(network: dict, shared_dir: Path | None = None) -> dict:
+    """Extract spend cap config — read from better-engine-config first
+    (Phase 8 of the 2026-06 cost-cap normalization), fall back to the
+    legacy network.json::thresholds path for pre-migration installs.
+
+    ``dailySpendCapUsd`` is resolved through
+    ``BetterEngineConfig.resolve_budget_ladder(None)`` — the same single reader
+    ``spend_alert`` enforces on. This function is what ``GET /api/spend-caps``
+    renders, so any divergence between it and the enforcer shows the operator a
+    cap that isn't real; that is exactly the defect this routing closes. Keep
+    them on one reader.
+
+    spec: internal/spec-cost-caps-2026-06-05.md.
+    """
+    # ── Phase 8: BE config pod_defaults is the canonical source ──
+    if shared_dir is not None:
+        try:
+            from better_engine_config import load as _load_be  # type: ignore
+            be = _load_be(shared_dir)
+            pod = be.pod_defaults.get("budget") or {}
+            pod_ladder = be.resolve_budget_ladder(None)
+            return {
+                "dailySpendAlertUsd": float(pod.get("per_bot_daily_warn_usd") or 5.0),
+                "dailySpendCapUsd": pod_ladder["l1_breaker"],
+                "weeklySpendAlertUsd": float(pod.get("pod_weekly_warn_usd") or 20.0),
+                "weeklySpendCapUsd": None,  # legacy field; not in new spec
+                # ONE resolver with the enforcer (resolve_spend_cap_action):
+                # an explicit network.json choice wins, else the BE rung
+                # inference, else the checkpoint default.
+                "spendCapAction": resolve_spend_cap_action(
+                    network, pod_budget=pod,
+                ),
+            }
+        except Exception:
+            # Fall through to the legacy read.
+            pass
+
+    t = network.get("thresholds", {})
+    return {
+        "dailySpendAlertUsd": float(
+            network.get("alerts", {}).get("spendThresholdUSD")
+            or t.get("dailySpendAlertUsd", 5.0)
+        ),
+        "dailySpendCapUsd": t.get("dailySpendCapUsd"),   # None = no hard cap
+        "weeklySpendAlertUsd": float(t.get("weeklySpendAlertUsd", 20.0)),
+        "weeklySpendCapUsd": t.get("weeklySpendCapUsd"),
+        "spendCapAction": resolve_spend_cap_action(network),
+    }
+
+
+def _infer_action_from_be(pod_budget: dict) -> str:
+    """Reverse-map BE config pod-defaults back to a legacy spendCapAction
+    string for back-compat with the existing GET /api/spend-caps consumers.
+
+    Phase 8 only — Phase 9+ UI moves entirely off this string.
+
+    Thin wrapper over :func:`resolve_spend_cap_action` with no network
+    config, kept as the named BE-inference seam. Note the terminal value
+    is now the checkpoint, not ``alert-only``: a pod that set no rung and
+    typed no preference gets the D-CC2 default, and this reader must
+    report what the enforcer will actually do.
+    """
+    return resolve_spend_cap_action(None, pod_budget=pod_budget)
+
+
+def save_caps_config(network_path: Path, updates: dict) -> None:
+    """Write spend cap fields back to network.json thresholds."""
+    # Load inline to avoid circular import
+    data = json.loads(network_path.read_text()) if network_path.exists() else {}
+    t = data.setdefault("thresholds", {})
+    allowed = {"dailySpendAlertUsd", "dailySpendCapUsd", "weeklySpendAlertUsd",
+               "weeklySpendCapUsd", "spendCapAction"}
+    for k, v in updates.items():
+        if k in allowed:
+            if v is None:
+                t.pop(k, None)
+            else:
+                t[k] = v
+
+    fd, tmp = tempfile.mkstemp(dir="/tmp", prefix="evolve-network-", suffix=".json")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, indent=2)
+        try:
+            import shutil
+            shutil.copy2(tmp, network_path)
+            os.chmod(network_path, 0o644)
+        except PermissionError:
+            import subprocess
+            r = subprocess.run(["sudo", "/bin/cp", tmp, str(network_path)], capture_output=True)
+            if r.returncode != 0:
+                raise PermissionError(f"sudo /bin/cp failed: {r.stderr.decode().strip()}")
+            subprocess.run(["sudo", "/bin/chmod", "644", str(network_path)], capture_output=True)
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+# ── Enforcement actions ───────────────────────────────────────────────────────
+
+def execute_enforcement_action(
+    action: str,
+    bot_id: str,
+    shared_dir: Path,
+    bot_cfg: dict,
+    alerts_cfg: dict,
+    spend: float,
+    cap: float,
+) -> str:
+    """Execute the enforcement action and return a human-readable result string."""
+    if action == "alert-only":
+        return "Alert sent (no automated action)"
+
+    if action == "checkpoint":
+        # The flag is already written; the plugin's before_agent_run gate
+        # reads it (with the breaker record's checkpoint state) and holds
+        # the next interactive turn behind a fixed, model-free reply.
+        # Nothing to actuate here — deliberately NOT a model downgrade.
+        return (
+            f"Next conversation turn held at a checkpoint "
+            f"(${spend:.2f} hit cap ${cap:.2f}); background work paused"
+        )
+
+    if action == "downgrade-tier":
+        # Flag is already written — ModelRouter will read it on next turn
+        return f"Tier downgraded to tier 3 for remainder of day (${spend:.2f} hit cap ${cap:.2f})"
+
+    if action == "pause-crons":
+        return _pause_bot_crons(bot_id)
+
+    if action == "suspend-bot":
+        return _suspend_bot_gateway(bot_id, bot_cfg)
+
+    return f"Unknown action: {action}"
+
+
+def _pause_bot_crons(bot_id: str) -> str:
+    """Unload all launchd jobs for this bot (via the Scheduler seam)."""
+    paused = []
+    failed = []
+    try:
+        from runtime.scheduler import get_launchd_scheduler
+        sched = get_launchd_scheduler()
+        for label in sched.list():
+            if f".{bot_id}." in label or label.endswith(f".{bot_id}"):
+                # raw() escape hatch (counted S2 debt): this is pause, not
+                # uninstall — remove() would bootout AND delete the plist;
+                # `unload` keeps the plist on disk so the jobs can resume.
+                rc, _out, _err = sched.raw(
+                    "unload", f"/Library/LaunchDaemons/{label}.plist"
+                )
+                (paused if rc == 0 else failed).append(label)
+    except Exception as exc:
+        return f"Error pausing crons: {exc}"
+    return f"Paused {len(paused)} cron jobs" + (f" ({len(failed)} failed)" if failed else "")
+
+
+def _suspend_bot_gateway(bot_id: str, bot_cfg: dict) -> str:
+    """Kill the OpenClaw gateway process for the bot.
+
+    Uses a regex covering every entry-point marker (heal._GATEWAY_PROC_MARKERS)
+    so we match `node .../openclaw/dist/entry.js` (openclaw >= 2026.4.29) as
+    well as the legacy `openclaw-gateway` process title. `pkill -f` matches
+    against the full command line, and `.` is escaped to avoid false positives.
+    """
+    import re as _re
+    from heal import _GATEWAY_PROC_MARKERS
+    user = bot_cfg.get("user", bot_id)
+    pattern = "(" + "|".join(_re.escape(m) for m in _GATEWAY_PROC_MARKERS) + ")"
+    try:
+        r = subprocess.run(
+            ["sudo", "-u", user, "pkill", "-u", user, "-f", pattern],
+            capture_output=True, timeout=10,
+        )
+        if r.returncode in (0, 1):  # 1 = no process found
+            return f"Gateway suspended for {bot_id}"
+        return f"pkill returned {r.returncode}"
+    except Exception as exc:
+        return f"Error suspending gateway: {exc}"

@@ -1,0 +1,29 @@
+id: app_birth_detector
+schema_version: 1
+type: guardian
+dimension: capabilities
+bucket: extend
+# Surface routing: improvement. Surfaces informal apps the bot has built but never wrapped —
+#   product-shaped 'extend what this bot does' suggestions.
+# Spec: internal/spec-recommendations-rework-2026-06-02.md §"Generator routing".
+surface: improvement
+purpose: >
+  Surface candidate apps the bot has informally built but never wrapped
+  in a manifest. Detects orphan script + data clusters in the workspace
+  and proposes BuildApp so the operator can promote them through the
+  forge — getting a proper manifest, tests, and version history.
+cadence: weekly
+invariants:
+  - id: action_kind_allowed
+    description: >
+      BuildApp births a new app from a fully-orphan cluster; ManifestUpdate
+      folds orphans into an existing app when the cluster sits in a
+      directory already partially under app management.
+    check_kind: action_kind_allowed
+    params:
+      allowlist: [BuildApp, ManifestUpdate]
+  - id: touches_forbidden
+    description: New apps must not preempt auth, tools, channel config, or the gateway core.
+    check_kind: touches_forbidden
+    params:
+      forbidden: [auth, tools, channel_config, gateway_core]

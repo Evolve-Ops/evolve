@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Heartbeat Conditions — stop paying for idle ticks · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">heartbeat-conditions</span><span class="chip">heartbeat-json</span><span class="chip">idle-burn</span><span class="chip">due-check</span></div><div class="reviewed">Last reviewed 2026-09-07</div></div><h1 id="help-heartbeat-conditions">Heartbeat Conditions</h1>
+<p>A heartbeat is a bot waking up on a timer to ask "is there anything to do?".
+Most of the time the answer is no — and answering "no" costs real money,
+because the question is put to a language model that has to load the bot's
+whole context to say it.</p>
+<p>On a five-bot pod, heartbeats and cron ticks with nothing to do cost roughly
+<strong>$45 a month</strong> — and that number grows with the number of bots and the size
+of their context, not with the amount of work being done.</p>
+<p><code>HEARTBEAT.json</code> fixes that. It is a short file, written once per bot, that
+says <strong>what "something to do" actually means</strong> for that bot in terms a
+computer can check: a folder that isn't empty, a file that changed, a time of
+day that has arrived. Evolve checks those conditions before the model is
+woken. If nothing is due, the tick costs nothing at all — that is where the
+saving comes from. If something is due, the bot wakes up and is told exactly
+what, prefixed to its usual heartbeat instruction.</p>
+<p><strong>Nothing changes until you write the file.</strong> A bot with no <code>HEARTBEAT.json</code>
+behaves exactly as it does today: every heartbeat wakes the model.</p>
+<hr>
+<h2 id="where-the-file-goes">Where the file goes</h2>
+<p>Next to the bot's <code>HEARTBEAT.md</code>, in its workspace:</p>
+<pre><code>/Users/&lt;bot&gt;/.openclaw/workspace/HEARTBEAT.json
+</code></pre>
+<p><code>HEARTBEAT.md</code> stays exactly as it is. It is still what the bot reads and
+follows when it wakes up. <code>HEARTBEAT.json</code> is the machine-checkable summary
+of <em>when</em> that is worth doing.</p>
+<p>A ready-to-edit starter ships with Evolve at
+<code>packages/admin/evolve_admin/templates/bot_workspace/HEARTBEAT.json</code> — copy it
+across, change the conditions to match that bot's checklist, and set
+<code>"enabled": true</code>. It ships disabled, so copying it does not change anything
+until you have read it.</p>
+<hr>
+<h2 id="the-shape-of-the-file">The shape of the file</h2>
+<pre><code class="language-json">{
+  &quot;version&quot;: 1,
+  &quot;enabled&quot;: true,
+  &quot;conditions&quot;: [
+    {
+      &quot;id&quot;: &quot;inbox&quot;,
+      &quot;when&quot;: &quot;dir_non_empty&quot;,
+      &quot;path&quot;: &quot;inbox&quot;,
+      &quot;wake&quot;: &quot;Process everything in inbox/ and clear it.&quot;
+    },
+    {
+      &quot;id&quot;: &quot;morning-brief&quot;,
+      &quot;when&quot;: &quot;time_window&quot;,
+      &quot;after&quot;: &quot;06:30&quot;,
+      &quot;before&quot;: &quot;07:30&quot;,
+      &quot;wake&quot;: &quot;Send the morning brief.&quot;
+    },
+    {
+      &quot;id&quot;: &quot;notes&quot;,
+      &quot;when&quot;: &quot;file_changed&quot;,
+      &quot;path&quot;: &quot;memory/notes.md&quot;,
+      &quot;wake&quot;: &quot;Re-read memory/notes.md and act on anything new.&quot;
+    },
+    {
+      &quot;id&quot;: &quot;sweep&quot;,
+      &quot;when&quot;: &quot;every&quot;,
+      &quot;interval&quot;: &quot;6h&quot;,
+      &quot;wake&quot;: &quot;Run the six-hourly health sweep from HEARTBEAT.md.&quot;
+    }
+  ]
+}
+</code></pre>
+<p>Every condition needs three things:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>What it is</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>A short name, unique in the file. Used to remember when this condition last fired.</td>
+</tr>
+<tr>
+<td><code>when</code></td>
+<td>Which check to run — see the table below.</td>
+</tr>
+<tr>
+<td><code>wake</code></td>
+<td>What to tell the bot when <em>this</em> condition is what woke it. Write it as an instruction, not a label.</td>
+</tr>
+</tbody>
+</table>
+<p><code>enabled: false</code> parks the whole file without deleting it — the bot goes back
+to waking on every heartbeat.</p>
+<hr>
+<h2 id="the-checks-you-can-use">The checks you can use</h2>
+<table>
+<thead>
+<tr>
+<th><code>when</code></th>
+<th>Fires when</th>
+<th>Also needs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>dir_non_empty</code></td>
+<td>The folder exists and has at least one file in it (dotfiles ignored)</td>
+<td><code>path</code></td>
+</tr>
+<tr>
+<td><code>path_exists</code></td>
+<td>The file or folder exists</td>
+<td><code>path</code></td>
+</tr>
+<tr>
+<td><code>path_missing</code></td>
+<td>The file or folder is <em>not</em> there</td>
+<td><code>path</code></td>
+</tr>
+<tr>
+<td><code>file_changed</code></td>
+<td>The file has been modified since this condition last fired</td>
+<td><code>path</code></td>
+</tr>
+<tr>
+<td><code>time_window</code></td>
+<td>The local clock is inside the window, and this window hasn't been served yet today</td>
+<td><code>after</code>, <code>before</code> as <code>HH:MM</code></td>
+</tr>
+<tr>
+<td><code>every</code></td>
+<td>At least this long has passed since this condition last fired</td>
+<td><code>interval</code> like <code>30m</code>, <code>6h</code>, <code>2d</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>path</code> is always <strong>relative to the bot's workspace</strong>. An absolute path, or one
+containing <code>..</code>, is refused — the file decides whether a turn runs, so it is
+not allowed to point outside the bot's own workspace.</p>
+<p>Time windows do not wrap around midnight: <code>after</code> must be earlier than
+<code>before</code>. For "overnight", use two conditions.</p>
+<hr>
+<h2 id="cron-jobs">Cron jobs</h2>
+<p><strong>Your cron jobs keep running. <code>conditions</code> never applies to them.</strong></p>
+<p>A cron job is not a heartbeat. A heartbeat asks "is there anything to do?";
+a cron job already knows what it is for — "post the weekly digest", "check
+the certificate". Gating one on the heartbeat's conditions would stop it
+firing for reasons that have nothing to do with its job, so the list above
+applies to heartbeats <strong>only</strong>.</p>
+<p>If you do want a cron job to skip its own idle runs, give that job its own
+conditions in a <code>cron</code> block, keyed by the job's id:</p>
+<pre><code class="language-json">{
+  &quot;version&quot;: 1,
+  &quot;enabled&quot;: true,
+  &quot;conditions&quot;: [
+    { &quot;id&quot;: &quot;inbox&quot;, &quot;when&quot;: &quot;dir_non_empty&quot;, &quot;path&quot;: &quot;inbox&quot;,
+      &quot;wake&quot;: &quot;Process everything in inbox/ and clear it.&quot; }
+  ],
+  &quot;cron&quot;: {
+    &quot;9506f538-340e-4487-ae07-5675cb58b48c&quot;: [
+      { &quot;id&quot;: &quot;to-send&quot;, &quot;when&quot;: &quot;dir_non_empty&quot;, &quot;path&quot;: &quot;outbox&quot;,
+        &quot;wake&quot;: &quot;Send everything queued in outbox/.&quot; }
+    ]
+  }
+}
+</code></pre>
+<p>That job now skips when its <code>outbox</code> is empty, and nothing else changes. A
+cron job that is <strong>not</strong> named in the <code>cron</code> block runs every time, exactly as
+it does today — which is what every cron job on your pod does until you add
+one.</p>
+<p>The key is the job's id, which is what the bot's gateway hands us for the
+run. <code>openclaw cron list</code> prints the id next to each job's name.</p>
+<p>The two scopes are kept apart all the way down: a cron run only ever reads
+its own conditions, and waking for one never counts as having served the
+other, even when the two use the same condition <code>id</code>.</p>
+<hr>
+<h2 id="turning-your-heartbeatmd-into-conditions">Turning your HEARTBEAT.md into conditions</h2>
+<p>Read your <code>HEARTBEAT.md</code> line by line and ask, for each instruction: <em>what
+would the bot look at to decide whether this applies?</em> That thing is the
+condition.</p>
+<table>
+<thead>
+<tr>
+<th>A line in HEARTBEAT.md</th>
+<th>The condition</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>"Check the inbox folder and deal with anything in it"</td>
+<td><code>dir_non_empty</code> on <code>inbox</code></td>
+</tr>
+<tr>
+<td>"Every morning around 7, send the brief"</td>
+<td><code>time_window</code> 06:30–07:30</td>
+</tr>
+<tr>
+<td>"If the task list has changed, re-plan"</td>
+<td><code>file_changed</code> on the task list</td>
+</tr>
+<tr>
+<td>"Twice a day, check the backups are fresh"</td>
+<td><code>every</code> with <code>12h</code></td>
+</tr>
+<tr>
+<td>"If the alert flag file is there, escalate"</td>
+<td><code>path_exists</code> on the flag</td>
+</tr>
+</tbody>
+</table>
+<p>If a line has no answer — if the only way to know is to think about it — leave
+it out. A condition you cannot express is not a reason to skip writing the
+file; the lines you <em>can</em> express still remove most of the idle ticks, and
+anything you leave out simply keeps waking the model as it does now, via an
+<code>every</code> condition that matches the old cadence.</p>
+<hr>
+<h2 id="what-the-bot-sees-when-something-is-due">What the bot sees when something is due</h2>
+<p>The woken turn is <strong>prefixed</strong> with just the due items:</p>
+<pre><code>[EVOLVE HEARTBEAT] Evolve checked this bot's HEARTBEAT.json conditions before
+this turn. Exactly these are due right now — do them, and skip the rest of the
+HEARTBEAT.md checklist:
+
+- Process everything in inbox/ and clear it.  (inbox: inbox holds 3 entries)
+
+Nothing else on the checklist is due. If none of the above needs a message,
+reply with the single token NO_REPLY.
+</code></pre>
+<p><strong>This block is added to the bot's usual heartbeat prompt, not instead of it.</strong>
+The gateway's own heartbeat instruction — the one that tells the bot to follow
+its heartbeat checklist — still arrives underneath, so a bot may still read
+<code>HEARTBEAT.md</code> before doing the named item. The narrowing tells it what
+matters; it does not yet remove the checklist read.</p>
+<p>Replacing the prompt outright is a separate change: the gateway takes a
+per-bot <code>heartbeat.prompt</code> setting, and swapping it for the due-items block on
+bots that have a valid <code>HEARTBEAT.json</code> would remove the extra read. That is
+deliberately not part of this: it writes to each bot's own gateway config,
+which is a bigger blast radius than a file you can delete.</p>
+<p>So the saving you can count on today is the <strong>skipped</strong> ticks — the ones that
+never reach a model at all. A narrower woken turn is a bonus on top.</p>
+<hr>
+<h2 id="when-something-goes-wrong-the-bot-still-wakes-up">When something goes wrong, the bot still wakes up</h2>
+<p>This is the one place in Evolve where an unclear situation resolves toward
+<em>doing the work</em> rather than skipping it. A heartbeat that quietly stopped
+firing is much worse than a heartbeat that fired unnecessarily — you would
+not find out until something it was watching went wrong.</p>
+<p>So the model runs as normal, exactly as it does today, whenever:</p>
+<ul>
+<li>there is no <code>HEARTBEAT.json</code> (the default for every bot);</li>
+<li>the file cannot be read, or isn't valid JSON;</li>
+<li>a condition names a check that doesn't exist, or is missing a field;</li>
+<li>the file says <code>enabled: false</code>, or lists no conditions;</li>
+<li>a condition has never fired before (the first tick after you write the file
+  always wakes the bot).</li>
+</ul>
+<p>A file that is present but broken is reported once in the bot's gateway log,
+naming the problem — it never fails silently.</p>
+<p>One limit worth knowing: a condition is marked "served" when the bot is woken,
+not when the work finishes. If that turn fails outright — the model provider
+is down, say — a <code>time_window</code> or <code>every</code> condition waits for its next slot,
+and a <code>file_changed</code> misses that one edit (it fires again on the next edit).</p>
+<h3 id="the-floor-how-long-a-bot-may-stay-silent">The floor: how long a bot may stay silent</h3>
+<p><code>HEARTBEAT.json</code> lives in the bot's own workspace, so the bot can edit it —
+and a file full of conditions that never fire looks exactly like a quiet week.
+So there is a floor the file cannot lower: <strong>if a bot has not been woken for
+24 hours, the next tick wakes it whatever its conditions say</strong>, and the
+decision is recorded as <code>floor: no wake in 24h</code>.</p>
+<p>The floor is set in the pod's <code>network.json</code>, which only you can edit — never
+in a bot's workspace:</p>
+<pre><code class="language-json">{ &quot;heartbeat&quot;: { &quot;max_silence&quot;: &quot;24h&quot; } }
+</code></pre>
+<p>Per bot, <code>bots.&lt;bot&gt;.heartbeat.max_silence</code> wins over the pod value. <code>0</code> turns
+the floor off. If the setting is missing or unreadable, the 24-hour default
+applies.</p>
+<p>Every decision also records the conditions file's fingerprint
+(<code>conditions_sha256</code>), and if the file changes while the gateway is running,
+that is noted once in the log — so a rewrite is something you can see rather
+than something you infer from a bot going quiet.</p>
+<p><strong>A message you send is never affected.</strong> The check only ever applies to
+timer-fired heartbeats and cron ticks. Asking your bot about heartbeats is
+just a normal message.</p>
+<hr>
+<h2 id="checking-that-it-is-working">Checking that it is working</h2>
+<p>The weekly cost summary carries a line for it:</p>
+<pre><code>heartbeats: 6 run / 42 skipped over 7d — $1.26 saved (median $0.0300/run × 42)
+</code></pre>
+<p>Every decision — skipped and woken alike — is written to
+<code>{shared_dir}/{bot}/turns/heartbeat-decisions-&lt;date&gt;.jsonl</code>, so the saving
+shows up as a number rather than as an absence. If you ever suspect a
+heartbeat has gone quiet, that file tells you whether it was skipped and why:</p>
+<pre><code class="language-json">{&quot;ts&quot;:&quot;2026-09-07T14:00:03.123Z&quot;,&quot;instance&quot;:&quot;personal_bot&quot;,&quot;source&quot;:&quot;heartbeat&quot;,
+ &quot;outcome&quot;:&quot;skipped_nothing_due&quot;,&quot;cost&quot;:0,&quot;conditions_evaluated&quot;:4,
+ &quot;cron_job_id&quot;:null,&quot;conditions_sha256&quot;:&quot;9f2c…&quot;,
+ &quot;reason&quot;:&quot;nothing due (4 conditions checked)&quot;}
+</code></pre>
+<p><code>source</code> says whether it was a heartbeat or a cron tick, <code>cron_job_id</code> names
+which job on a cron tick, and <code>conditions_sha256</code> fingerprints the file the
+decision was made from.</p>
+<hr>
+<h2 id="related">Related</h2>
+<ul>
+<li><a href="cost-optimization.html">Cost Optimization</a> — the caps and controls around spend.</li>
+<li><a href="model-economics.html">Model Economics</a> — which model answers which kind of turn.</li>
+</ul>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/heartbeat-conditions.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>

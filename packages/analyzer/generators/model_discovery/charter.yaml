@@ -1,0 +1,87 @@
+id: model_discovery
+schema_version: 1
+type: guardian
+dimension: substrate_health
+bucket: improve
+# Surface routing: improvement. Discovery is a soft "a newer/unknown model
+#   exists; consider adopting it" advisory, not a structural bug the bot is
+#   actively running off of. It belongs on the Improvements page, not Firing.
+# Spec: internal/spec-recommendations-rework-2026-06-02.md §"Generator routing".
+surface: improvement
+purpose: >
+  Discovery-based model freshness (spec-model-rungs-and-roles-2026-06-09
+  §"Freshness check rework"). For each credentialed provider, enumerate the
+  live model listing over plain HTTP and diff it against the pod's rungs:
+
+    - known   models → within-family staleness, "latest in family" derived
+                       from the LISTING (not a hand-edited dict)
+    - unknown chat-capable models in no rung → a discovery finding (the
+                       class that catches a brand-new model line like
+                       claude-fable-5, which the old list-matching check was
+                       structurally blind to)
+    - out-of-scope    → embeddings/audio/specialty (capability metadata) and
+                       dated snapshot aliases of known models: auto-ignored
+
+  Discovery NEVER edits the catalog or rungs itself — adoption is the
+  operator action (rungs are added on adoption, per §Non-goals #2 +
+  §Addendum A). SIGNAL-ONLY surface (spec §Addendum 12, 2026-06-15): each
+  discovery emits ONE model_discovery Signal (signature per provider×model so
+  re-fires dedup) carrying listing evidence (context window, max output,
+  capability flags) plus a heuristic rung-slug + cost-rank placement
+  suggestion. The generator no longer authors an AdoptModel *Proposal* — a new
+  model is a tactical, provider-cadenced advisory, not a config change to
+  approve/reject in the Recommendations queue. Instead the operator adopts a
+  discovered model with one click from the AI Optimization page's Model
+  Freshness card, which reads the gated firing Signals and applies the
+  operator's role-mapping + cap choices through the retained AdoptModel
+  applier. (The AdoptModel action kind stays in the allowlist below: the
+  applier and the canonical AdoptModel builder are retained — only the front
+  door moved from the proposal queue to the page.)
+
+  Cardinal invariant: a provider whose listing call fails is reported
+  degraded with a reason ("discovery skipped for <provider>: <reason>"),
+  never flattened into "all current" (silent-monitor-drift lesson). This is
+  a sibling to bot_config_integrity rather than a check inside it: that
+  guardian is per-bot and scoped to structural openclaw.json fields, while
+  discovery is pod-wide, makes outbound provider HTTP, and emits Signals
+  (adoption edits the catalog only on the operator's deliberate one-click
+  action from the card — never an autonomous mutation).
+
+cadence: daily
+
+# When a discovered model is adopted (lands in a rung) or operator-ignored,
+# it stops appearing in the listing-diff, so the corresponding proposals and
+# signals auto-resolve. Standard guardian sweep-resolve pattern.
+resolves_when_silent: true
+
+invariants:
+  - id: action_kind_allowed
+    description: >
+      The sole adoption action kind is AdoptModel (spec §Addendum A): the
+      deliberate operator action that creates the rung and applies the
+      role-mapping + cap choices. As of §Addendum 12 the generator is
+      signal-only and no longer auto-emits this proposal — adoption is driven
+      from the AI Optimization Model Freshness card — but AdoptModel stays
+      allowlisted because the canonical builder (`_make_discovery_proposal`)
+      still constructs it and the applier (judge provider-diversity validated,
+      normalized network.json write) is retained. Degraded signals are
+      unchanged. Version freshness (spec §Addendum 15) is now a FIRST-CLASS,
+      deterministic result: `model_discovery.compute_version_upgrades` promotes
+      the old dead-ended `StalenessFinding` into a consumed `VersionUpgrade`
+      (the "ride the latest version of the class you already chose" nudge),
+      surfaced as the PRIMARY section of the Model Freshness card with a
+      one-click per-row Update + bulk "Update all to latest" that reuse the same
+      AdoptModel applier (extend the rung the predecessor occupies). No new
+      signal type and no new producer.
+    check_kind: action_kind_allowed
+    params:
+      allowlist: [AdoptModel]
+
+  - id: pod_operator_audience_only
+    description: >
+      Model adoption is a pod-level decision (it touches every bot's
+      available model set); discovery proposals always route to the pod
+      operator, never to a bot's primary user.
+    check_kind: custom
+    params:
+      predicate: approval_audience == "pod_operator"

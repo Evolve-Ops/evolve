@@ -1,0 +1,30 @@
+id: session_quality
+schema_version: 1
+type: optimizer
+dimension: cost
+# Surface routing: drift. Bots dominated by config/housekeeping vs productive output. Pattern
+#   review for the operator; the bot still works.
+# Spec: internal/spec-recommendations-rework-2026-06-02.md §"Generator routing".
+surface: drift
+purpose: >
+  Surface bots whose sessions are dominated by configuration / housekeeping
+  work instead of productive output. Consumes ``session_quality`` Signals
+  from cost_watchdog and emits Investigation Proposals so the operator can
+  check whether the bot is in a stuck loop, hitting auth/permission errors
+  repeatedly, or otherwise burning sessions on maintenance overhead.
+cadence: daily
+resolves_when_silent: true
+invariants:
+  - id: action_kind_allowed
+    description: >
+      Session Quality emits Investigations only — the response depends
+      on what's making the sessions maintenance-heavy, which needs
+      operator context. No autonomous config writes.
+    check_kind: action_kind_allowed
+    params:
+      allowlist: [Investigation]
+  - id: touches_forbidden
+    description: Session Quality does not touch auth, tools, or channel config.
+    check_kind: touches_forbidden
+    params:
+      forbidden: [auth, tools, channel_config, gateway_core]

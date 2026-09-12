@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Errors Page · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">errors</span><span class="chip">crash-report</span><span class="chip">upstream-submission</span></div><div class="reviewed">Last reviewed 2026-06-23</div></div><h1 id="help-errors-page">Errors Page</h1>
+<p>The Errors page (in the <strong>Developer</strong> bucket) collects the runtime errors and
+crashes the pod caught while running — the admin UI, the background jobs, the
+bot gateways. It's the place to look when something felt off ("the page hiccuped",
+"a job didn't run") and you want to see what actually went wrong, and to send a
+genuine bug upstream so it gets fixed.</p>
+<p><strong>Errors stay on your pod by default.</strong> Nothing here leaves the machine until
+<em>you</em> decide to submit a specific error. When you do, it opens a draft in your
+browser for you to review and post — you're always the one who hits send.</p>
+<hr>
+<h2 id="what-you-see">What you see</h2>
+<p>A summary band across the top gives you the shape of things at a glance:</p>
+<ul>
+<li><strong>Captured errors</strong> — how many error occurrences are in the window.</li>
+<li><strong>Unique signatures</strong> — how many <em>distinct</em> problems those occurrences boil
+  down to. The same error happening 200 times is one signature, not 200 things
+  to read.</li>
+<li><strong>Last error</strong> — when the most recent one landed.</li>
+</ul>
+<p>Below that, a table lists each distinct error:</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>What it tells you</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Error</strong></td>
+<td>The error message. Click the row to expand the full detail.</td>
+</tr>
+<tr>
+<td><strong>Sev</strong></td>
+<td>How serious — <em>Alert</em> (critical) or <em>Warn</em>.</td>
+</tr>
+<tr>
+<td><strong>Module</strong></td>
+<td>Which part of the pod raised it.</td>
+</tr>
+<tr>
+<td><strong>Count</strong></td>
+<td>How many times this same error has occurred.</td>
+</tr>
+<tr>
+<td><strong>First seen</strong> / <strong>Last seen</strong></td>
+<td>When it started and when it last happened.</td>
+</tr>
+<tr>
+<td><strong>Status</strong></td>
+<td>Where it stands — <em>New</em>, <em>Acknowledged</em>, <em>Submitted</em>, or <em>Won't fix</em>.</td>
+</tr>
+<tr>
+<td><strong>Actions</strong></td>
+<td>Acknowledge it, submit it upstream, or mark it won't-fix.</td>
+</tr>
+</tbody>
+</table>
+<p>Errors are grouped by <strong>signature</strong> — a fingerprint of the error and where it
+came from — so a noisy, repeating failure shows up as one row with a rising
+count instead of burying everything else.</p>
+<h3 id="filtering">Filtering</h3>
+<p>Narrow the list by severity, by status, by how far back to look (1 hour up to
+30 days), or by typing into the search box. <strong>Clear all</strong> hides every row
+currently shown so you can start from a clean slate; it doesn't erase the
+underlying log, and anything that occurs after that point still surfaces.</p>
+<hr>
+<h2 id="reviewing-an-error">Reviewing an error</h2>
+<p>Click a row to expand it. You'll see the full message and the captured detail —
+enough to tell an expected hiccup (a service that was mid-restart when a request
+landed) from a real defect. Two outcomes from there:</p>
+<ul>
+<li><strong>Acknowledge</strong> — you've seen it and it's understood or harmless. The row
+  moves to <em>Acknowledged</em> and stops drawing your eye.</li>
+<li><strong>Won't fix</strong> — a known, accepted condition you don't want to keep seeing.</li>
+</ul>
+<hr>
+<h2 id="submitting-an-error-upstream">Submitting an error upstream</h2>
+<p>When an error looks like a genuine bug in Evolve, you can send it to the
+project's issue tracker. The flow is built so you never file a duplicate and
+never post anything you haven't read:</p>
+<ol>
+<li>Click the submit action on the error row.</li>
+<li>A <strong>pre-flight</strong> check looks for existing reports of the same problem. If
+   there's already an issue open, it points you there instead of opening a
+   second one.</li>
+<li>If it's new, Evolve assembles a draft — the error, its context, and a
+   diagnostic snapshot — and opens <strong>GitHub in your browser</strong>.</li>
+<li>You review the draft and post it yourself. Once posted, the row's status
+   becomes <em>Submitted</em> so you know it's been reported.</li>
+</ol>
+<p>Because the draft opens in your own browser and you're the one who posts, you
+stay in control of exactly what gets shared.</p>
+<hr>
+<h2 id="common-questions">Common Questions</h2>
+<p><strong>Is this the same as the Reports → Alerts page?</strong>
+No. Alerts are <em>findings</em> the pod's monitors raise about configuration, cost, or
+security — things to act on operationally. The Errors page is <em>crashes and
+exceptions</em> the software hit while running. Alerts ask "is the pod set up
+safely?"; Errors ask "did the code fall over?"</p>
+<p><strong>An error has a high count — is that bad?</strong>
+Not necessarily. A high count means the same thing happened many times; whether
+it matters depends on what it is. Expand the row to read it. A transient
+network blip during a restart is harmless; a repeating failure in a job you rely
+on is worth submitting.</p>
+<p><strong>Do my errors get sent to Evolve automatically?</strong>
+No. They stay on your pod until you explicitly submit one, and even then you
+review and post the report yourself. Nothing is phoned home in the background.</p>
+<p><strong>I cleared the list — did I delete the errors?</strong>
+No. <em>Clear all</em> just hides what's currently shown so you can focus. The
+underlying log is untouched, and new occurrences after that point still appear.</p>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/errors.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>

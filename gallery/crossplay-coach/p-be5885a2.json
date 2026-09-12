@@ -1,0 +1,454 @@
+{
+  "pkg_id": "p-be5885a2",
+  "pkg_version": "2026.09.11-1.7",
+  "gallery_version": "2026.09.11-1.7",
+  "schema_version": 30,
+  "manifest_type": "evolve_application",
+  "display_name": "Crossplay Coach",
+  "author": "evolve",
+  "description": "Analyze an NYT Crossplay screenshot by transcribing it with the bot's vision model, then deterministically generate, score, and rank legal plays. Returns three to five recommendations balancing immediate points, rack leave, blank and S conservation, efficiency, and defensive premium-square exposure while retaining only compact game-state JSON.",
+  "objective": "Help a player learn from Crossplay positions by showing strong legal alternatives and explaining their scoring and strategic trade-offs.",
+  "id": "app_crossplay_coach",
+  "app_id": "crossplay-coach",
+  "name": "Crossplay Coach",
+  "status": "active",
+  "dependencies": [],
+  "app_dependencies": [],
+  "requirements": {
+    "integrations": [],
+    "secrets": [],
+    "system": [],
+    "python_packages": [],
+    "messaging_channel": [],
+    "tools": [
+      {
+        "id": "file_write",
+        "display_name": "Workspace file write",
+        "required": true,
+        "reason": "The bot writes the transcription to crossplay-data/request.json with its file-write tool; the instruction forbids shell, inline Python, and heredocs."
+      },
+      {
+        "id": "exec",
+        "display_name": "Command execution",
+        "required": true,
+        "reason": "The bot runs scripts/crossplay_coach audit / learn-board-words / solve as direct commands via the extensionless launcher."
+      },
+      {
+        "id": "file_delete",
+        "display_name": "Workspace file delete",
+        "required": true,
+        "reason": "The bot removes crossplay-data/request.json after solving, and deletes any enlarged crops it made beside the source attachment."
+      }
+    ]
+  },
+  "interface_contract": {
+    "populated_by_forge": false,
+    "extracted_at": null,
+    "cli": [
+      {
+        "command": "scripts/crossplay_coach status",
+        "description": "Read-only installation and lexicon status."
+      },
+      {
+        "command": "scripts/crossplay_coach validate --request <path>",
+        "description": "Validate either a coordinate-word transcription or trusted 15-row board without loading a lexicon."
+      },
+      {
+        "command": "scripts/crossplay_coach audit --request <path>",
+        "description": "List existing words and return an actionable REVIEW (without exec failure) for malformed or conflicting vision input."
+      },
+      {
+        "command": "scripts/crossplay_coach learn-board-words --request <path>",
+        "description": "Record a sighting of a re-verified, already-played word absent from the base lexicon; refuse structurally invalid boards. Two different games admit the word; one leaves it pending."
+      },
+      {
+        "command": "scripts/crossplay_coach learned --list",
+        "description": "List every learned board word with its admitted/pending status and sighting count."
+      },
+      {
+        "command": "scripts/crossplay_coach forget <word>",
+        "description": "Remove a learned board word so later audits and solves stop accepting it."
+      },
+      {
+        "command": "scripts/crossplay_coach solve --request <path> --save",
+        "description": "Generate and rank up to five legal plays, then retain compact JSON state for the named game. Refuses a board whose audit did not PASS unless --force is passed."
+      },
+      {
+        "command": "scripts/crossplay_coach games",
+        "description": "List retained game-state identifiers."
+      },
+      {
+        "command": "scripts/crossplay_coach self-test",
+        "description": "Run dependency-free scoring and move-generation smoke checks."
+      }
+    ],
+    "data_files": [
+      {
+        "path": "crossplay-data/lexicon.txt",
+        "description": "Operator-supplied, legitimately obtained plain-text word list; deliberately not bundled.",
+        "schema": {
+          "storage_format": "text",
+          "fields": {
+            "line": "one ASCII alphabetic word"
+          }
+        }
+      },
+      {
+        "path": "crossplay-data/learned-words.jsonl",
+        "description": "App-maintained supplemental dictionary. One JSON record per word with the game id, coordinate, direction and ISO timestamp of its first sighting plus every later one. Only a word sighted in two different games on otherwise clean-auditing boards is admitted to the effective lexicon; the rest stay pending. Reversible via `forget`.",
+        "schema": {
+          "storage_format": "JSON lines",
+          "fields": {
+            "word": "uppercase ASCII board word",
+            "game_id": "game id of the first sighting, or board:<digest> when the request named none",
+            "position": "A1-O15 start coordinate of the first sighting",
+            "direction": "Across or Down",
+            "learned_at": "ISO-8601 UTC timestamp of the first sighting",
+            "source": "board, or legacy for a record migrated from learned-words.txt",
+            "sightings": "list of {game_id, position, direction, seen_at}",
+            "status": "admitted or pending; derived from the distinct game ids in sightings, never trusted from the file"
+          }
+        }
+      },
+      {
+        "path": "crossplay-data/learned-words.txt",
+        "description": "Pre-1.7 plain-text supplemental dictionary. Still merged into the lexicon while present, and migrated into learned-words.jsonl on the first write (renamed to learned-words.txt.migrated, never re-migrated). Removed one release after 1.7.",
+        "schema": {
+          "storage_format": "text",
+          "fields": {
+            "line": "one uppercase ASCII board word"
+          }
+        }
+      },
+      {
+        "path": "crossplay-data/games/<game-id>.json",
+        "description": "Normalized board, effective rack, visible scores and bag count, latest recommendations, and up to 200 text-only observations. Contains no image data.",
+        "schema": {
+          "storage_format": "JSON object",
+          "fields": {
+            "schema_version": "1",
+            "game_id": "string",
+            "board": "15 strings of 15 cells; lowercase means a 0-point board blank",
+            "rack": "1-7 uppercase letters or ? for a blank",
+            "bag_count": "integer or null",
+            "scores": "object or null",
+            "recommendations": "ranked moves including new placements, existing board anchors, premiums, and metrics",
+            "observations": "up to 200 text-only position observations; identical retries replace the latest entry"
+          }
+        }
+      }
+    ]
+  },
+  "files": [
+    {
+      "path": "scripts/crossplay_coach",
+      "layer": "code",
+      "data_kind": null,
+      "owned_by": "p-be5885a2",
+      "shared_with": [],
+      "provenance": "bundled",
+      "purpose": "Stable executable launcher that keeps app invocation inside OpenClaw exec-preflight constraints, including a harmless workspace cd prefix."
+    },
+    {
+      "path": "scripts/crossplay_coach.py",
+      "layer": "code",
+      "data_kind": null,
+      "owned_by": "p-be5885a2",
+      "shared_with": [],
+      "provenance": "bundled",
+      "purpose": "Dependency-free board parser, legal move generator, exact Crossplay scorer, strategic ranker, and compact game-state writer."
+    },
+    {
+      "path": "docs/crossplay-coach.md",
+      "layer": "behavior_doc",
+      "data_kind": null,
+      "owned_by": "p-be5885a2",
+      "shared_with": [],
+      "provenance": "bundled",
+      "purpose": "Operator and bot contract for screenshot transcription, tentative tiles, lexicon setup, invocation, output, and privacy."
+    },
+    {
+      "path": "AGENTS.md",
+      "layer": "behavior_doc",
+      "data_kind": null,
+      "owned_by": "p-be5885a2",
+      "shared_with": [],
+      "provenance": "forge",
+      "purpose": "Carries the evolve-managed Crossplay Coach section installed by the session instruction. The package owns only that marked section."
+    }
+  ],
+  "files_pack": {
+    "format_version": "1.0",
+    "files_count": 3,
+    "snapshot_source_pkg_version": "2026.09.11-1.7",
+    "sha256": "1d00fb2672a9367fffe939e3b72c8164770f9a138ee62d13ff67f4f041285033"
+  },
+  "install_job": null,
+  "improvement_history": [],
+  "identity": {
+    "purpose": "Make visual Crossplay positions reviewable without interacting with or modifying the game. Vision is limited to transcription; deterministic code owns legality, scoring, ranking, and retained state so recommendations are reproducible and auditable.",
+    "scope_includes": [
+      "Recognize the explicit xplay shortcut with an attached board screenshot",
+      "Transcribe a 15 by 15 committed board and complete effective rack",
+      "Distinguish ordinary tiles, 0-point blanks, and uncommitted green tentative tiles",
+      "Generate every legal move using an operator-supplied lexicon",
+      "Score Crossplay letter and word premiums plus the 40-point seven-tile Sweep",
+      "Return three to five strategically distinct recommendations with coordinates",
+      "Rank immediate score, rack leave, efficiency, and defensive premium exposure",
+      "Retain compact per-game JSON state without retaining screenshots",
+      "Audit every existing horizontal and vertical word before solving",
+      "Accept coordinate-word board input and deterministically merge matching intersections",
+      "Learn re-verified words already accepted on the board into a supplemental dictionary",
+      "Rank board control, parallel scoring, hooks, tile economy, and game phase rather than word length alone",
+      "Discount rack leave near bag exhaustion and ignore it at bag zero because leftover tiles are not deducted"
+    ],
+    "scope_excludes": [
+      "Opening, controlling, modifying, scraping, or automating the NYT Crossplay app",
+      "Obtaining or redistributing a restricted word list without permission",
+      "Claiming a development lexicon exactly matches NWL 2023",
+      "Inferring unreadable cells without asking the user",
+      "Guaranteeing deletion from an upstream messaging service's own retention",
+      "Automatically playing or submitting a recommended move",
+      "Using game screenshots for unrelated vision tasks",
+      "Board-blind word suggestions when screenshot transcription or solver invocation fails"
+    ],
+    "bot_interaction_pattern": "Reactive and user-initiated. A message beginning with xplay and carrying an image asks the bot vision model to list every existing word with its start coordinate and direction. Deterministic code merges intersections, audits the reconstructed board, generates and scores all legal plays, and ranks them. The bot uses its file-write tool for temporary JSON, invokes only direct CLI commands, relays the result, and removes the request. The app itself never reads an image or calls an LLM.",
+    "user": "A player reviewing an NYT Crossplay position for learning and strategic improvement."
+  },
+  "success_criteria": {
+    "observable_outcomes": [
+      "An empty-board screenshot transcribes to the exact symmetric 15 by 15 premium layout and seven-tile rack",
+      "A dense board preserves every committed letter and marks displayed 0-point board tiles as blanks",
+      "Green tentative tiles are excluded from the committed board and restored to the effective rack",
+      "Every recommendation is legal under the configured lexicon and has an exact reproducible score",
+      "The response names the word, A-O and 1-15 start coordinate, Across or Down direction, placed cells, score, leave, and strategic labels",
+      "Saved game files contain normalized text state and no image bytes or image paths",
+      "The same request and lexicon produce the same ranked recommendations",
+      "The yellow circled bag count is never described as a seconds timer",
+      "Recommendations explicitly identify existing board anchors and newly activated premiums",
+      "The supplied dense screenshot regression finds AGOUTIES through the existing A at H10 with U on the K10 triple-letter square",
+      "Vision supplies existing words as start coordinate plus direction; deterministic code merges intersections and rejects conflicts or edge overflow",
+      "The follow-up dense screenshot regression finds FACTIOUS at G10 Across for 56 using existing H10=A and K10=3L",
+      "Lowercase word text and list-form racks from weaker models are normalized without being mistaken for board blanks",
+      "Malformed vision geometry produces a visible audit REVIEW with a coordinate-specific correction instead of an exec failure",
+      "The extensionless launcher executes successfully even when a fallback model prepends a workspace cd",
+      "An unknown committed board word is recorded pending on its first sighting and admitted to the effective lexicon only after a second, different game re-verifies it, without modifying the base lexicon",
+      "Recommendations label parallel plays, hooks or extensions, two-letter utility, duplicate reduction, premium control, and judicious S or blank conservation",
+      "When the bag is empty, ranking ignores rack leave and prioritizes final-turn points because Crossplay does not deduct leftovers",
+      "High-value J, Q, X, and Z placements receive tactical credit on 2L or 3L squares and a small opportunity cost on ordinary squares",
+      "A board whose audit does not PASS yields no recommendations and a non-zero exit from solve unless the operator passes --force",
+      "A learned word can be listed with its status and removed with forget, and disappears from the effective lexicon once forgotten"
+    ],
+    "failure_signals": [
+      "A recommendation forms a cross-word absent from the configured lexicon",
+      "A board blank contributes letter points",
+      "A premium applies again to a committed tile",
+      "A green tentative tile is treated as committed",
+      "The bot proceeds despite an uncertain cell or rack tile",
+      "A screenshot or attachment path appears in crossplay-data",
+      "The CLI reports that no lexicon is configured",
+      "The bot treats the yellow bag count as a countdown or rushes transcription",
+      "The bot uses shell pipes, redirects, heredocs, or direct interpreter wrappers to invoke the app",
+      "After an invocation failure, the bot substitutes a board-blind anagram list",
+      "The bot hand-builds dot-padded board rows or writes request JSON through an inline Python or shell heredoc",
+      "A transcription audit error becomes an exec failure that hides its actionable coordinate from the bot",
+      "The app learns words from a board with disconnected groups, isolated tiles, or a missing center",
+      "solve returns ranked plays for a board its own audit reported as REVIEW",
+      "A single sighting of an unknown word admits it to the effective lexicon"
+    ],
+    "quality_bar": {
+      "minimum": "Correctly transcribe common screenshots, generate legal exact-scored plays, and return useful coordinate-based recommendations without storing images.",
+      "excellent": "Reliably handle crops, resized boards, committed blanks and tentative moves; preserve game history; and explain distinct score, equity, efficiency, and defensive options in under several seconds."
+    }
+  },
+  "build_spec": "# Crossplay Coach — Build Specification\n\n## Overview\n\nCrossplay Coach is a screenshot-to-advice app that never interacts with the NYT app. The bot's inherited vision model transcribes an attached screenshot into strict JSON. A bundled, dependency-free Python CLI then validates the transcription, generates every legal move against an operator-supplied word list, scores Crossplay premiums and the 40-point Sweep, ranks strategic trade-offs, and optionally stores compact game state.\n\n## Files\n\nThis package ships a deterministic files-pack; install the files verbatim and do not regenerate them:\n\n```\nscripts/crossplay_coach.py\ndocs/crossplay-coach.md\n```\n\nThe operator supplies `crossplay-data/lexicon.txt`; the package must not bundle or download a restricted lexicon.\n\n## Rules\n\n- Board is 15 by 15 with the premium layout embedded in the script and verified for both-axis symmetry and 56 premium cells.\n- Rack contains at most seven tiles; `?` is a blank.\n- Lowercase committed board letters are 0-point blanks assigned to that letter.\n- Letter values are Crossplay-specific, including B=4, G=4, J=10, K=6, L=2, U=2, V=6, and W=5.\n- Only newly placed tiles activate premiums. A premium applies independently to every word formed by that tile.\n- Using seven rack tiles adds 40 points.\n- First move covers H8. Later moves connect to the board and every cross-word must be in the configured lexicon.\n\n## Vision boundary\n\nThe script does not accept image paths. The bot follows `docs/crossplay-coach.md` to transcribe committed cells and the effective rack. Green-outlined tentative placements are excluded from the board and returned to the rack, except that any committed crossing tile remains. Uncertainty requires a user confirmation before solving.\n\n## Ranking\n\nReturn up to five strategically distinct plays. Preserve the leaders for immediate score, overall equity, per-tile efficiency, and defensive premium exposure, then fill by equity. Rack-leave heuristics value blanks and S tiles and penalize imbalance, duplication, and awkward Q leaves. These are transparent heuristics, not claims of perfect opponent-rack simulation.\n\n## Privacy\n\nThe app never receives, copies, stores, or transmits screenshots. Saved state contains normalized board/rack text only. The bot removes its temporary request after solving. Upstream channel retention is outside this app's control.\n\n## Test sequence\n\n```\npython3 -m py_compile scripts/crossplay_coach.py\npython3 scripts/crossplay_coach.py status\npython3 scripts/crossplay_coach.py self-test\n```\n\nAll commands exit zero on a fresh install; status explains how to configure a lexicon without requiring one.\n\n## Extraction and anchor reliability\n\nThe yellow circled number is remaining bag tiles, not seconds. Vision must ignore auto-caption coordinates, read horizontal and vertical runs in separate passes, construct rows from indexed cells, and run the audit command before solve. App CLI calls must be direct commands because Evolve correctly rejects pipes, redirection, heredocs, `cd &&`, and interpreter wrappers around app scripts. The solver exhaustively traverses existing board letters; output names every existing anchor and newly activated premium. The dense screenshot regression position must find AGOUTIES at H10 Across using the existing A and placing U on K10 3L for a 56-point Sweep. Never replace a failed solve with board-blind anagrams.\n\n## Coordinate-word transcription\n\nVision must use `board_words` rather than manually count dot-padded rows. Each item carries `word`, `position`, and `direction`; lowercase letters mark committed blanks. The parser merges matching intersections and rejects conflicts and edge overflow before move generation. The follow-up regression reconstructs the changed position from 16 visible words and finds FACTIOUS at G10 Across for 56, using existing H10=A and K10=3L.\n\n## Weak-model tolerance\n\n`board_words[].word` is case-insensitive; blanks are explicit coordinate entries in `blanks`, and `rack` accepts either a compact string or a list of tile strings. This prevents ordinary lowercase JSON from becoming phantom blank tiles. For malformed requests, `audit` prints an actionable coordinate-specific REVIEW and exits successfully so the orchestration model sees what to correct instead of receiving a generic exec failure. `solve` is fail-closed: when the audit does not report PASS it prints the same coordinate-specific REVIEW, emits no recommendations, and exits non-zero — under `--format json` the payload carries `\"refused\": true` and the audit object and never a recommendations array. An explicit `--force` overrides the refusal, warns on stderr naming every audit item it is overriding, and marks each returned move `\"unaudited\": true`. Enforcement is in the engine, not in the session instruction.\n\n## Guard-compatible launcher\n\nThe files-pack includes executable `scripts/crossplay_coach`, a fixed shell wrapper around the Python engine. Bot guidance invokes this launcher instead of placing `python3` in a compound shell command. OpenClaw therefore accepts both the exact command and the common fallback-model form with a harmless `cd <workspace> &&` prefix, while the wrapper keeps the executed Python target fixed.\n\n## Supplemental board-word learning\n\nWhen `audit` reports only dictionary-version differences, the bot re-inspects those committed cells and runs `scripts/crossplay_coach learn-board-words --request <path>`. The engine refuses structurally invalid boards, extracts only already-played board runs, and atomically records each one in `crossplay-data/learned-words.jsonl` — one JSON record per word carrying the game id, coordinate, direction and ISO timestamp of every sighting. **A sighting is not an admission.** A word enters the effective lexicon only once two DIFFERENT games have shown it on an otherwise clean-auditing board; until then it is stored `pending` and no audit or solve sees it, because one sighting is indistinguishable from a first-pass OCR error. A request that names no `game_id` counts the board itself, so re-running the same screenshot is never a second re-verification. `learned --list` shows both states and `forget <word>` removes a record, so a misread is reversible rather than a permanent widening of the dictionary the solver generates from. The pre-1.7 plain-text `crossplay-data/learned-words.txt` is still merged for one release and is migrated into the JSON-lines store on the first write, grandfathered as `source: \"legacy\"`. The base word list is never mutated or redistributed, and speculative rack words are never learned.\n\n## Strategy model\n\nRanking is contextual rather than longest-word-first. Exact score remains primary, while equity combines rack leave, score-gap-sensitive premium exposure, parallel cross-word value, duplicate relief, and J/Q/X/Z multiplier use. Blank and S opportunity costs are waived for a seven-tile sweep or a strong multi-cross parallel play. The ranker labels sweeps, parallel plays, hooks/extensions, two-letter utility, premium control, duplicate reduction, and retained blanks/S tiles. With seven or fewer bag tiles it discounts future rack value; at bag zero it ignores rack leave because Crossplay gives each player one final turn and does not deduct leftovers. These are weighted trade-offs, not rigid always/never rules.",
+  "example_triggers": [
+    "xplay",
+    "xplay game alice",
+    "xplay review this position",
+    "xplay what were my best alternatives?"
+  ],
+  "test_cases": [
+    {
+      "trigger": "xplay with an empty-board screenshot",
+      "expected": "Transcribe the empty committed board and full rack, run solve, and return three to five legal opening plays that all cross H8."
+    },
+    {
+      "trigger": "xplay with a dense board containing displayed 0-point tiles",
+      "expected": "Represent each 0-point committed board tile as lowercase, preserve its assigned letter for word validity, and score it as zero."
+    },
+    {
+      "trigger": "xplay with green tentative BIRTHER tiles and an S still in the tray",
+      "expected": "Analyze the pre-move position: omit green tiles from the committed board and reconstruct the complete effective rack from tentative plus tray tiles."
+    },
+    {
+      "trigger": "xplay with one ambiguous occupied square",
+      "expected": "Ask the user to confirm that coordinate before creating the request or invoking the solver."
+    },
+    {
+      "trigger": "xplay with the dense anchor-regression screenshot",
+      "expected": "Treat 31 as bag tiles, reconstruct all 15 existing words, audit the board, and recommend AGOUTIES at H10 Across for 56 using existing H10=A and K10=3L."
+    },
+    {
+      "trigger": "xplay with the coordinate-word follow-up screenshot",
+      "expected": "Write board_words rather than board rows, merge the 16 visible words, and recommend FACTIOUS at G10 Across for 56 using existing H10=A and K10=3L."
+    },
+    {
+      "trigger": "xplay under a weaker fallback model",
+      "expected": "Normalize lowercase words and a list-form rack; on conflicting geometry, audit returns REVIEW with the exact coordinate, the bot re-inspects or asks for that coordinate, and no manual plays are offered."
+    }
+  ],
+  "constraints": {
+    "privacy": [
+      "Never copy an image into the app workspace or retained game state",
+      "Retain only normalized board, rack, visible numeric state, and recommendations",
+      "Never transmit game state or a lexicon over the network"
+    ],
+    "safety": [
+      "Never interact with, modify, automate, or authenticate to the NYT app",
+      "Never silently guess an uncertain board cell, blank status, or rack tile",
+      "Never bundle or download a lexicon whose redistribution rights are not established"
+    ],
+    "boundaries": [
+      "Advice only; the app cannot submit moves",
+      "The configured lexicon is authoritative for generation but may differ from Crossplay's NWL 2023",
+      "Opponent modeling in version 1 is defensive board exposure, not hidden-rack certainty"
+    ],
+    "resource_limits": [
+      "Python standard library only",
+      "No network access",
+      "At most five recommendations per response"
+    ],
+    "behavioral": [
+      "Require the explicit xplay shortcut",
+      "Give conventional A-O, 1-15 coordinates and Across or Down orientation",
+      "Explain uncertainty instead of fabricating precision"
+    ]
+  },
+  "application_tags": [
+    "games",
+    "word-games",
+    "learning",
+    "image-analysis",
+    "personal-productivity",
+    "productivity"
+  ],
+  "scheduled_actions": [
+    {
+      "id": "crossplay-coach-session-guidance",
+      "mechanism": "oc_session_instruction",
+      "trigger": {
+        "kind": "session_start",
+        "schedule": "session_start",
+        "evidence_path": "AGENTS.md",
+        "evidence_locator": "## Crossplay Coach"
+      },
+      "state": "active",
+      "quality": "verified",
+      "safety_net_for": [],
+      "install": {
+        "file": "AGENTS.md",
+        "section_anchor": "## Crossplay Coach",
+        "body": "When a user sends an image with the explicit shortcut `xplay`, inspect the actual pixels and follow `docs/crossplay-coach.md` exactly. The yellow circled number is BAG TILES REMAINING, never seconds. Ignore automatic-caption word lists. Read the board twice: horizontal runs, then vertical runs/intersections. Create `crossplay-data/request.json` with your FILE-WRITE TOOL (never shell, inline Python, or heredoc). Use `board_words`, listing every visible word as `{word, position, direction}`; capitalization does not matter. For a displayed 0-point blank, add its coordinate to that item's `blanks` array. Do NOT hand-build 15 dot-padded rows. Green tentative tiles are not committed: return them to the effective rack. If needed, make temporary enlarged crops beside the source under its allowed `workspace/media/inbound/` directory, never `/tmp`, and delete them after transcription. Run `scripts/crossplay_coach audit --request crossplay-data/request.json`. The extensionless launcher is required; a workspace `cd ... &&` prefix is harmless, but do not use pipes, redirection, heredocs, or a direct Python invocation. If REVIEW reports malformed geometry, use the exact reported coordinate to correct the JSON and retry audit once. If the ONLY concerns are absent lexicon words, re-inspect those committed cells, run `scripts/crossplay_coach learn-board-words --request crossplay-data/request.json`, and audit again. A first sighting is recorded `pending` and does NOT clear the audit: say so, name the word, and STOP. Never learn rack guesses or learn from a structurally invalid board. If REVIEW remains, ask the user only about unresolved coordinates and STOP. Never inspect the script, run shell diagnostics, or substitute advice. Only after audit is structurally sound, run `scripts/crossplay_coach solve --request crossplay-data/request.json --save`. `solve` refuses a board whose audit did not PASS and exits non-zero; NEVER add `--force` on your own initiative — only after the user, told exactly which audit items would be overridden, asks you to. Relay only solver-generated legal plays, including coordinates, exact total score, `Uses board`, `Premiums`, and the solver labels explaining board control, parallel play, hooks, tile economy, or late-game value. Do not replace those contextual rankings with longest-word advice. Then delete the request with your file tool. If solve fails, report the failure and STOP. NEVER provide board-blind anagrams, manual scoring, or advice to place a word on an unspecified premium. Never copy the original image into app data, interact with NYT, or claim the lexicon exactly matches NWL 2023."
+      },
+      "inputs": [
+        {
+          "path": "incoming image attachment",
+          "kind": "message_attachment"
+        },
+        {
+          "path": "crossplay-data/lexicon.txt",
+          "kind": "data_file"
+        }
+      ],
+      "outputs": [
+        {
+          "path": "crossplay-data/games/<game-id>.json",
+          "kind": "data_file"
+        },
+        {
+          "kind": "session_message",
+          "channel": "primary"
+        }
+      ],
+      "summary": "Session guidance uses a guard-compatible launcher, bounded audit correction, twice-verified board-word learning, contextual strategy labels, explicit blank coordinates, engine-enforced fail-closed solving, and no image retention."
+    }
+  ],
+  "usage": {
+    "model": "user-initiated",
+    "trigger_recognition": {
+      "pattern": "An image-bearing user message that begins with the explicit shortcut xplay.",
+      "hint_words": [
+        "xplay",
+        "xplay game",
+        "xplay review"
+      ],
+      "requires_keyword": true
+    },
+    "auto_capture": {
+      "enabled": false,
+      "sources": []
+    },
+    "how_to_use": "Send `xplay` with a Crossplay screenshot. The bot lists visible words with coordinates and directions; deterministic code merges their intersections, audits the board, and returns up to five legal scored plays with exact placements, existing anchors, premiums, and strategic trade-offs. Add `game <name>` to retain compact text state. The yellow circled number is bag tiles, not time.",
+    "bot_voice_examples": [
+      "Best overall: HIVED at D8 Across for 38. Place H on D8 through D on H8; leave AG. It also avoids spending a blank or S.",
+      "I can read the rack, but H11 could be an ordinary A or a 0-point blank. Which is it?",
+      "The highest score is 52, while the 44-point alternative leaves a blank and reduces triple-word exposure. I would prefer the latter unless you need immediate points."
+    ]
+  },
+  "verification": [
+    {
+      "kind": "artifact",
+      "name": "solver_compiles",
+      "path": "scripts/crossplay_coach.py",
+      "checks": [
+        "exists",
+        "py_compiles"
+      ]
+    },
+    {
+      "kind": "artifact",
+      "name": "usage_contract_present",
+      "path": "docs/crossplay-coach.md",
+      "checks": [
+        "exists"
+      ]
+    },
+    {
+      "kind": "command",
+      "name": "cli_status",
+      "argv": [
+        "python3",
+        "scripts/crossplay_coach.py",
+        "status"
+      ],
+      "expected_exit": 0,
+      "stdout_regex": "^crossplay-coach: ",
+      "timeout_s": 30
+    },
+    {
+      "kind": "command",
+      "name": "engine_self_test",
+      "argv": [
+        "python3",
+        "scripts/crossplay_coach.py",
+        "self-test"
+      ],
+      "expected_exit": 0,
+      "stdout_regex": "self-test PASS$",
+      "timeout_s": 30
+    },
+    {
+      "kind": "artifact",
+      "name": "saved_games_valid_if_present",
+      "path": "crossplay-data/games/*.json",
+      "checks": [
+        "json_valid"
+      ]
+    }
+  ],
+  "disabled_tags": [
+    "automation",
+    "social"
+  ]
+}

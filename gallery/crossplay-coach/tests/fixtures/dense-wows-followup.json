@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "game_id": "wows-followup",
+  "board_words": [
+    {"word": "VARY", "position": "L1", "direction": "down"},
+    {"word": "AL", "position": "A2", "direction": "across"},
+    {"word": "YEZ", "position": "G2", "direction": "across"},
+    {"word": "DIVULGE", "position": "A3", "direction": "across", "blanks": ["E3"]},
+    {"word": "JO", "position": "A4", "direction": "across"},
+    {"word": "THEORY", "position": "G4", "direction": "across"},
+    {"word": "ADJOINED", "position": "A2", "direction": "down"},
+    {"word": "LION", "position": "B2", "direction": "down"},
+    {"word": "YETI", "position": "G2", "direction": "down"},
+    {"word": "GIE", "position": "F5", "direction": "across"},
+    {"word": "TRACKERS", "position": "D5", "direction": "down"},
+    {"word": "MOUTHS", "position": "J3", "direction": "down"},
+    {"word": "CORBIES", "position": "D8", "direction": "across"},
+    {"word": "NIQABS", "position": "H7", "direction": "down"},
+    {"word": "AXES", "position": "A12", "direction": "across"},
+    {"word": "OXEN", "position": "B11", "direction": "down"},
+    {"word": "FACTIOUS", "position": "G10", "direction": "across"},
+    {"word": "WOWS", "position": "N7", "direction": "down"}
+  ],
+  "rack": "IDOLLTH",
+  "bag_count": 15,
+  "scores": {
+    "you": 299,
+    "opponent": 321
+  }
+}

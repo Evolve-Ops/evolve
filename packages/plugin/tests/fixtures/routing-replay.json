@@ -1,0 +1,4543 @@
+{
+  "_comment": "Replay corpus for the routing rule (D-OH2). Fourteen days of one bot's turns in the shape TurnObserver.writeTurnToShared writes: source, channel, model, tokens. The rule is replayed over these and its decision compared against the rung the model that ACTUALLY answered belongs to. Placeholder bot per docs/PLACEHOLDER_NAMING.md.",
+  "botId": "team-bot-a",
+  "windowDays": 14,
+  "primaryRole": "standard",
+  "models": {
+    "rungs": [
+      {
+        "id": "haiku-class",
+        "models": [
+          "anthropic/claude-haiku-4-5"
+        ],
+        "costClass": "low"
+      },
+      {
+        "id": "sonnet-class",
+        "models": [
+          "anthropic/claude-sonnet-4-6"
+        ],
+        "costClass": "medium"
+      },
+      {
+        "id": "opus-class",
+        "models": [
+          "anthropic/claude-opus-4-8"
+        ],
+        "costClass": "high"
+      }
+    ],
+    "roles": {
+      "fast": "haiku-class",
+      "standard": "sonnet-class",
+      "power": "opus-class"
+    },
+    "routing": {
+      "enabled": true,
+      "maintenanceRole": "fast",
+      "backgroundRole": "fast"
+    }
+  },
+  "turns": [
+    {
+      "ts": "2026-08-25T07:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 16585,
+      "output_tokens": 233
+    },
+    {
+      "ts": "2026-08-25T07:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 28920,
+      "output_tokens": 253
+    },
+    {
+      "ts": "2026-08-25T08:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 18222,
+      "output_tokens": 489
+    },
+    {
+      "ts": "2026-08-25T09:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 18865,
+      "output_tokens": 889
+    },
+    {
+      "ts": "2026-08-25T10:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 35272,
+      "output_tokens": 167
+    },
+    {
+      "ts": "2026-08-25T10:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 17306,
+      "output_tokens": 209
+    },
+    {
+      "ts": "2026-08-25T11:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 25002,
+      "output_tokens": 573
+    },
+    {
+      "ts": "2026-08-25T12:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 20795,
+      "output_tokens": 621
+    },
+    {
+      "ts": "2026-08-25T13:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 26448,
+      "output_tokens": 54
+    },
+    {
+      "ts": "2026-08-25T13:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 17646,
+      "output_tokens": 421
+    },
+    {
+      "ts": "2026-08-25T14:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 5620,
+      "output_tokens": 163
+    },
+    {
+      "ts": "2026-08-25T15:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 4217,
+      "output_tokens": 101
+    },
+    {
+      "ts": "2026-08-25T16:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 2409,
+      "output_tokens": 221
+    },
+    {
+      "ts": "2026-08-25T16:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 9001,
+      "output_tokens": 445
+    },
+    {
+      "ts": "2026-08-25T17:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 26619,
+      "output_tokens": 157
+    },
+    {
+      "ts": "2026-08-25T18:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 3969,
+      "output_tokens": 645
+    },
+    {
+      "ts": "2026-08-25T19:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 18962,
+      "output_tokens": 849
+    },
+    {
+      "ts": "2026-08-25T19:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 8113,
+      "output_tokens": 610
+    },
+    {
+      "ts": "2026-08-25T20:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 8648,
+      "output_tokens": 259
+    },
+    {
+      "ts": "2026-08-25T21:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 24064,
+      "output_tokens": 792
+    },
+    {
+      "ts": "2026-08-25T06:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 12514,
+      "output_tokens": 265
+    },
+    {
+      "ts": "2026-08-25T09:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 23124,
+      "output_tokens": 87
+    },
+    {
+      "ts": "2026-08-25T15:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 36962,
+      "output_tokens": 542
+    },
+    {
+      "ts": "2026-08-25T21:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 20253,
+      "output_tokens": 139
+    },
+    {
+      "ts": "2026-08-25T11:20:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "subagent",
+      "channel": "subagent",
+      "input_tokens": 20953,
+      "output_tokens": 489
+    },
+    {
+      "ts": "2026-08-25T12:20:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "subagent",
+      "channel": "subagent",
+      "input_tokens": 28502,
+      "output_tokens": 221
+    },
+    {
+      "ts": "2026-08-25T08:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 16740,
+      "output_tokens": 263
+    },
+    {
+      "ts": "2026-08-25T10:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 22621,
+      "output_tokens": 44
+    },
+    {
+      "ts": "2026-08-25T12:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 37137,
+      "output_tokens": 316
+    },
+    {
+      "ts": "2026-08-25T14:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 36583,
+      "output_tokens": 396
+    },
+    {
+      "ts": "2026-08-25T16:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 35795,
+      "output_tokens": 155
+    },
+    {
+      "ts": "2026-08-25T18:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 26238,
+      "output_tokens": 407
+    },
+    {
+      "ts": "2026-08-26T07:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 8042,
+      "output_tokens": 721
+    },
+    {
+      "ts": "2026-08-26T07:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 7848,
+      "output_tokens": 47
+    },
+    {
+      "ts": "2026-08-26T08:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 31152,
+      "output_tokens": 106
+    },
+    {
+      "ts": "2026-08-26T09:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 34664,
+      "output_tokens": 347
+    },
+    {
+      "ts": "2026-08-26T10:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 39919,
+      "output_tokens": 227
+    },
+    {
+      "ts": "2026-08-26T10:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 12307,
+      "output_tokens": 161
+    },
+    {
+      "ts": "2026-08-26T11:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 12318,
+      "output_tokens": 576
+    },
+    {
+      "ts": "2026-08-26T12:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 24300,
+      "output_tokens": 602
+    },
+    {
+      "ts": "2026-08-26T13:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 4180,
+      "output_tokens": 764
+    },
+    {
+      "ts": "2026-08-26T13:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 3570,
+      "output_tokens": 659
+    },
+    {
+      "ts": "2026-08-26T14:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 8811,
+      "output_tokens": 504
+    },
+    {
+      "ts": "2026-08-26T15:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 10969,
+      "output_tokens": 686
+    },
+    {
+      "ts": "2026-08-26T16:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 15511,
+      "output_tokens": 874
+    },
+    {
+      "ts": "2026-08-26T16:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 22691,
+      "output_tokens": 882
+    },
+    {
+      "ts": "2026-08-26T17:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 36135,
+      "output_tokens": 368
+    },
+    {
+      "ts": "2026-08-26T18:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 12438,
+      "output_tokens": 120
+    },
+    {
+      "ts": "2026-08-26T19:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 31895,
+      "output_tokens": 333
+    },
+    {
+      "ts": "2026-08-26T19:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 24838,
+      "output_tokens": 646
+    },
+    {
+      "ts": "2026-08-26T20:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 19792,
+      "output_tokens": 88
+    },
+    {
+      "ts": "2026-08-26T21:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 25194,
+      "output_tokens": 696
+    },
+    {
+      "ts": "2026-08-26T06:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 19658,
+      "output_tokens": 476
+    },
+    {
+      "ts": "2026-08-26T09:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 2918,
+      "output_tokens": 544
+    },
+    {
+      "ts": "2026-08-26T15:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 26023,
+      "output_tokens": 630
+    },
+    {
+      "ts": "2026-08-26T21:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 7617,
+      "output_tokens": 168
+    },
+    {
+      "ts": "2026-08-26T11:20:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "subagent",
+      "channel": "subagent",
+      "input_tokens": 24826,
+      "output_tokens": 407
+    },
+    {
+      "ts": "2026-08-26T12:20:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "subagent",
+      "channel": "subagent",
+      "input_tokens": 19341,
+      "output_tokens": 656
+    },
+    {
+      "ts": "2026-08-26T08:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 8137,
+      "output_tokens": 298
+    },
+    {
+      "ts": "2026-08-26T10:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 29869,
+      "output_tokens": 672
+    },
+    {
+      "ts": "2026-08-26T12:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 34652,
+      "output_tokens": 759
+    },
+    {
+      "ts": "2026-08-26T14:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 2326,
+      "output_tokens": 641
+    },
+    {
+      "ts": "2026-08-26T16:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 14437,
+      "output_tokens": 885
+    },
+    {
+      "ts": "2026-08-26T18:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 19186,
+      "output_tokens": 598
+    },
+    {
+      "ts": "2026-08-27T07:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 7289,
+      "output_tokens": 41
+    },
+    {
+      "ts": "2026-08-27T07:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 27151,
+      "output_tokens": 67
+    },
+    {
+      "ts": "2026-08-27T08:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 12935,
+      "output_tokens": 385
+    },
+    {
+      "ts": "2026-08-27T09:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 8738,
+      "output_tokens": 692
+    },
+    {
+      "ts": "2026-08-27T10:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 21421,
+      "output_tokens": 694
+    },
+    {
+      "ts": "2026-08-27T10:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 36249,
+      "output_tokens": 670
+    },
+    {
+      "ts": "2026-08-27T11:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 4497,
+      "output_tokens": 754
+    },
+    {
+      "ts": "2026-08-27T12:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 38412,
+      "output_tokens": 859
+    },
+    {
+      "ts": "2026-08-27T13:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 37531,
+      "output_tokens": 877
+    },
+    {
+      "ts": "2026-08-27T13:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 6577,
+      "output_tokens": 754
+    },
+    {
+      "ts": "2026-08-27T14:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 5986,
+      "output_tokens": 58
+    },
+    {
+      "ts": "2026-08-27T15:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 23062,
+      "output_tokens": 76
+    },
+    {
+      "ts": "2026-08-27T16:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 27142,
+      "output_tokens": 787
+    },
+    {
+      "ts": "2026-08-27T16:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 17249,
+      "output_tokens": 540
+    },
+    {
+      "ts": "2026-08-27T17:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 38123,
+      "output_tokens": 351
+    },
+    {
+      "ts": "2026-08-27T18:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 21000,
+      "output_tokens": 636
+    },
+    {
+      "ts": "2026-08-27T19:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 17466,
+      "output_tokens": 601
+    },
+    {
+      "ts": "2026-08-27T19:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 33710,
+      "output_tokens": 450
+    },
+    {
+      "ts": "2026-08-27T20:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 34523,
+      "output_tokens": 477
+    },
+    {
+      "ts": "2026-08-27T21:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 10753,
+      "output_tokens": 794
+    },
+    {
+      "ts": "2026-08-27T06:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 26435,
+      "output_tokens": 192
+    },
+    {
+      "ts": "2026-08-27T09:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 13659,
+      "output_tokens": 601
+    },
+    {
+      "ts": "2026-08-27T15:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 30466,
+      "output_tokens": 549
+    },
+    {
+      "ts": "2026-08-27T21:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 21273,
+      "output_tokens": 788
+    },
+    {
+      "ts": "2026-08-27T11:20:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "subagent",
+      "channel": "subagent",
+      "input_tokens": 25264,
+      "output_tokens": 747
+    },
+    {
+      "ts": "2026-08-27T12:20:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "subagent",
+      "channel": "subagent",
+      "input_tokens": 13309,
+      "output_tokens": 841
+    },
+    {
+      "ts": "2026-08-27T08:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 11297,
+      "output_tokens": 476
+    },
+    {
+      "ts": "2026-08-27T10:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 12847,
+      "output_tokens": 633
+    },
+    {
+      "ts": "2026-08-27T12:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 38888,
+      "output_tokens": 780
+    },
+    {
+      "ts": "2026-08-27T14:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 9399,
+      "output_tokens": 525
+    },
+    {
+      "ts": "2026-08-27T16:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 7127,
+      "output_tokens": 109
+    },
+    {
+      "ts": "2026-08-27T18:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 37937,
+      "output_tokens": 559
+    },
+    {
+      "ts": "2026-08-28T07:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 29278,
+      "output_tokens": 811
+    },
+    {
+      "ts": "2026-08-28T07:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 18963,
+      "output_tokens": 391
+    },
+    {
+      "ts": "2026-08-28T08:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 29848,
+      "output_tokens": 790
+    },
+    {
+      "ts": "2026-08-28T09:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 39236,
+      "output_tokens": 346
+    },
+    {
+      "ts": "2026-08-28T10:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 5597,
+      "output_tokens": 548
+    },
+    {
+      "ts": "2026-08-28T10:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 33278,
+      "output_tokens": 339
+    },
+    {
+      "ts": "2026-08-28T11:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 31075,
+      "output_tokens": 836
+    },
+    {
+      "ts": "2026-08-28T12:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 32353,
+      "output_tokens": 362
+    },
+    {
+      "ts": "2026-08-28T13:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 33629,
+      "output_tokens": 708
+    },
+    {
+      "ts": "2026-08-28T13:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 38440,
+      "output_tokens": 844
+    },
+    {
+      "ts": "2026-08-28T14:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 14206,
+      "output_tokens": 213
+    },
+    {
+      "ts": "2026-08-28T15:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 24375,
+      "output_tokens": 414
+    },
+    {
+      "ts": "2026-08-28T16:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 31608,
+      "output_tokens": 640
+    },
+    {
+      "ts": "2026-08-28T16:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 24530,
+      "output_tokens": 388
+    },
+    {
+      "ts": "2026-08-28T17:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 6667,
+      "output_tokens": 721
+    },
+    {
+      "ts": "2026-08-28T18:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 35052,
+      "output_tokens": 212
+    },
+    {
+      "ts": "2026-08-28T19:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 6277,
+      "output_tokens": 267
+    },
+    {
+      "ts": "2026-08-28T19:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 30507,
+      "output_tokens": 695
+    },
+    {
+      "ts": "2026-08-28T20:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 19537,
+      "output_tokens": 868
+    },
+    {
+      "ts": "2026-08-28T21:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 27382,
+      "output_tokens": 237
+    },
+    {
+      "ts": "2026-08-28T06:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 30978,
+      "output_tokens": 451
+    },
+    {
+      "ts": "2026-08-28T09:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 15113,
+      "output_tokens": 266
+    },
+    {
+      "ts": "2026-08-28T15:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 21023,
+      "output_tokens": 72
+    },
+    {
+      "ts": "2026-08-28T21:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 26863,
+      "output_tokens": 218
+    },
+    {
+      "ts": "2026-08-28T11:20:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "subagent",
+      "channel": "subagent",
+      "input_tokens": 9136,
+      "output_tokens": 891
+    },
+    {
+      "ts": "2026-08-28T12:20:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "subagent",
+      "channel": "subagent",
+      "input_tokens": 31033,
+      "output_tokens": 718
+    },
+    {
+      "ts": "2026-08-28T08:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 35435,
+      "output_tokens": 648
+    },
+    {
+      "ts": "2026-08-28T10:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 8102,
+      "output_tokens": 662
+    },
+    {
+      "ts": "2026-08-28T12:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 34670,
+      "output_tokens": 114
+    },
+    {
+      "ts": "2026-08-28T14:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 20498,
+      "output_tokens": 456
+    },
+    {
+      "ts": "2026-08-28T16:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 22717,
+      "output_tokens": 882
+    },
+    {
+      "ts": "2026-08-28T18:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 22421,
+      "output_tokens": 731
+    },
+    {
+      "ts": "2026-08-28T16:40:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-opus-4-8",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 12133,
+      "output_tokens": 121
+    },
+    {
+      "ts": "2026-08-29T07:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 33669,
+      "output_tokens": 893
+    },
+    {
+      "ts": "2026-08-29T07:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 34979,
+      "output_tokens": 335
+    },
+    {
+      "ts": "2026-08-29T08:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 34170,
+      "output_tokens": 624
+    },
+    {
+      "ts": "2026-08-29T09:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 6830,
+      "output_tokens": 594
+    },
+    {
+      "ts": "2026-08-29T10:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 14879,
+      "output_tokens": 409
+    },
+    {
+      "ts": "2026-08-29T10:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 16532,
+      "output_tokens": 403
+    },
+    {
+      "ts": "2026-08-29T11:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 23040,
+      "output_tokens": 772
+    },
+    {
+      "ts": "2026-08-29T12:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 23485,
+      "output_tokens": 813
+    },
+    {
+      "ts": "2026-08-29T13:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 37826,
+      "output_tokens": 714
+    },
+    {
+      "ts": "2026-08-29T13:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 10692,
+      "output_tokens": 428
+    },
+    {
+      "ts": "2026-08-29T14:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 21883,
+      "output_tokens": 138
+    },
+    {
+      "ts": "2026-08-29T15:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 19260,
+      "output_tokens": 671
+    },
+    {
+      "ts": "2026-08-29T16:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 15670,
+      "output_tokens": 492
+    },
+    {
+      "ts": "2026-08-29T16:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 4336,
+      "output_tokens": 355
+    },
+    {
+      "ts": "2026-08-29T17:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 23155,
+      "output_tokens": 216
+    },
+    {
+      "ts": "2026-08-29T18:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 5936,
+      "output_tokens": 858
+    },
+    {
+      "ts": "2026-08-29T19:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 8165,
+      "output_tokens": 846
+    },
+    {
+      "ts": "2026-08-29T19:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 19462,
+      "output_tokens": 803
+    },
+    {
+      "ts": "2026-08-29T20:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 16625,
+      "output_tokens": 348
+    },
+    {
+      "ts": "2026-08-29T21:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 38301,
+      "output_tokens": 586
+    },
+    {
+      "ts": "2026-08-29T06:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 25218,
+      "output_tokens": 580
+    },
+    {
+      "ts": "2026-08-29T09:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 17393,
+      "output_tokens": 217
+    },
+    {
+      "ts": "2026-08-29T15:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 23547,
+      "output_tokens": 647
+    },
+    {
+      "ts": "2026-08-29T21:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 4290,
+      "output_tokens": 202
+    },
+    {
+      "ts": "2026-08-29T11:20:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "subagent",
+      "channel": "subagent",
+      "input_tokens": 10219,
+      "output_tokens": 60
+    },
+    {
+      "ts": "2026-08-29T12:20:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "subagent",
+      "channel": "subagent",
+      "input_tokens": 36652,
+      "output_tokens": 556
+    },
+    {
+      "ts": "2026-08-29T08:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 23501,
+      "output_tokens": 156
+    },
+    {
+      "ts": "2026-08-29T10:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 3017,
+      "output_tokens": 364
+    },
+    {
+      "ts": "2026-08-29T12:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 19074,
+      "output_tokens": 810
+    },
+    {
+      "ts": "2026-08-29T14:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 19909,
+      "output_tokens": 135
+    },
+    {
+      "ts": "2026-08-29T16:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 32363,
+      "output_tokens": 885
+    },
+    {
+      "ts": "2026-08-29T18:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 31916,
+      "output_tokens": 42
+    },
+    {
+      "ts": "2026-08-30T07:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 35861,
+      "output_tokens": 581
+    },
+    {
+      "ts": "2026-08-30T07:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 30571,
+      "output_tokens": 114
+    },
+    {
+      "ts": "2026-08-30T08:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 13867,
+      "output_tokens": 782
+    },
+    {
+      "ts": "2026-08-30T09:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 34195,
+      "output_tokens": 664
+    },
+    {
+      "ts": "2026-08-30T10:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 39989,
+      "output_tokens": 820
+    },
+    {
+      "ts": "2026-08-30T10:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 33039,
+      "output_tokens": 617
+    },
+    {
+      "ts": "2026-08-30T11:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 33830,
+      "output_tokens": 474
+    },
+    {
+      "ts": "2026-08-30T12:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 15785,
+      "output_tokens": 837
+    },
+    {
+      "ts": "2026-08-30T13:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 34615,
+      "output_tokens": 113
+    },
+    {
+      "ts": "2026-08-30T13:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 16208,
+      "output_tokens": 538
+    },
+    {
+      "ts": "2026-08-30T14:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 11019,
+      "output_tokens": 782
+    },
+    {
+      "ts": "2026-08-30T15:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 39969,
+      "output_tokens": 535
+    },
+    {
+      "ts": "2026-08-30T16:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 5283,
+      "output_tokens": 890
+    },
+    {
+      "ts": "2026-08-30T16:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 21285,
+      "output_tokens": 480
+    },
+    {
+      "ts": "2026-08-30T17:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 19153,
+      "output_tokens": 309
+    },
+    {
+      "ts": "2026-08-30T18:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 16097,
+      "output_tokens": 175
+    },
+    {
+      "ts": "2026-08-30T19:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 3978,
+      "output_tokens": 426
+    },
+    {
+      "ts": "2026-08-30T19:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 21893,
+      "output_tokens": 348
+    },
+    {
+      "ts": "2026-08-30T20:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 34061,
+      "output_tokens": 312
+    },
+    {
+      "ts": "2026-08-30T21:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 26081,
+      "output_tokens": 736
+    },
+    {
+      "ts": "2026-08-30T06:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 8608,
+      "output_tokens": 575
+    },
+    {
+      "ts": "2026-08-30T09:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 19637,
+      "output_tokens": 243
+    },
+    {
+      "ts": "2026-08-30T15:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 39883,
+      "output_tokens": 476
+    },
+    {
+      "ts": "2026-08-30T21:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 7599,
+      "output_tokens": 648
+    },
+    {
+      "ts": "2026-08-30T11:20:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "subagent",
+      "channel": "subagent",
+      "input_tokens": 17811,
+      "output_tokens": 271
+    },
+    {
+      "ts": "2026-08-30T12:20:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "subagent",
+      "channel": "subagent",
+      "input_tokens": 6846,
+      "output_tokens": 494
+    },
+    {
+      "ts": "2026-08-30T08:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 4276,
+      "output_tokens": 737
+    },
+    {
+      "ts": "2026-08-30T10:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 28536,
+      "output_tokens": 570
+    },
+    {
+      "ts": "2026-08-30T12:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 38949,
+      "output_tokens": 861
+    },
+    {
+      "ts": "2026-08-30T14:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 19419,
+      "output_tokens": 614
+    },
+    {
+      "ts": "2026-08-30T16:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 28293,
+      "output_tokens": 449
+    },
+    {
+      "ts": "2026-08-30T18:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 13469,
+      "output_tokens": 254
+    },
+    {
+      "ts": "2026-08-31T07:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 32162,
+      "output_tokens": 459
+    },
+    {
+      "ts": "2026-08-31T07:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 6429,
+      "output_tokens": 852
+    },
+    {
+      "ts": "2026-08-31T08:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 15324,
+      "output_tokens": 537
+    },
+    {
+      "ts": "2026-08-31T09:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 12825,
+      "output_tokens": 311
+    },
+    {
+      "ts": "2026-08-31T10:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 6760,
+      "output_tokens": 258
+    },
+    {
+      "ts": "2026-08-31T10:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 5296,
+      "output_tokens": 382
+    },
+    {
+      "ts": "2026-08-31T11:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 37275,
+      "output_tokens": 527
+    },
+    {
+      "ts": "2026-08-31T12:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 30265,
+      "output_tokens": 732
+    },
+    {
+      "ts": "2026-08-31T13:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 26059,
+      "output_tokens": 417
+    },
+    {
+      "ts": "2026-08-31T13:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 39790,
+      "output_tokens": 692
+    },
+    {
+      "ts": "2026-08-31T14:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 24324,
+      "output_tokens": 269
+    },
+    {
+      "ts": "2026-08-31T15:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 21273,
+      "output_tokens": 750
+    },
+    {
+      "ts": "2026-08-31T16:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 33791,
+      "output_tokens": 717
+    },
+    {
+      "ts": "2026-08-31T16:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 2904,
+      "output_tokens": 657
+    },
+    {
+      "ts": "2026-08-31T17:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 39731,
+      "output_tokens": 569
+    },
+    {
+      "ts": "2026-08-31T18:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 24949,
+      "output_tokens": 609
+    },
+    {
+      "ts": "2026-08-31T19:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 2110,
+      "output_tokens": 888
+    },
+    {
+      "ts": "2026-08-31T19:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 13135,
+      "output_tokens": 320
+    },
+    {
+      "ts": "2026-08-31T20:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 34117,
+      "output_tokens": 866
+    },
+    {
+      "ts": "2026-08-31T21:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 24403,
+      "output_tokens": 66
+    },
+    {
+      "ts": "2026-08-31T06:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 29236,
+      "output_tokens": 810
+    },
+    {
+      "ts": "2026-08-31T09:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 21038,
+      "output_tokens": 387
+    },
+    {
+      "ts": "2026-08-31T15:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 3901,
+      "output_tokens": 403
+    },
+    {
+      "ts": "2026-08-31T21:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 29013,
+      "output_tokens": 204
+    },
+    {
+      "ts": "2026-08-31T11:20:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "subagent",
+      "channel": "subagent",
+      "input_tokens": 18808,
+      "output_tokens": 496
+    },
+    {
+      "ts": "2026-08-31T12:20:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "subagent",
+      "channel": "subagent",
+      "input_tokens": 25813,
+      "output_tokens": 760
+    },
+    {
+      "ts": "2026-08-31T08:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 17233,
+      "output_tokens": 748
+    },
+    {
+      "ts": "2026-08-31T10:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 32810,
+      "output_tokens": 332
+    },
+    {
+      "ts": "2026-08-31T12:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 7768,
+      "output_tokens": 686
+    },
+    {
+      "ts": "2026-08-31T14:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 26131,
+      "output_tokens": 204
+    },
+    {
+      "ts": "2026-08-31T16:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 11442,
+      "output_tokens": 174
+    },
+    {
+      "ts": "2026-08-31T18:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 35972,
+      "output_tokens": 173
+    },
+    {
+      "ts": "2026-09-01T07:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 12750,
+      "output_tokens": 345
+    },
+    {
+      "ts": "2026-09-01T07:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 7163,
+      "output_tokens": 320
+    },
+    {
+      "ts": "2026-09-01T08:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 18738,
+      "output_tokens": 573
+    },
+    {
+      "ts": "2026-09-01T09:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 16313,
+      "output_tokens": 241
+    },
+    {
+      "ts": "2026-09-01T10:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 16690,
+      "output_tokens": 754
+    },
+    {
+      "ts": "2026-09-01T10:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 10024,
+      "output_tokens": 56
+    },
+    {
+      "ts": "2026-09-01T11:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 37943,
+      "output_tokens": 567
+    },
+    {
+      "ts": "2026-09-01T12:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 16742,
+      "output_tokens": 807
+    },
+    {
+      "ts": "2026-09-01T13:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 33794,
+      "output_tokens": 749
+    },
+    {
+      "ts": "2026-09-01T13:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 37797,
+      "output_tokens": 224
+    },
+    {
+      "ts": "2026-09-01T14:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 27978,
+      "output_tokens": 798
+    },
+    {
+      "ts": "2026-09-01T15:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 5117,
+      "output_tokens": 614
+    },
+    {
+      "ts": "2026-09-01T16:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 31163,
+      "output_tokens": 383
+    },
+    {
+      "ts": "2026-09-01T16:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 2197,
+      "output_tokens": 460
+    },
+    {
+      "ts": "2026-09-01T17:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 39470,
+      "output_tokens": 424
+    },
+    {
+      "ts": "2026-09-01T18:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 9314,
+      "output_tokens": 75
+    },
+    {
+      "ts": "2026-09-01T19:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 2606,
+      "output_tokens": 339
+    },
+    {
+      "ts": "2026-09-01T19:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 32710,
+      "output_tokens": 709
+    },
+    {
+      "ts": "2026-09-01T20:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 30710,
+      "output_tokens": 232
+    },
+    {
+      "ts": "2026-09-01T21:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 13474,
+      "output_tokens": 436
+    },
+    {
+      "ts": "2026-09-01T06:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 12497,
+      "output_tokens": 608
+    },
+    {
+      "ts": "2026-09-01T09:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 24684,
+      "output_tokens": 216
+    },
+    {
+      "ts": "2026-09-01T15:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 7723,
+      "output_tokens": 138
+    },
+    {
+      "ts": "2026-09-01T21:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 6612,
+      "output_tokens": 852
+    },
+    {
+      "ts": "2026-09-01T11:20:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "subagent",
+      "channel": "subagent",
+      "input_tokens": 2259,
+      "output_tokens": 58
+    },
+    {
+      "ts": "2026-09-01T12:20:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "subagent",
+      "channel": "subagent",
+      "input_tokens": 18025,
+      "output_tokens": 711
+    },
+    {
+      "ts": "2026-09-01T08:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 8017,
+      "output_tokens": 861
+    },
+    {
+      "ts": "2026-09-01T10:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 19402,
+      "output_tokens": 492
+    },
+    {
+      "ts": "2026-09-01T12:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 13533,
+      "output_tokens": 851
+    },
+    {
+      "ts": "2026-09-01T14:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 38707,
+      "output_tokens": 772
+    },
+    {
+      "ts": "2026-09-01T16:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 26936,
+      "output_tokens": 78
+    },
+    {
+      "ts": "2026-09-01T18:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 35162,
+      "output_tokens": 626
+    },
+    {
+      "ts": "2026-09-02T07:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 4267,
+      "output_tokens": 327
+    },
+    {
+      "ts": "2026-09-02T07:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 6244,
+      "output_tokens": 128
+    },
+    {
+      "ts": "2026-09-02T08:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 15217,
+      "output_tokens": 84
+    },
+    {
+      "ts": "2026-09-02T09:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 35599,
+      "output_tokens": 315
+    },
+    {
+      "ts": "2026-09-02T10:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 5150,
+      "output_tokens": 237
+    },
+    {
+      "ts": "2026-09-02T10:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 34086,
+      "output_tokens": 884
+    },
+    {
+      "ts": "2026-09-02T11:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 19211,
+      "output_tokens": 823
+    },
+    {
+      "ts": "2026-09-02T12:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 34622,
+      "output_tokens": 82
+    },
+    {
+      "ts": "2026-09-02T13:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 15601,
+      "output_tokens": 40
+    },
+    {
+      "ts": "2026-09-02T13:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 10780,
+      "output_tokens": 262
+    },
+    {
+      "ts": "2026-09-02T14:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 19485,
+      "output_tokens": 411
+    },
+    {
+      "ts": "2026-09-02T15:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 13700,
+      "output_tokens": 853
+    },
+    {
+      "ts": "2026-09-02T16:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 22249,
+      "output_tokens": 170
+    },
+    {
+      "ts": "2026-09-02T16:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 13483,
+      "output_tokens": 558
+    },
+    {
+      "ts": "2026-09-02T17:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 19128,
+      "output_tokens": 57
+    },
+    {
+      "ts": "2026-09-02T18:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 13254,
+      "output_tokens": 884
+    },
+    {
+      "ts": "2026-09-02T19:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 33666,
+      "output_tokens": 455
+    },
+    {
+      "ts": "2026-09-02T19:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 22426,
+      "output_tokens": 137
+    },
+    {
+      "ts": "2026-09-02T20:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 27291,
+      "output_tokens": 150
+    },
+    {
+      "ts": "2026-09-02T21:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 37199,
+      "output_tokens": 47
+    },
+    {
+      "ts": "2026-09-02T06:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 10501,
+      "output_tokens": 473
+    },
+    {
+      "ts": "2026-09-02T09:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 6799,
+      "output_tokens": 636
+    },
+    {
+      "ts": "2026-09-02T15:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 38012,
+      "output_tokens": 756
+    },
+    {
+      "ts": "2026-09-02T21:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 11133,
+      "output_tokens": 489
+    },
+    {
+      "ts": "2026-09-02T11:20:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "subagent",
+      "channel": "subagent",
+      "input_tokens": 24007,
+      "output_tokens": 434
+    },
+    {
+      "ts": "2026-09-02T12:20:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "subagent",
+      "channel": "subagent",
+      "input_tokens": 10217,
+      "output_tokens": 393
+    },
+    {
+      "ts": "2026-09-02T08:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 25804,
+      "output_tokens": 533
+    },
+    {
+      "ts": "2026-09-02T10:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 25849,
+      "output_tokens": 203
+    },
+    {
+      "ts": "2026-09-02T12:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 11267,
+      "output_tokens": 823
+    },
+    {
+      "ts": "2026-09-02T14:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 30121,
+      "output_tokens": 251
+    },
+    {
+      "ts": "2026-09-02T16:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 4852,
+      "output_tokens": 426
+    },
+    {
+      "ts": "2026-09-02T18:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 29375,
+      "output_tokens": 513
+    },
+    {
+      "ts": "2026-09-03T07:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 29761,
+      "output_tokens": 419
+    },
+    {
+      "ts": "2026-09-03T07:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 31551,
+      "output_tokens": 130
+    },
+    {
+      "ts": "2026-09-03T08:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 8448,
+      "output_tokens": 57
+    },
+    {
+      "ts": "2026-09-03T09:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 13288,
+      "output_tokens": 814
+    },
+    {
+      "ts": "2026-09-03T10:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 38393,
+      "output_tokens": 641
+    },
+    {
+      "ts": "2026-09-03T10:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 34828,
+      "output_tokens": 351
+    },
+    {
+      "ts": "2026-09-03T11:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 29545,
+      "output_tokens": 41
+    },
+    {
+      "ts": "2026-09-03T12:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 37765,
+      "output_tokens": 736
+    },
+    {
+      "ts": "2026-09-03T13:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 36714,
+      "output_tokens": 224
+    },
+    {
+      "ts": "2026-09-03T13:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 29220,
+      "output_tokens": 693
+    },
+    {
+      "ts": "2026-09-03T14:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 33110,
+      "output_tokens": 505
+    },
+    {
+      "ts": "2026-09-03T15:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 22720,
+      "output_tokens": 471
+    },
+    {
+      "ts": "2026-09-03T16:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 22764,
+      "output_tokens": 287
+    },
+    {
+      "ts": "2026-09-03T16:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 26014,
+      "output_tokens": 549
+    },
+    {
+      "ts": "2026-09-03T17:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 36560,
+      "output_tokens": 79
+    },
+    {
+      "ts": "2026-09-03T18:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 33430,
+      "output_tokens": 89
+    },
+    {
+      "ts": "2026-09-03T19:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 10478,
+      "output_tokens": 124
+    },
+    {
+      "ts": "2026-09-03T19:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 2397,
+      "output_tokens": 809
+    },
+    {
+      "ts": "2026-09-03T20:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 37447,
+      "output_tokens": 500
+    },
+    {
+      "ts": "2026-09-03T21:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 32575,
+      "output_tokens": 864
+    },
+    {
+      "ts": "2026-09-03T06:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 17543,
+      "output_tokens": 281
+    },
+    {
+      "ts": "2026-09-03T09:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 25922,
+      "output_tokens": 637
+    },
+    {
+      "ts": "2026-09-03T15:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 24165,
+      "output_tokens": 486
+    },
+    {
+      "ts": "2026-09-03T21:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 19602,
+      "output_tokens": 449
+    },
+    {
+      "ts": "2026-09-03T11:20:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "subagent",
+      "channel": "subagent",
+      "input_tokens": 36304,
+      "output_tokens": 393
+    },
+    {
+      "ts": "2026-09-03T12:20:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "subagent",
+      "channel": "subagent",
+      "input_tokens": 25788,
+      "output_tokens": 616
+    },
+    {
+      "ts": "2026-09-03T08:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 5982,
+      "output_tokens": 547
+    },
+    {
+      "ts": "2026-09-03T10:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 20392,
+      "output_tokens": 869
+    },
+    {
+      "ts": "2026-09-03T12:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 3568,
+      "output_tokens": 265
+    },
+    {
+      "ts": "2026-09-03T14:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 3695,
+      "output_tokens": 682
+    },
+    {
+      "ts": "2026-09-03T16:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 7376,
+      "output_tokens": 91
+    },
+    {
+      "ts": "2026-09-03T18:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 36401,
+      "output_tokens": 343
+    },
+    {
+      "ts": "2026-09-04T07:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 28495,
+      "output_tokens": 385
+    },
+    {
+      "ts": "2026-09-04T07:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 38795,
+      "output_tokens": 631
+    },
+    {
+      "ts": "2026-09-04T08:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 32736,
+      "output_tokens": 57
+    },
+    {
+      "ts": "2026-09-04T09:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 19163,
+      "output_tokens": 291
+    },
+    {
+      "ts": "2026-09-04T10:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 8822,
+      "output_tokens": 140
+    },
+    {
+      "ts": "2026-09-04T10:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 17990,
+      "output_tokens": 494
+    },
+    {
+      "ts": "2026-09-04T11:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 20730,
+      "output_tokens": 434
+    },
+    {
+      "ts": "2026-09-04T12:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 18587,
+      "output_tokens": 136
+    },
+    {
+      "ts": "2026-09-04T13:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 35639,
+      "output_tokens": 409
+    },
+    {
+      "ts": "2026-09-04T13:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 33401,
+      "output_tokens": 315
+    },
+    {
+      "ts": "2026-09-04T14:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 29466,
+      "output_tokens": 184
+    },
+    {
+      "ts": "2026-09-04T15:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 16623,
+      "output_tokens": 681
+    },
+    {
+      "ts": "2026-09-04T16:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 10214,
+      "output_tokens": 313
+    },
+    {
+      "ts": "2026-09-04T16:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 11154,
+      "output_tokens": 356
+    },
+    {
+      "ts": "2026-09-04T17:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 32993,
+      "output_tokens": 721
+    },
+    {
+      "ts": "2026-09-04T18:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 36826,
+      "output_tokens": 570
+    },
+    {
+      "ts": "2026-09-04T19:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 33426,
+      "output_tokens": 898
+    },
+    {
+      "ts": "2026-09-04T19:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 5780,
+      "output_tokens": 448
+    },
+    {
+      "ts": "2026-09-04T20:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 17382,
+      "output_tokens": 341
+    },
+    {
+      "ts": "2026-09-04T21:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 10203,
+      "output_tokens": 659
+    },
+    {
+      "ts": "2026-09-04T06:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 29889,
+      "output_tokens": 220
+    },
+    {
+      "ts": "2026-09-04T09:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 12230,
+      "output_tokens": 765
+    },
+    {
+      "ts": "2026-09-04T15:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 11355,
+      "output_tokens": 759
+    },
+    {
+      "ts": "2026-09-04T21:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 2925,
+      "output_tokens": 732
+    },
+    {
+      "ts": "2026-09-04T11:20:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "subagent",
+      "channel": "subagent",
+      "input_tokens": 23580,
+      "output_tokens": 863
+    },
+    {
+      "ts": "2026-09-04T12:20:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "subagent",
+      "channel": "subagent",
+      "input_tokens": 13957,
+      "output_tokens": 393
+    },
+    {
+      "ts": "2026-09-04T08:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 14124,
+      "output_tokens": 75
+    },
+    {
+      "ts": "2026-09-04T10:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 25060,
+      "output_tokens": 736
+    },
+    {
+      "ts": "2026-09-04T12:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 19629,
+      "output_tokens": 693
+    },
+    {
+      "ts": "2026-09-04T14:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 2586,
+      "output_tokens": 417
+    },
+    {
+      "ts": "2026-09-04T16:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 21206,
+      "output_tokens": 617
+    },
+    {
+      "ts": "2026-09-04T18:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 34292,
+      "output_tokens": 583
+    },
+    {
+      "ts": "2026-09-04T16:40:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-opus-4-8",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 22082,
+      "output_tokens": 505
+    },
+    {
+      "ts": "2026-09-05T07:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 12961,
+      "output_tokens": 395
+    },
+    {
+      "ts": "2026-09-05T07:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 18316,
+      "output_tokens": 285
+    },
+    {
+      "ts": "2026-09-05T08:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 10327,
+      "output_tokens": 351
+    },
+    {
+      "ts": "2026-09-05T09:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 8273,
+      "output_tokens": 362
+    },
+    {
+      "ts": "2026-09-05T10:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 4164,
+      "output_tokens": 490
+    },
+    {
+      "ts": "2026-09-05T10:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 26453,
+      "output_tokens": 149
+    },
+    {
+      "ts": "2026-09-05T11:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 9683,
+      "output_tokens": 663
+    },
+    {
+      "ts": "2026-09-05T12:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 13555,
+      "output_tokens": 201
+    },
+    {
+      "ts": "2026-09-05T13:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 9844,
+      "output_tokens": 559
+    },
+    {
+      "ts": "2026-09-05T13:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 36672,
+      "output_tokens": 798
+    },
+    {
+      "ts": "2026-09-05T14:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 33659,
+      "output_tokens": 348
+    },
+    {
+      "ts": "2026-09-05T15:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 15580,
+      "output_tokens": 353
+    },
+    {
+      "ts": "2026-09-05T16:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 28215,
+      "output_tokens": 279
+    },
+    {
+      "ts": "2026-09-05T16:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 7575,
+      "output_tokens": 191
+    },
+    {
+      "ts": "2026-09-05T17:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 35686,
+      "output_tokens": 454
+    },
+    {
+      "ts": "2026-09-05T18:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 38634,
+      "output_tokens": 174
+    },
+    {
+      "ts": "2026-09-05T19:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 18519,
+      "output_tokens": 235
+    },
+    {
+      "ts": "2026-09-05T19:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 29804,
+      "output_tokens": 321
+    },
+    {
+      "ts": "2026-09-05T20:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 2333,
+      "output_tokens": 600
+    },
+    {
+      "ts": "2026-09-05T21:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 17988,
+      "output_tokens": 277
+    },
+    {
+      "ts": "2026-09-05T06:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 3038,
+      "output_tokens": 257
+    },
+    {
+      "ts": "2026-09-05T09:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 34293,
+      "output_tokens": 265
+    },
+    {
+      "ts": "2026-09-05T15:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 29754,
+      "output_tokens": 378
+    },
+    {
+      "ts": "2026-09-05T21:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 39149,
+      "output_tokens": 636
+    },
+    {
+      "ts": "2026-09-05T11:20:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "subagent",
+      "channel": "subagent",
+      "input_tokens": 4599,
+      "output_tokens": 236
+    },
+    {
+      "ts": "2026-09-05T12:20:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "subagent",
+      "channel": "subagent",
+      "input_tokens": 2354,
+      "output_tokens": 393
+    },
+    {
+      "ts": "2026-09-05T08:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 18101,
+      "output_tokens": 55
+    },
+    {
+      "ts": "2026-09-05T10:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 29789,
+      "output_tokens": 328
+    },
+    {
+      "ts": "2026-09-05T12:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 26216,
+      "output_tokens": 453
+    },
+    {
+      "ts": "2026-09-05T14:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 12288,
+      "output_tokens": 373
+    },
+    {
+      "ts": "2026-09-05T16:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 19175,
+      "output_tokens": 331
+    },
+    {
+      "ts": "2026-09-05T18:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 4120,
+      "output_tokens": 141
+    },
+    {
+      "ts": "2026-09-06T07:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 27071,
+      "output_tokens": 174
+    },
+    {
+      "ts": "2026-09-06T07:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 21440,
+      "output_tokens": 617
+    },
+    {
+      "ts": "2026-09-06T08:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 23903,
+      "output_tokens": 415
+    },
+    {
+      "ts": "2026-09-06T09:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 15963,
+      "output_tokens": 740
+    },
+    {
+      "ts": "2026-09-06T10:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 8740,
+      "output_tokens": 185
+    },
+    {
+      "ts": "2026-09-06T10:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 20983,
+      "output_tokens": 152
+    },
+    {
+      "ts": "2026-09-06T11:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 12237,
+      "output_tokens": 123
+    },
+    {
+      "ts": "2026-09-06T12:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 16359,
+      "output_tokens": 838
+    },
+    {
+      "ts": "2026-09-06T13:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 14645,
+      "output_tokens": 76
+    },
+    {
+      "ts": "2026-09-06T13:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 7980,
+      "output_tokens": 215
+    },
+    {
+      "ts": "2026-09-06T14:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 2544,
+      "output_tokens": 684
+    },
+    {
+      "ts": "2026-09-06T15:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 32429,
+      "output_tokens": 400
+    },
+    {
+      "ts": "2026-09-06T16:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 19543,
+      "output_tokens": 407
+    },
+    {
+      "ts": "2026-09-06T16:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 22845,
+      "output_tokens": 277
+    },
+    {
+      "ts": "2026-09-06T17:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 19229,
+      "output_tokens": 542
+    },
+    {
+      "ts": "2026-09-06T18:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 20891,
+      "output_tokens": 645
+    },
+    {
+      "ts": "2026-09-06T19:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 21506,
+      "output_tokens": 855
+    },
+    {
+      "ts": "2026-09-06T19:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 21519,
+      "output_tokens": 496
+    },
+    {
+      "ts": "2026-09-06T20:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 25551,
+      "output_tokens": 390
+    },
+    {
+      "ts": "2026-09-06T21:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 6750,
+      "output_tokens": 347
+    },
+    {
+      "ts": "2026-09-06T06:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 10352,
+      "output_tokens": 288
+    },
+    {
+      "ts": "2026-09-06T09:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 23306,
+      "output_tokens": 624
+    },
+    {
+      "ts": "2026-09-06T15:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 16318,
+      "output_tokens": 632
+    },
+    {
+      "ts": "2026-09-06T21:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 5910,
+      "output_tokens": 403
+    },
+    {
+      "ts": "2026-09-06T11:20:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "subagent",
+      "channel": "subagent",
+      "input_tokens": 18714,
+      "output_tokens": 148
+    },
+    {
+      "ts": "2026-09-06T12:20:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "subagent",
+      "channel": "subagent",
+      "input_tokens": 33155,
+      "output_tokens": 421
+    },
+    {
+      "ts": "2026-09-06T08:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 10638,
+      "output_tokens": 424
+    },
+    {
+      "ts": "2026-09-06T10:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 25151,
+      "output_tokens": 341
+    },
+    {
+      "ts": "2026-09-06T12:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 18185,
+      "output_tokens": 765
+    },
+    {
+      "ts": "2026-09-06T14:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 36271,
+      "output_tokens": 630
+    },
+    {
+      "ts": "2026-09-06T16:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 16888,
+      "output_tokens": 423
+    },
+    {
+      "ts": "2026-09-06T18:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 16142,
+      "output_tokens": 240
+    },
+    {
+      "ts": "2026-09-07T07:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 2294,
+      "output_tokens": 890
+    },
+    {
+      "ts": "2026-09-07T07:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 22268,
+      "output_tokens": 435
+    },
+    {
+      "ts": "2026-09-07T08:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 24736,
+      "output_tokens": 834
+    },
+    {
+      "ts": "2026-09-07T09:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 22360,
+      "output_tokens": 132
+    },
+    {
+      "ts": "2026-09-07T10:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 37185,
+      "output_tokens": 392
+    },
+    {
+      "ts": "2026-09-07T10:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 35216,
+      "output_tokens": 330
+    },
+    {
+      "ts": "2026-09-07T11:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 29633,
+      "output_tokens": 447
+    },
+    {
+      "ts": "2026-09-07T12:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 23586,
+      "output_tokens": 440
+    },
+    {
+      "ts": "2026-09-07T13:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 13713,
+      "output_tokens": 58
+    },
+    {
+      "ts": "2026-09-07T13:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 7436,
+      "output_tokens": 337
+    },
+    {
+      "ts": "2026-09-07T14:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 9564,
+      "output_tokens": 895
+    },
+    {
+      "ts": "2026-09-07T15:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 37176,
+      "output_tokens": 725
+    },
+    {
+      "ts": "2026-09-07T16:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 33023,
+      "output_tokens": 233
+    },
+    {
+      "ts": "2026-09-07T16:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 10098,
+      "output_tokens": 330
+    },
+    {
+      "ts": "2026-09-07T17:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 23123,
+      "output_tokens": 860
+    },
+    {
+      "ts": "2026-09-07T18:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 29726,
+      "output_tokens": 618
+    },
+    {
+      "ts": "2026-09-07T19:00:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 14088,
+      "output_tokens": 692
+    },
+    {
+      "ts": "2026-09-07T19:45:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 29346,
+      "output_tokens": 756
+    },
+    {
+      "ts": "2026-09-07T20:30:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 6306,
+      "output_tokens": 779
+    },
+    {
+      "ts": "2026-09-07T21:15:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "heartbeat",
+      "channel": "heartbeat",
+      "input_tokens": 27837,
+      "output_tokens": 261
+    },
+    {
+      "ts": "2026-09-07T06:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 11735,
+      "output_tokens": 288
+    },
+    {
+      "ts": "2026-09-07T09:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 39474,
+      "output_tokens": 700
+    },
+    {
+      "ts": "2026-09-07T15:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 25513,
+      "output_tokens": 496
+    },
+    {
+      "ts": "2026-09-07T21:05:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "cron",
+      "channel": "cron-event",
+      "input_tokens": 11462,
+      "output_tokens": 183
+    },
+    {
+      "ts": "2026-09-07T11:20:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "subagent",
+      "channel": "subagent",
+      "input_tokens": 6675,
+      "output_tokens": 455
+    },
+    {
+      "ts": "2026-09-07T12:20:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-haiku-4-5",
+      "provider": "anthropic",
+      "source": "subagent",
+      "channel": "subagent",
+      "input_tokens": 12397,
+      "output_tokens": 416
+    },
+    {
+      "ts": "2026-09-07T08:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 4814,
+      "output_tokens": 618
+    },
+    {
+      "ts": "2026-09-07T10:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 12702,
+      "output_tokens": 371
+    },
+    {
+      "ts": "2026-09-07T12:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 10599,
+      "output_tokens": 293
+    },
+    {
+      "ts": "2026-09-07T14:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 8016,
+      "output_tokens": 167
+    },
+    {
+      "ts": "2026-09-07T16:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "slack",
+      "input_tokens": 34348,
+      "output_tokens": 279
+    },
+    {
+      "ts": "2026-09-07T18:12:00Z",
+      "instance": "team-bot-a",
+      "model": "anthropic/claude-sonnet-4-6",
+      "provider": "anthropic",
+      "source": "user",
+      "channel": "telegram",
+      "input_tokens": 11164,
+      "output_tokens": 356
+    }
+  ]
+}

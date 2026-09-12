@@ -1,0 +1,105 @@
+# Test files that already mutated the pod's canonical shared dir when the
+# real-shared-dir guard landed (see the guard block at the end of
+# conftest.py). Their writes are still BLOCKED -- being listed here only
+# suppresses the test failure, so no file here pollutes the host either.
+#
+# This is a RATCHET, not an amnesty.
+#
+#   * Never add a line to make a new test pass. A test that needs a
+#     {shared_dir} path must be given one under tmp_path:
+#         "sharedDir": str(tmp_path / "shared")
+#     A new entry here is a regression of the class PR #3984 fixed once
+#     per-file and that came straight back in test_mcp_bridge_hot_reload.py.
+#   * Deleting a line as you fix its file is the burn-down. Verify with:
+#         pytest packages/admin/tests/<file> -q
+#     which now fails loudly if the file still mutates the shared dir.
+#
+# Enumerated 2026-09-11 by running the whole admin suite (21.9k tests) with
+# this guard active and collecting every file it failed: 52 files. Sinks:
+# audit-log.jsonl, deploy.lock (the suite takes the real pod-wide deploy
+# lock), logs/, security/, alerts/, signals/, better-engine/, plus os.mkdir
+# of those. Every test in these files passes with the mutations blocked --
+# none was load-bearing.
+#
+# Four entries are LINUX-ONLY offenders a macOS run does not surface --
+# test_deploy_shared_dir.py, test_intake_revise_classifier.py (CI shards 1
+# and 2), and test_ensure_pod_perms.py + test_install_chain.py, which reach
+# deploy_resilience.plant_never_index_marker(). Both roots are guarded on
+# both platforms, but which branch a test takes is not platform-identical:
+# a path that already exists on the dev box gets CREATED on a fresh runner,
+# and only the creation trips the guard. So a local green run is necessary
+# and NOT sufficient -- the authoritative enumeration is a macOS run plus
+# all four CI shards.
+#
+# Regenerate after fixing files: run the suite and collect the guard's own
+# failures --
+#   pytest packages/admin/tests -q 2>&1 \
+#     | sed -nE 's|^ERROR packages/admin/tests/([^:]+)::.*|\1|p' | sort -u
+#
+# The single biggest sink, audit-log.jsonl, is not a test bug at all:
+# cli.py:636 and web/routes_shared.py:101 hardcode the literal string
+# "/Users/Shared/evolve/audit-log.jsonl" instead of deriving it from
+# shared_dir, so it is also a live Linux-pod bug (the admin UI's audit log
+# silently never writes there). Fixing those two lines retires most of this
+# list at once.
+#
+# Separately measured and deliberately NOT guarded: 6158 READS of the real
+# shared dir across ~96 files. Reads do not mutate host state, but they do
+# make those tests host-coupled -- the gmail duplicate-guard bug that
+# prompted this guard needed a write AND a read. Left as follow-up.
+test_admin_config_routing_put.py
+test_admin_config_tier_rung_collision.py
+test_app_discovery_job.py
+test_bot_channels_routes.py
+test_cost_cap_checkpoint.py
+test_deploy_daemon_seam_sweep.py
+test_deploy_scheduler_migration.py
+test_deploy_shared_dir.py
+test_directory_bot_routes.py
+test_directory_bot_routes_upsert.py
+test_embedding_config_api.py
+test_ensure_pod_perms.py
+test_evo_cutover.py
+test_evo_fail_trail_link.py
+test_gmail_send_guards.py
+test_google_bot_routes.py
+test_inspector.py
+test_install_chain.py
+test_install_scheduled_action_both_profiles.py
+test_install_user_resolution.py
+test_intake_revise_classifier.py
+test_keys_api_probes.py
+test_keys_api_snapshot.py
+test_keys_rotation.py
+test_launchctl_unload_wait.py
+test_messaging_integrations.py
+test_model_freshness_endpoints.py
+test_model_rungs_roles_phase2_surfaces.py
+test_model_swap_cli.py
+test_onboarding.py
+test_plist_jobspec_parity.py
+test_repo_puller.py
+test_routes_admin_table_golden.py
+test_scheduler_swappability.py
+test_seed_model_config.py
+test_setup_wizard_service_layer_gate.py
+test_skills_autocad_install.py
+test_skills_discord_set_token_route.py
+test_skills_dropbox_install.py
+test_skills_github_install.py
+test_skills_gog_install.py
+test_skills_google_install.py
+test_skills_google_workspace_write_routes.py
+test_skills_install_orchestrator_parity.py
+test_skills_inventory.py
+test_skills_linear_install.py
+test_skills_notion_install.py
+test_skills_obsidian_install.py
+test_skills_runway_install.py
+test_substrate_audit_chip_endpoints.py
+test_substrate_audit_endpoints.py
+test_systemd_jobspec_golden.py
+test_tier_write_guard_dict_entries.py
+test_tier_write_input_validation.py
+test_wizard_pubkey_source_of_truth.py
+test_write_auth_profiles_chown.py

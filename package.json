@@ -1,0 +1,16 @@
+{
+  "name": "evolve-workspace",
+  "private": true,
+  "license": "BUSL-1.1",
+  "workspaces": [
+    "packages/plugin"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace=packages/plugin",
+    "build:watch": "npm run build:watch --workspace=packages/plugin"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.4.1"
+  }
+}

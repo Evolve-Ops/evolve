@@ -1,0 +1,44 @@
+id: autonomy_promoter
+schema_version: 1
+type: optimizer
+dimension: safety
+bucket: improve
+# Surface routing: improvement — the proposal is an offer to widen, not
+#   a firing problem. The streak Signal itself is the Alerts-page
+#   evidence trail (principle-signals-precede-proposals).
+# Spec: internal/spec-autonomy-ladder-2026-06-10.md §3.2 (Phase B).
+surface: improvement
+purpose: >
+  Turn sustained clean approval streaks (autonomy_promotion_candidate
+  Signals from the permission monitor's streak producer) into
+  UpdateAutonomyPosture Proposals: offer to move one integration on one
+  bot from "Asks first" to "Acts within limits", with a conservative
+  rules block derived from the observed volume. The pipeline may
+  PROPOSE promotions but never apply them — applying the proposal is
+  the deliberate operator act, and promotions are permanently excluded
+  from every auto-approve lane.
+cadence: daily
+# Event-driven dispatch: the signal-subscriber daemon invokes this
+# generator within seconds of a new autonomy_promotion_candidate
+# Signal landing. The daily generator_runner sweep stays as the
+# safety net for daemon downtime.
+subscribes_to:
+  - autonomy_promotion_candidate
+invariants:
+  - id: action_kind_allowed
+    description: >
+      This generator emits exactly one action shape: the typed
+      UpdateAutonomyPosture. Anything else is a charter violation.
+    check_kind: action_kind_allowed
+    params:
+      allowlist: [UpdateAutonomyPosture]
+  - id: human_approval_for
+    description: >
+      No autonomy proposal from this generator may route to the
+      autonomous audience — widening what a bot can do without a person
+      is the exact thing the ladder exists to prevent. Belt to the
+      structural carve-outs in arbiter.routing / eligibility / evo's
+      apply tool (spec §3.2: auto-apply is forbidden for promotions).
+    check_kind: human_approval_for
+    params:
+      action_kinds: [UpdateAutonomyPosture]

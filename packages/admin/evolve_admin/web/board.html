@@ -1,0 +1,864 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Board">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<!-- Per-theme address-bar / title-bar colour. These are the same --bg pair
+     the stylesheet below defines; the manifest can carry only one value, so
+     these are what make the installed app match the phone's theme. -->
+<meta name="theme-color" content="#f4f5f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#131614" media="(prefers-color-scheme: dark)">
+<meta name="referrer" content="no-referrer">
+<link rel="apple-touch-icon" href="/board/icon-192.png">
+<link rel="icon" href="/board/icon-192.png" type="image/png">
+<title>Board</title>
+<style>
+  /* Standalone user page: defines its own dark/light token pairs (the
+     admin SPA's base.css is deliberately not loaded here — this surface
+     must never depend on operator assets). Sizes stay on the canonical
+     scale: 0.75 / 0.85 / 1 / 1.2. */
+  :root {
+    --bg: #f4f5f2;
+    --bg2: #ffffff;
+    --text: #1d221e;
+    --muted: #62695f;
+    --line: #dcdfd8;
+    --accent: #2f7d4e;
+    --accent-soft: #e3efe7;
+    --warn: #a3661c;
+    /* The lift under a held card. A token pair rather than an inline
+       rgba(), so dark theme is not an afterthought (style guide §7). */
+    --shadow-lift: 0 10px 28px rgba(0, 0, 0, 0.18);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #131614;
+      --bg2: #1c201d;
+      --text: #e6eae5;
+      --muted: #98a29a;
+      --line: #2a302b;
+      --accent: #5fb585;
+      --accent-soft: #22322a;
+      --warn: #d69a50;
+      --shadow-lift: 0 10px 28px rgba(0, 0, 0, 0.55);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
+    font-size: 1rem;
+    line-height: 1.4;
+    padding-bottom: 5rem;
+  }
+  header {
+    position: sticky; top: 0;
+    background: var(--bg);
+    border-bottom: 1px solid var(--line);
+    padding: 0.85rem 1rem 0.6rem;
+    z-index: 2;
+  }
+  header h1 { font-size: 1.2rem; margin: 0; font-weight: 700; }
+  header .sub { font-size: 0.75rem; color: var(--muted); margin-top: 0.15rem; }
+  #status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+                background: var(--accent); margin-right: 0.35rem; }
+  #status-dot.stale { background: var(--warn); }
+  .chips { display: flex; gap: 0.4rem; overflow-x: auto; padding: 0.6rem 1rem 0.2rem;
+           -webkit-overflow-scrolling: touch; }
+  .chip {
+    font-size: 0.75rem; padding: 0.25rem 0.7rem; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--bg2); color: var(--muted);
+    white-space: nowrap; cursor: pointer; user-select: none;
+  }
+  .chip.on { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+  main { padding: 0 1rem; }
+  section.lane { margin-top: 1.1rem; }
+  .lane-head { display: flex; align-items: baseline; gap: 0.5rem;
+               border-radius: 8px; padding: 0 0.35rem; margin-left: -0.35rem; }
+  .lane-head h2 {
+    font-size: 0.75rem; letter-spacing: 0.09em; text-transform: uppercase;
+    color: var(--muted); margin: 0 0 0.4rem; font-weight: 600;
+  }
+  .lane-head .count { font-size: 0.75rem; color: var(--muted); }
+  .card {
+    background: var(--bg2); border: 1px solid var(--line); border-radius: 10px;
+    padding: 0.7rem 0.85rem; margin-bottom: 0.5rem; cursor: pointer;
+    /* A ~400ms hold is ALSO the platform's own gesture. Without these, iOS
+       Safari raises the selection loupe / link callout on the title text and
+       the finger drags a text selection instead of the card; Chrome for
+       Android fires its long-press selection, which arrives here as
+       pointercancel and drops the card the instant it lifts. Both spellings
+       of user-select are needed (Safari still wants the prefix), and the
+       callout property is Safari-only. The JS side of the same fix is the
+       contextmenu handler below. */
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+  .card:active { border-color: var(--accent); }
+  .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /* OWNER MARKING (D-BI7). A striped rail, not a colour swap: it reads on a
+     greyscale screen and for a colour-blind user, and the "bot" tag in the
+     card's meta row says the same thing in words, so nothing about the board
+     depends on seeing the pattern at all. The SAME stripe is the Bot drop
+     zone's hover state, which is what makes letting go unambiguous — accent
+     wash means a lane (a WHEN change), stripes mean the bot (a WHO change). */
+  .owner-stripe {
+    background-image: repeating-linear-gradient(
+      135deg, var(--accent-soft) 0 5px, transparent 5px 10px);
+    background-repeat: no-repeat;
+    background-size: 20px 100%;
+    background-position: left top;
+  }
+  .card.owner-bot { border-left: 3px double var(--accent); padding-left: 1.5rem; }
+  /* ── drag (D-BI1) ── */
+  .card.is-dragging { opacity: 0.35; }
+  .drag-ghost {
+    position: fixed; z-index: 20; pointer-events: none;
+    margin: 0; box-shadow: var(--shadow-lift);
+    border-color: var(--accent);
+  }
+  .lane-head.drop-over { background: var(--accent-soft); }
+  .lane-head.drop-over h2 { color: var(--accent); }
+  #bot-zone {
+    border: 1px dashed var(--line); border-radius: 10px;
+    padding: 0.6rem 0.85rem; margin-bottom: 0.5rem;
+    font-size: 0.85rem; color: var(--muted);
+  }
+  #bot-zone.drop-over { border-color: var(--accent); color: var(--text); }
+  .plate-group { font-size: 0.75rem; color: var(--muted); margin: 0.1rem 0 0.3rem; }
+  .card .title { font-size: 1rem; font-weight: 600; }
+  .card .facts { font-size: 0.85rem; color: var(--muted); margin-top: 0.2rem;
+                 overflow-wrap: anywhere; }
+  .card .note { font-size: 0.85rem; color: var(--muted); margin-top: 0.2rem;
+                overflow-wrap: anywhere; }
+  .card .meta { display: flex; gap: 0.5rem; margin-top: 0.4rem; align-items: center; }
+  .tag {
+    font-size: 0.75rem; padding: 0.1rem 0.5rem; border-radius: 999px;
+    background: var(--accent-soft); color: var(--accent);
+  }
+  .badge { font-size: 0.75rem; color: var(--warn); }
+  .empty { font-size: 0.85rem; color: var(--muted); padding: 0.3rem 0; }
+  #error {
+    display: none; margin: 1rem; padding: 0.7rem 0.85rem; border-radius: 10px;
+    border: 1px solid var(--warn); color: var(--warn); font-size: 0.85rem;
+  }
+  /* ── action sheet + dialogs ── */
+  #backdrop {
+    display: none; position: fixed; inset: 0; z-index: 9;
+    background: var(--bg); opacity: 0.7;
+  }
+  .sheet {
+    display: none; position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+    background: var(--bg2); border-top: 1px solid var(--line);
+    border-radius: 14px 14px 0 0; padding: 1rem 1rem calc(1rem + env(safe-area-inset-bottom));
+  }
+  .sheet h3 { font-size: 0.85rem; color: var(--muted); margin: 0 0 0.7rem;
+              font-weight: 600; overflow-wrap: anywhere; }
+  .sheet .row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .sheet button {
+    font: inherit; font-size: 0.85rem; font-weight: 600;
+    padding: 0.55rem 0.9rem; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--text);
+    cursor: pointer;
+  }
+  .sheet button.primary { background: var(--accent); border-color: var(--accent); color: var(--bg2); }
+  .sheet button.quiet { border: none; background: none; color: var(--muted); }
+  .sheet label { display: block; font-size: 0.75rem; color: var(--muted); margin: 0.7rem 0 0.2rem; }
+  .input-w-text { width: 100%; }
+  .input-w-md { width: 160px; }
+  .sheet input, .sheet select {
+    font: inherit; font-size: 1rem; padding: 0.45rem 0.6rem;
+    border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg); color: var(--text);
+  }
+  #add-btn {
+    position: fixed; right: 1rem; bottom: calc(1rem + env(safe-area-inset-bottom));
+    z-index: 8; width: 3.2rem; height: 3.2rem; border-radius: 50%;
+    font-size: 1.2rem; font-weight: 700; line-height: 1;
+    border: 1px solid var(--accent); background: var(--accent); color: var(--bg2);
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Board</h1>
+  <div class="sub"><span id="status-dot"></span><span id="status-text">loading…</span></div>
+</header>
+<div class="chips" id="chips"></div>
+<div id="error"></div>
+<main id="lanes"></main>
+<button id="add-btn" aria-label="Add a card">＋</button>
+
+<div id="backdrop"></div>
+<div class="sheet" id="move-sheet">
+  <h3 id="move-title"></h3>
+  <div class="row" id="move-row"></div>
+  <div class="row" style="margin-top:0.7rem">
+    <button id="split-open">Split…</button>
+    <button class="quiet" data-close>Cancel</button>
+  </div>
+</div>
+<div class="sheet" id="split-sheet">
+  <h3>Split into your part and the bot's part</h3>
+  <label for="split-user">Yours (goes to Today)</label>
+  <input id="split-user" class="input-w-text" autocomplete="off">
+  <label for="split-bot">Bot's (same day, handed over)</label>
+  <input id="split-bot" class="input-w-text" autocomplete="off" placeholder="what should the bot do?">
+  <div class="row" style="margin-top:0.9rem">
+    <button class="primary" id="split-go">Split</button>
+    <button class="quiet" data-close>Cancel</button>
+  </div>
+</div>
+<div class="sheet" id="drop-sheet">
+  <h3 id="drop-title"></h3>
+  <div class="row" id="drop-row"></div>
+  <div class="row" style="margin-top:0.7rem">
+    <button class="primary" id="drop-go">Just drop it</button>
+    <button class="quiet" data-close>Cancel</button>
+  </div>
+</div>
+<div class="sheet" id="add-sheet">
+  <h3>New card</h3>
+  <label for="add-title">Title</label>
+  <input id="add-title" class="input-w-text" autocomplete="off">
+  <label for="add-cluster">Cluster</label>
+  <select id="add-cluster" class="input-w-md"></select>
+  <div class="row" style="margin-top:0.9rem">
+    <button class="primary" id="add-go">Add to Inbox</button>
+    <button class="quiet" data-close>Cancel</button>
+  </div>
+</div>
+
+<script>
+"use strict";
+(function () {
+  var botId = location.pathname.split("/").filter(Boolean).pop();
+  // Normally empty: the server swaps a ?t= link for an HttpOnly cookie and
+  // 302s here, so the credential never reaches this script. Still read (and
+  // then erased from the address bar) for the case where the redirect did
+  // not happen — a cached page, or a client that does not keep cookies.
+  var token = new URLSearchParams(location.search).get("t") || "";
+  if (token && window.history && history.replaceState) {
+    history.replaceState(null, "", location.pathname);
+  }
+
+  // Add-to-home-screen. The manifest is per-bot (its start_url and scope are
+  // this board), so the link is built here rather than written statically —
+  // the page stays one file with no server-side templating.
+  (function () {
+    var l = document.createElement("link");
+    l.rel = "manifest";
+    l.href = "/board/" + encodeURIComponent(botId) + "/manifest.webmanifest";
+    document.head.appendChild(l);
+  })();
+
+  // Lanes answer WHEN (D-BI7, 2026-09-04). "Bot" is no longer one of them:
+  // owner is a separate attribute, and the bot's plate is a VIEW rendered
+  // above the lanes from every card whose owner is the bot. Owner-marked
+  // tiles and drag-to-delegate are the next chip; this keeps the one gesture
+  // the phone already had (tap → hand it over) working through the new
+  // attribute.
+  var LANES = [
+    ["today", "Today"], ["inbox", "Inbox"], ["later", "Later"],
+    ["done", "Done"], ["dropped", "Dropped"]
+  ];
+  // Lanes that disappear rather than sit empty — a board should show what is
+  // live, not a row of nothing-heres.
+  var HIDE_WHEN_EMPTY = { done: true, dropped: true };
+  var CLUSTERS = ["health", "fitness", "travel", "work", "social",
+                  "hobbies", "family", "home", "admin"];
+  // D-BI2's fixed tap-reasons for a drop. Fixed, because this is the
+  // learning loop's negative signal and a detector can only count reasons it
+  // can compare — and optional, because the gesture must never cost a second
+  // tap ("Just drop it" is always there).
+  var DROP_REASONS = ["not mine", "already handled", "never", "later than later"];
+  var etag = null;
+  var board = null;
+  var filter = null;
+  var activeCard = null;
+  var dropCard = null;
+
+  // ── drag tuning (D-BI1) ──
+  var HOLD_MS = 400;       // press-and-hold before a card lifts
+  var SLOP_PX = 10;        // movement before that = a scroll, not a drag
+  var EDGE_PX = 72;        // auto-scroll band at the top/bottom of the screen
+  var EDGE_STEP_PX = 12;   // pixels per frame in that band
+  // The lift is decoration; the gesture is the feature. Reduced motion turns
+  // off the former and never the latter.
+  var REDUCED_MOTION = !!(window.matchMedia &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+
+  var dropTargets = [];    // rebuilt by render(): {el, kind, value}
+  var hold = null;         // a press that has not become a drag yet
+  var drag = null;         // the live drag
+  var suppressClick = false;
+  var pendingRender = false;
+
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined) n.textContent = text;
+    return n;
+  }
+
+  // The addendum's enrichment{} block, rendered as ONE quiet line under the
+  // title — the facts the bot captured when the card was made (runtime, page
+  // count, why it was saved). Values only: the source and capture time are
+  // recorded on the card and belong in the detail sheet, not on a tile the
+  // user is scanning. A field whose value is not a plain scalar is skipped
+  // rather than stringified into noise.
+  var FACT_LABELS = { runtime_min: "min", pages: "pages" };
+  function enrichmentLine(card) {
+    var e = card.enrichment;
+    if (!e) return "";
+    var parts = [];
+    Object.keys(e).forEach(function (key) {
+      if (parts.length >= 3) return;
+      var v = e[key] && e[key].value;
+      var t = typeof v;
+      if (v === null || v === undefined || t === "object") return;
+      var unit = FACT_LABELS[key];
+      parts.push(unit ? v + " " + unit : String(v));
+    });
+    return parts.join(" · ");
+  }
+
+  // Same-origin credentials so the HttpOnly board cookie rides along — it is
+  // how every request after the one-time ?t= upgrade authenticates. Board
+  // paths are exempt from the admin CSRF gate (server.py) precisely because
+  // this surface has no admin session to forge; the board's own defenses are
+  // the SameSite=Strict cookie plus the same-origin check on cookie-authed
+  // writes (web/board_auth.py).
+  function api(path, opts) {
+    opts = opts || {};
+    opts.credentials = "same-origin";
+    opts.headers = Object.assign({}, opts.headers || {});
+    // Only when the cookie upgrade has not happened (see above).
+    if (token) opts.headers["Authorization"] = "Bearer " + token;
+    return fetch("/api/board/" + encodeURIComponent(botId) + path, opts);
+  }
+
+  function post(path, body) {
+    return api(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }).then(function (r) {
+      if (!r.ok) return r.json().catch(function () { return {}; }).then(function (b) {
+        throw new Error(b.error || ("write failed (" + r.status + ")"));
+      });
+      return r.json();
+    });
+  }
+
+  function render() {
+    if (!board) return;
+    // A poll landing mid-gesture would replace the node under the finger.
+    // The refresh is not lost — it is applied the moment the card is let go.
+    if (drag || hold) { pendingRender = true; return; }
+    pendingRender = false;
+    var clusters = {};
+    board.cards.forEach(function (c) { clusters[c.cluster] = true; });
+    var chips = document.getElementById("chips");
+    chips.replaceChildren();
+    var all = el("span", "chip" + (filter === null ? " on" : ""), "all");
+    all.onclick = function () { filter = null; render(); };
+    chips.appendChild(all);
+    Object.keys(clusters).sort().forEach(function (cl) {
+      var ch = el("span", "chip" + (filter === cl ? " on" : ""), cl);
+      ch.onclick = function () { filter = (filter === cl ? null : cl); render(); };
+      chips.appendChild(ch);
+    });
+
+    var lanes = document.getElementById("lanes");
+    lanes.replaceChildren();
+    dropTargets = [];
+    var visible = board.cards.filter(function (c) {
+      return filter === null || c.cluster === filter;
+    });
+    // The bot's plate first, then the lanes. A card appears ONCE — showing a
+    // bot-owned card in its lane as well would put one card in two places,
+    // which is the confusion the single Bot lane never had. Finished and
+    // dropped work leaves the plate: the plate is what the bot is ON, and a
+    // done card belongs under Done whoever did it.
+    function onBotsPlate(c) {
+      return c.owner === "bot" && !HIDE_WHEN_EMPTY[c.lane];
+    }
+    plate(visible.filter(onBotsPlate));
+    LANES.forEach(function (pair) {
+      section(pair[1], pair[0], visible.filter(function (c) {
+        return c.lane === pair[0] && !onBotsPlate(c);
+      }), HIDE_WHEN_EMPTY[pair[0]]);
+    });
+
+    // The Bot's plate (D-BI7): a VIEW over owner, not a lane. Its cards keep
+    // their when — grouped by lane inside the plate — because the whole point
+    // of retiring the Bot lane was that a card the bot is working on still
+    // has a today.
+    function plate(cards) {
+      var sec = el("section", "lane");
+      sec.id = "bot-plate";
+      var head = el("div", "lane-head");
+      head.appendChild(el("h2", null, "Bot's plate"));
+      head.appendChild(el("span", "count", String(cards.length)));
+      sec.appendChild(head);
+      var zone = el("div", null, cards.length
+        ? "Hold a card and drop it here to hand it over"
+        : "Nothing on the bot. Hold a card and drop it here to hand it over.");
+      zone.id = "bot-zone";
+      sec.appendChild(zone);
+      // The drop zone changes WHO (one POST …/assign), never WHEN.
+      dropTargets.push({ el: zone, kind: "owner", value: "bot" });
+      LANES.forEach(function (pair) {
+        var group = cards.filter(function (c) { return c.lane === pair[0]; });
+        if (!group.length) return;
+        sec.appendChild(el("div", "plate-group", pair[1]));
+        group.forEach(function (c) { sec.appendChild(tile(c)); });
+      });
+      lanes.appendChild(sec);
+    }
+
+    function section(label, lane, cards, hideWhenEmpty) {
+      var sec = el("section", "lane");
+      var head = el("div", "lane-head");
+      head.appendChild(el("h2", null, label));
+      head.appendChild(el("span", "count", String(cards.length)));
+      sec.appendChild(head);
+      // A lane header is a drop target even when the lane is empty and
+      // hidden — Dropped starts empty on every board, and a gesture whose
+      // target only exists once you have used it is a gesture nobody finds.
+      // ``beginDrag`` reveals these for the duration of the drag.
+      dropTargets.push({ el: head, kind: "lane", value: lane });
+      if (hideWhenEmpty && cards.length === 0) {
+        sec.hidden = true;
+        sec.setAttribute("data-empty-lane", "");
+        lanes.appendChild(sec);
+        return;
+      }
+      if (cards.length === 0) sec.appendChild(el("div", "empty", "nothing here"));
+      cards.forEach(function (c) { sec.appendChild(tile(c)); });
+      lanes.appendChild(sec);
+    }
+
+    function tile(c) {
+      var isBot = c.owner === "bot";
+      // Owner is marked by a PATTERN plus a word, never by colour alone.
+      var card = el("div", "card" + (isBot ? " owner-bot owner-stripe" : ""));
+      card.setAttribute("data-card-id", c.id);
+      card.appendChild(el("div", "title", c.title));
+      var facts = enrichmentLine(c);
+      if (facts) card.appendChild(el("div", "facts", facts));
+      if (c.note) card.appendChild(el("div", "note", c.note));
+      var meta = el("div", "meta");
+      meta.appendChild(el("span", "tag", c.cluster));
+      if (isBot) meta.appendChild(el("span", "tag", "bot"));
+      if (c.delegation && c.delegation.state) {
+        meta.appendChild(el("span", "badge", c.delegation.state.replace(/_/g, " ")));
+      }
+      if (c.drop_reason) meta.appendChild(el("span", "badge", c.drop_reason));
+      card.appendChild(meta);
+      // Tap opens the sheet; the sheet is also the whole keyboard path
+      // (D-BI1: keyboard users keep the sheet), so the tile is focusable and
+      // answers Enter/Space the way a button would.
+      card.tabIndex = 0;
+      card.setAttribute("role", "button");
+      card.onclick = function () {
+        if (suppressClick) return;
+        openMoveSheet(c);
+      };
+      card.onkeydown = function (ev) {
+        if (ev.key === "Enter" || ev.key === " " || ev.key === "Spacebar") {
+          if (ev.preventDefault) ev.preventDefault();
+          openMoveSheet(c);
+        }
+      };
+      card.addEventListener("pointerdown", function (ev) { startHold(ev, c, card); });
+      return card;
+    }
+    var when = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    document.getElementById("status-text").textContent =
+      board.cards.length + " cards - updated " + when;
+    document.getElementById("status-dot").classList.remove("stale");
+  }
+
+  function fail(msg) {
+    var e = document.getElementById("error");
+    e.textContent = msg;
+    e.style.display = "block";
+    document.getElementById("status-dot").classList.add("stale");
+    document.getElementById("status-text").textContent = "not connected";
+  }
+
+  function refresh(force) {
+    var headers = {};
+    if (etag && !force) headers["If-None-Match"] = etag;
+    api("", { headers: headers })
+      .then(function (r) {
+        if (r.status === 304) return null;
+        if (r.status === 401) { fail("This link's token was not accepted. Ask the operator for a fresh board link."); return null; }
+        if (r.status === 429) { fail("Too many changes at once - give it a minute."); return null; }
+        if (!r.ok) { fail("Board unavailable (" + r.status + ")."); return null; }
+        etag = r.headers.get("ETag");
+        return r.json();
+      })
+      .then(function (data) {
+        if (data) {
+          board = data;
+          document.getElementById("error").style.display = "none";
+          render();
+        }
+      })
+      .catch(function () { fail("No connection to the pod. Are you on the home network / tailnet?"); });
+  }
+
+  // ── the two writes, in one place each ──────────────────────────────────
+  // Drag and sheet call THESE, so "a drag posts the same body as the sheet"
+  // is true by construction rather than by two implementations agreeing.
+
+  function requestMove(card, lane) {
+    // A drop is the one destination that asks a question first (D-BI2's
+    // optional tap-reason). Everything else is the one POST it always was.
+    if (lane === "dropped") { openDropSheet(card); return; }
+    post("/cards/" + card.id + "/move", { to_lane: lane })
+      .then(function () { refresh(true); })
+      .catch(function (e) { fail(e.message); });
+  }
+
+  function sendDrop(card, reason) {
+    var body = { to_lane: "dropped" };
+    if (reason) body.reason = reason;
+    post("/cards/" + card.id + "/move", body)
+      .then(function () { refresh(true); })
+      .catch(function (e) { fail(e.message); });
+  }
+
+  function requestAssign(card, owner) {
+    post("/cards/" + card.id + "/assign", { owner: owner })
+      .then(function () { refresh(true); })
+      .catch(function (e) { fail(e.message); });
+  }
+
+  // ── press-and-hold drag (D-BI1) ────────────────────────────────────────
+
+  function startHold(ev, cardData, node) {
+    if (drag || hold) return;
+    if (ev.button) return;              // right/middle button: not a drag
+    hold = {
+      card: cardData, node: node, pointerId: ev.pointerId,
+      x: ev.clientX, y: ev.clientY,
+      startX: ev.clientX, startY: ev.clientY
+    };
+    hold.timer = setTimeout(beginDrag, HOLD_MS);
+  }
+
+  function releaseHold() {
+    if (!hold) return;
+    clearTimeout(hold.timer);
+    hold = null;
+    // A refresh that landed inside the hold was deferred, not discarded —
+    // and an ordinary TAP ends here, not in endDrag(). Without this flush a
+    // poll unlucky enough to arrive during the ~400ms of a tap was thrown
+    // away until the next one 30s later.
+    if (pendingRender) render();
+  }
+
+  function beginDrag() {
+    if (!hold) return;
+    drag = hold;
+    hold = null;
+    clearTimeout(drag.timer);
+    // Every lane header becomes reachable, including the empty ones the
+    // board hides — you cannot drop into Dropped if Dropped is not on screen.
+    revealEmptyLanes(true);
+    var node = drag.node;
+    var rect = node.getBoundingClientRect();
+    drag.dx = drag.x - rect.left;
+    drag.dy = drag.y - rect.top;
+    // The declarative half of "the page does not scroll under a held card";
+    // the touchmove listener below is the half that governs a gesture
+    // already in flight.
+    node.style.touchAction = "none";
+    var ghost = node.cloneNode(true);
+    ghost.className = node.className + " drag-ghost";
+    ghost.style.width = rect.width + "px";
+    if (!REDUCED_MOTION) ghost.style.transform = "scale(1.03)";
+    document.body.appendChild(ghost);
+    drag.ghost = ghost;
+    node.classList.add("is-dragging");
+    placeGhost();
+    if (navigator.vibrate) { try { navigator.vibrate(8); } catch (e) { /* no haptics */ } }
+  }
+
+  function placeGhost() {
+    if (!drag || !drag.ghost) return;
+    drag.ghost.style.left = (drag.x - drag.dx) + "px";
+    drag.ghost.style.top = (drag.y - drag.dy) + "px";
+  }
+
+  function revealEmptyLanes(on) {
+    var hidden = document.querySelectorAll("[data-empty-lane]");
+    Array.prototype.forEach.call(hidden, function (sec) { sec.hidden = !on; });
+  }
+
+  // Hit-test the registered targets' own rects rather than asking the
+  // document what is under the point: the point is usually over the card's
+  // own text, and a header is a thin strip that elementFromPoint misses as
+  // often as it finds.
+  function targetAt(x, y) {
+    for (var i = 0; i < dropTargets.length; i++) {
+      var r = dropTargets[i].el.getBoundingClientRect();
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+        return dropTargets[i];
+      }
+    }
+    return null;
+  }
+
+  function highlight(target) {
+    if (!drag) return;
+    if (drag.target === target) return;
+    if (drag.target) {
+      drag.target.el.classList.remove("drop-over");
+      if (drag.target.kind === "owner") {
+        drag.target.el.classList.remove("owner-stripe");
+      }
+    }
+    drag.target = target;
+    if (target) {
+      target.el.classList.add("drop-over");
+      // Accent wash = a lane (WHEN). The owner stripe = the bot (WHO). Two
+      // different answers need two different highlights, or letting go is a
+      // guess (D-BI1).
+      if (target.kind === "owner") target.el.classList.add("owner-stripe");
+    }
+  }
+
+  function autoScroll() {
+    if (!drag) return;
+    var dir = drag.y < EDGE_PX ? -1
+            : (drag.y > window.innerHeight - EDGE_PX ? 1 : 0);
+    if (dir === drag.scrollDir) return;
+    stopAutoScroll();
+    drag.scrollDir = dir;
+    if (!dir) return;
+    var step = function () {
+      if (!drag || !drag.scrollDir) return;
+      window.scrollBy(0, drag.scrollDir * EDGE_STEP_PX);
+      drag.scrollRaf = window.requestAnimationFrame(step);
+    };
+    step();
+  }
+
+  function stopAutoScroll() {
+    if (!drag) return;
+    drag.scrollDir = 0;
+    if (drag.scrollRaf && window.cancelAnimationFrame) {
+      window.cancelAnimationFrame(drag.scrollRaf);
+    }
+    drag.scrollRaf = null;
+  }
+
+  function endDrag() {
+    if (!drag) return;
+    stopAutoScroll();
+    highlight(null);
+    if (drag.ghost && drag.ghost.parentNode) {
+      drag.ghost.parentNode.removeChild(drag.ghost);
+    }
+    drag.node.classList.remove("is-dragging");
+    drag.node.style.touchAction = "";
+    revealEmptyLanes(false);
+    drag = null;
+    // A tap fires click after pointerup; a drag must not also open the sheet.
+    suppressClick = true;
+    setTimeout(function () { suppressClick = false; }, 0);
+    if (pendingRender) render();
+  }
+
+  document.addEventListener("pointermove", function (ev) {
+    if (hold && !drag) {
+      if (Math.abs(ev.clientX - hold.startX) > SLOP_PX ||
+          Math.abs(ev.clientY - hold.startY) > SLOP_PX) {
+        releaseHold();          // that was a scroll, not a hold
+      }
+      return;
+    }
+    if (!drag) return;
+    drag.x = ev.clientX;
+    drag.y = ev.clientY;
+    placeGhost();
+    highlight(targetAt(drag.x, drag.y));
+    autoScroll();
+  });
+
+  document.addEventListener("pointerup", function (ev) {
+    if (!drag) { releaseHold(); return; }
+    var x = typeof ev.clientX === "number" ? ev.clientX : drag.x;
+    var y = typeof ev.clientY === "number" ? ev.clientY : drag.y;
+    var target = targetAt(x, y);
+    var card = drag.card;
+    endDrag();
+    // Let go over neither: the card goes back and NOTHING is sent.
+    if (!target) return;
+    if (target.kind === "lane") {
+      // Dropping a card on the lane it is already in says nothing; sending
+      // the move anyway would write an event that claims a triage happened.
+      if (target.value === card.lane) return;
+      requestMove(card, target.value);
+    } else {
+      if ((card.owner || "me") === "bot") return;
+      requestAssign(card, "bot");
+    }
+  });
+
+  document.addEventListener("pointercancel", function () {
+    releaseHold();
+    endDrag();
+  });
+
+  // The other half of the long-press defence (the CSS on .card is the first).
+  // Android's long-press raises a context menu mid-gesture; suppressing it
+  // only WHILE a card is held leaves ordinary long-press-to-copy working
+  // everywhere else on the page.
+  document.addEventListener("contextmenu", function (ev) {
+    if ((hold || drag) && ev.preventDefault) ev.preventDefault();
+  });
+
+  // The page must not scroll under a held card. ``touch-action: none`` on the
+  // tile covers the next gesture; this covers the one in flight, which is the
+  // one the finger is doing.
+  document.addEventListener("touchmove", function (ev) {
+    if (drag && ev.cancelable !== false && ev.preventDefault) ev.preventDefault();
+  }, { passive: false });
+
+  // ── sheets ──
+  function showSheet(id) {
+    document.getElementById("backdrop").style.display = "block";
+    document.getElementById(id).style.display = "block";
+  }
+  function closeSheets() {
+    document.getElementById("backdrop").style.display = "none";
+    ["move-sheet", "split-sheet", "add-sheet", "drop-sheet"].forEach(function (id) {
+      document.getElementById(id).style.display = "none";
+    });
+    activeCard = null;
+    dropCard = null;
+  }
+  document.getElementById("backdrop").onclick = closeSheets;
+  Array.prototype.forEach.call(document.querySelectorAll("[data-close]"), function (b) {
+    b.onclick = closeSheets;
+  });
+
+  function openMoveSheet(card) {
+    activeCard = card;
+    document.getElementById("move-title").textContent = card.title;
+    var row = document.getElementById("move-row");
+    row.replaceChildren();
+    LANES.forEach(function (pair) {
+      if (pair[0] === card.lane) return;
+      var b = el("button", null, pair[1]);
+      b.onclick = function () {
+        closeSheets();
+        requestMove(card, pair[0]);
+      };
+      row.appendChild(b);
+    });
+    // WHO, not WHEN (D-BI7) — the same one tap the Bot lane used to be, now
+    // an owner change. Handing over is an OFFER; the bot accepts or declines.
+    var handedOver = card.owner === "bot";
+    var owner = el("button", handedOver ? null : "primary",
+                   handedOver ? "Take back" : "Hand to bot");
+    owner.onclick = function () {
+      closeSheets();
+      requestAssign(card, handedOver ? "me" : "bot");
+    };
+    row.appendChild(owner);
+    showSheet("move-sheet");
+  }
+
+  // The drop's optional tap-reason (D-BI2). One tap ("Just drop it") is
+  // always enough — a reason the user did not want to give must never be the
+  // price of dropping a card.
+  function openDropSheet(card) {
+    dropCard = card;
+    document.getElementById("drop-title").textContent =
+      "Not doing this: " + card.title;
+    var row = document.getElementById("drop-row");
+    row.replaceChildren();
+    DROP_REASONS.forEach(function (reason) {
+      var b = el("button", null, reason);
+      b.onclick = function () {
+        closeSheets();
+        sendDrop(card, reason);
+      };
+      row.appendChild(b);
+    });
+    showSheet("drop-sheet");
+  }
+
+  document.getElementById("drop-go").onclick = function () {
+    if (!dropCard) return;
+    var card = dropCard;
+    closeSheets();
+    sendDrop(card, null);
+  };
+
+  document.getElementById("split-open").onclick = function () {
+    if (!activeCard) return;
+    var card = activeCard;
+    closeSheets();
+    activeCard = card;
+    document.getElementById("split-user").value = card.title;
+    document.getElementById("split-bot").value = "";
+    showSheet("split-sheet");
+  };
+  document.getElementById("split-go").onclick = function () {
+    if (!activeCard) return;
+    var id = activeCard.id;
+    var userPart = document.getElementById("split-user").value;
+    var botPart = document.getElementById("split-bot").value;
+    closeSheets();
+    post("/cards/" + id + "/split", { user_part: userPart, bot_part: botPart })
+      .then(function () { refresh(true); })
+      .catch(function (e) { fail(e.message); });
+  };
+
+  document.getElementById("add-btn").onclick = function () {
+    var sel = document.getElementById("add-cluster");
+    if (!sel.options.length) {
+      CLUSTERS.forEach(function (cl) {
+        var o = document.createElement("option");
+        o.value = cl; o.textContent = cl;
+        sel.appendChild(o);
+      });
+    }
+    document.getElementById("add-title").value = "";
+    showSheet("add-sheet");
+  };
+  document.getElementById("add-go").onclick = function () {
+    var title = document.getElementById("add-title").value.trim();
+    if (!title) return;
+    var cluster = document.getElementById("add-cluster").value;
+    closeSheets();
+    post("/cards", { title: title, cluster: cluster, lane: "inbox" })
+      .then(function () { refresh(true); })
+      .catch(function (e) { fail(e.message); });
+  };
+
+  refresh();
+  setInterval(refresh, 30000);
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) refresh();
+  });
+})();
+</script>
+</body>
+</html>

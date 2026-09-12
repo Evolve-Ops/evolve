@@ -1,0 +1,417 @@
+{
+  "_comment": [
+    "Shared cross-language pin for conversation-only evidence (AL-1.6c).",
+    "design-app-spec-and-discovery-2026-08-15.md section 7.1a.",
+    "BOTH implementations assert against this file:",
+    "  packages/plugin/src/observer/recurringRequest.ts  (in-bot writer)",
+    "  packages/admin/evolve_admin/applications/conversation_recurrence.py",
+    "They must agree token-for-token: the bot writes labels with the TS",
+    "normalizer, the memory-evidence path writes them with the Python one,",
+    "and recurrence compares the two to each other. A token added to one",
+    "vocabulary and not the other would silently halve the detector's",
+    "recall, so the vocabularies themselves are pinned here, not just the",
+    "outputs."
+  ],
+  "constants": {
+    "max_label_tokens": 6,
+    "min_label_tokens": 2,
+    "max_label_tags": 4,
+    "max_scan_chars": 400,
+    "max_tag_chars": 32
+  },
+  "vocabulary": {
+    "synthetic_prefixes": [
+      "[cron",
+      "[heartbeat",
+      "[scheduled",
+      "[system",
+      "[trigger"
+    ],
+    "sentinel_texts": [
+      "ack",
+      "heartbeat_ok",
+      "no_reply",
+      "noop",
+      "ok"
+    ],
+    "volatile_tokens": [
+      "again",
+      "am",
+      "apr",
+      "april",
+      "aug",
+      "august",
+      "cdt",
+      "cst",
+      "daily",
+      "dec",
+      "december",
+      "each",
+      "edt",
+      "est",
+      "every",
+      "feb",
+      "february",
+      "fri",
+      "friday",
+      "gmt",
+      "hr",
+      "hrs",
+      "jan",
+      "january",
+      "jul",
+      "july",
+      "jun",
+      "june",
+      "mar",
+      "march",
+      "may",
+      "mdt",
+      "min",
+      "mins",
+      "mon",
+      "monday",
+      "mst",
+      "nov",
+      "november",
+      "oclock",
+      "oct",
+      "october",
+      "pdt",
+      "pm",
+      "pst",
+      "sat",
+      "saturday",
+      "sep",
+      "sept",
+      "september",
+      "sun",
+      "sunday",
+      "thu",
+      "thur",
+      "thurs",
+      "thursday",
+      "today",
+      "todays",
+      "tomorrow",
+      "tomorrows",
+      "tue",
+      "tues",
+      "tuesday",
+      "usual",
+      "usually",
+      "utc",
+      "wed",
+      "wednesday",
+      "weekly",
+      "yesterday",
+      "yesterdays"
+    ],
+    "stopwords": [
+      "a",
+      "about",
+      "all",
+      "am",
+      "an",
+      "and",
+      "any",
+      "are",
+      "as",
+      "at",
+      "be",
+      "been",
+      "but",
+      "by",
+      "can",
+      "could",
+      "did",
+      "do",
+      "does",
+      "done",
+      "for",
+      "from",
+      "get",
+      "gimme",
+      "give",
+      "go",
+      "good",
+      "got",
+      "hello",
+      "help",
+      "here",
+      "hey",
+      "hi",
+      "how",
+      "hows",
+      "i",
+      "id",
+      "if",
+      "im",
+      "in",
+      "into",
+      "is",
+      "it",
+      "its",
+      "ive",
+      "just",
+      "let",
+      "lets",
+      "like",
+      "make",
+      "may",
+      "me",
+      "might",
+      "mine",
+      "must",
+      "my",
+      "need",
+      "now",
+      "of",
+      "ok",
+      "okay",
+      "on",
+      "onto",
+      "or",
+      "our",
+      "out",
+      "over",
+      "please",
+      "pls",
+      "plz",
+      "put",
+      "run",
+      "send",
+      "shall",
+      "should",
+      "show",
+      "so",
+      "some",
+      "tell",
+      "thank",
+      "thanks",
+      "that",
+      "the",
+      "then",
+      "there",
+      "these",
+      "this",
+      "those",
+      "to",
+      "up",
+      "us",
+      "wanna",
+      "want",
+      "was",
+      "we",
+      "were",
+      "what",
+      "whats",
+      "when",
+      "where",
+      "which",
+      "who",
+      "whos",
+      "why",
+      "will",
+      "with",
+      "would",
+      "yo",
+      "you",
+      "your",
+      "yours"
+    ]
+  },
+  "normalize_cases": [
+    {
+      "name": "design-example ask normalizes to the design's own label head",
+      "input": "Can you give me my morning summary please?",
+      "expected": "morning summary"
+    },
+    {
+      "name": "politeness and framing collapse to the same key",
+      "input": "morning summary",
+      "expected": "morning summary"
+    },
+    {
+      "name": "cron-prefixed synthetic turn is refused",
+      "input": "[cron:2ac901db] run the content schedule watcher",
+      "expected": null
+    },
+    {
+      "name": "heartbeat sentinel is refused",
+      "input": "HEARTBEAT_OK",
+      "expected": null
+    },
+    {
+      "name": "no-reply sentinel is refused",
+      "input": "NO_REPLY",
+      "expected": null
+    },
+    {
+      "name": "thanks alone is too thin",
+      "input": "thanks!",
+      "expected": null
+    },
+    {
+      "name": "dates and relative days are dropped, subject survives",
+      "input": "What's on my calendar today and tomorrow? Check email at 9am.",
+      "expected": "calendar check email"
+    },
+    {
+      "name": "greeting and cadence adverb dropped, subject survives",
+      "input": "Good morning! Please send me the daily standup notes for the team.",
+      "expected": "morning standup notes team"
+    },
+    {
+      "name": "non-latin script yields no key rather than a garbage one",
+      "input": "おはよう、今日の予定を教えて",
+      "expected": null
+    },
+    {
+      "name": "repeated tokens are de-duplicated in first-seen order",
+      "input": "summary summary summary of my email email",
+      "expected": "summary email"
+    },
+    {
+      "name": "digits cannot survive into a label",
+      "input": "give me the sales report for 2026-08-19",
+      "expected": "sales report"
+    },
+    {
+      "name": "a single content token is below the floor",
+      "input": "weather",
+      "expected": null
+    },
+    {
+      "name": "label is capped at MAX_LABEL_TOKENS",
+      "input": "alpha bravo charlie delta echo foxtrot golf",
+      "expected": "alpha bravo charlie delta echo foxtrot"
+    },
+    {
+      "name": "tokens shorter than three characters are dropped",
+      "input": "an ai bot summary report",
+      "expected": "bot summary report"
+    },
+    {
+      "name": "empty string yields no key",
+      "input": "",
+      "expected": null
+    },
+    {
+      "name": "whitespace only yields no key",
+      "input": "   \n\t ",
+      "expected": null
+    },
+    {
+      "name": "null input yields no key",
+      "input": null,
+      "expected": null
+    },
+    {
+      "name": "non-string input yields no key",
+      "input": 42,
+      "expected": null
+    },
+    {
+      "name": "markdown and emoji are separators; cadence adverbs still drop",
+      "input": "**Please** send the _weekly_ revenue digest 🚀",
+      "expected": "revenue digest"
+    },
+    {
+      "name": "a URL contributes only its alphabetic runs",
+      "input": "pull https://example.com/reports/q3 revenue digest",
+      "expected": "pull https example com reports revenue"
+    },
+    {
+      "name": "weekday names are volatile and dropped",
+      "input": "post the Monday standup reminder",
+      "expected": "post standup reminder"
+    },
+    {
+      "name": "only the first MAX_SCAN_CHARS are inspected",
+      "input": "wordaa wordab wordac wordad wordae wordaf wordag wordah wordai wordaj wordba wordbb wordbc wordbd wordbe wordbf wordbg wordbh wordbi wordbj wordca wordcb wordcc wordcd wordce wordcf wordcg wordch wordci wordcj wordda worddb worddc worddd wordde worddf worddg worddh worddi worddj wordea wordeb wordec worded wordee wordef wordeg wordeh wordei wordej wordfa wordfb wordfc wordfd wordfe wordff wordfg wordfh wordfi wordfj zzzmarker",
+      "expected": "wordaa wordab wordac wordad wordae wordaf"
+    },
+    {
+      "name": "astral characters do not shift the scan boundary (3 emoji)",
+      "input": "🚀🚀🚀 padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding alpha bravo charlie delta echo",
+      "expected": "padding alpha bravo"
+    },
+    {
+      "name": "astral characters do not shift the scan boundary (7 emoji)",
+      "input": "🚀🚀🚀🚀🚀🚀🚀 padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding alpha bravo charlie delta echo",
+      "expected": "padding alpha"
+    },
+    {
+      "name": "astral characters do not shift the scan boundary (11 emoji)",
+      "input": "🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀 padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding alpha bravo charlie delta echo",
+      "expected": "padding alpha bravo"
+    }
+  ],
+  "compose_cases": [
+    {
+      "name": "no tags leaves the head alone",
+      "head": "morning summary",
+      "tags": [],
+      "expected": "morning summary"
+    },
+    {
+      "name": "tags are sorted and joined",
+      "head": "morning summary",
+      "tags": [
+        "email",
+        "calendar"
+      ],
+      "expected": "morning summary: calendar + email"
+    },
+    {
+      "name": "tags are de-duplicated and lowercased",
+      "head": "morning summary",
+      "tags": [
+        "Email",
+        "email",
+        "calendar"
+      ],
+      "expected": "morning summary: calendar + email"
+    },
+    {
+      "name": "tags are capped at MAX_LABEL_TAGS",
+      "head": "digest",
+      "tags": [
+        "e",
+        "d",
+        "c",
+        "b",
+        "a"
+      ],
+      "expected": "digest: a + b + c + d"
+    },
+    {
+      "name": "tags with digits are sanitized out of the composed label",
+      "head": "morning summary",
+      "tags": [
+        "invoice-4111111111111111",
+        "email"
+      ],
+      "expected": "morning summary: email + invoice"
+    },
+    {
+      "name": "tag length is capped",
+      "head": "digest",
+      "tags": [
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      ],
+      "expected": "digest: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    {
+      "name": "content-free tags are dropped entirely",
+      "head": "digest",
+      "tags": [
+        "2026",
+        "  --  ",
+        ""
+      ],
+      "expected": "digest"
+    }
+  ]
+}

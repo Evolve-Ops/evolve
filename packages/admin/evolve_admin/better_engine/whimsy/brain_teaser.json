@@ -1,0 +1,37 @@
+[
+  {
+    "id": "whimsy_seed_007",
+    "type": "brain_teaser",
+    "content": "A farmer has 17 sheep. All but 9 die. How many sheep does the farmer have left?",
+    "answer": "9 sheep. \"All but 9\" means 9 survived.",
+    "created_at": "2026-04-16T00:00:00Z"
+  },
+  {
+    "id": "whimsy_seed_078",
+    "type": "brain_teaser",
+    "content": "A man drives away from home, turns left, turns left again, turns left a third time, and arrives back where he started to find two masked men waiting. What's happening?",
+    "answer": "He's playing baseball. \"Home\" is home plate; he turned left at first, second, and third base, then returned to home. The two masked men are the catcher and the umpire.",
+    "created_at": "2026-04-16T00:00:00Z"
+  },
+  {
+    "id": "whimsy_seed_079",
+    "type": "brain_teaser",
+    "content": "You have two ropes and a lighter. Each rope burns in exactly one hour but not uniformly — one section might burn faster than another. How do you measure exactly 45 minutes?",
+    "answer": "Light both ends of the first rope and one end of the second. When the first rope finishes (30 min), light the other end of the second rope. It will burn out in exactly 15 more minutes. Total: 45 minutes.",
+    "created_at": "2026-04-16T00:00:00Z"
+  },
+  {
+    "id": "whimsy_seed_080",
+    "type": "brain_teaser",
+    "content": "A rooster is sitting on a roof ridge that slopes equally to the north and south. If it lays an egg, which side does the egg roll down?",
+    "answer": "Neither — roosters don't lay eggs.",
+    "created_at": "2026-04-16T00:00:00Z"
+  },
+  {
+    "id": "whimsy_seed_081",
+    "type": "brain_teaser",
+    "content": "What is the next letter in this sequence: O, T, T, F, F, S, S, E, N, ___?",
+    "answer": "T. These are the first letters of One, Two, Three, Four, Five, Six, Seven, Eight, Nine, Ten.",
+    "created_at": "2026-04-16T00:00:00Z"
+  }
+]

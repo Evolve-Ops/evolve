@@ -1,0 +1,50 @@
+id: bloat_investigator
+schema_version: 1
+type: optimizer
+dimension: cost
+bucket: improve
+# Surface routing: firing. The proposal names an actively-burning cost
+# root cause — "this 43 KB workspace file is injected into every turn's
+# envelope" describes money being spent right now, not slow drift the
+# operator can defer reviewing. Moved from drift → firing in the
+# 2026-06-04 charter-surface recalibration: the original drift tag
+# applied if you read this generator as "envelope growth advisor," but
+# it actually emits in response to acute cost incidents (the team_bot_a
+# $7.67 session that motivated bloat_investigator's reference
+# implementation). Spec:
+# internal/spec-recommendations-rework-2026-06-02.md §"Generator routing".
+surface: firing
+purpose: >
+  Reference implementation of the investigate-before-propose pattern
+  (internal/spec-smarter-generators-2026-05-28.md §"The generator
+  architecture upgrade"). Consumes the Phase-1 envelope-growth Signal
+  family from cost_watchdog — context_bloat, workspace_growth,
+  cache_envelope_growth, efficiency_drift — and runs attribution rules
+  against them to name a root cause rather than restating the symptom.
+  When attribution is confident, emits an Investigation Proposal that
+  points at the offending file with file_top_contributors evidence.
+  When attribution is ambiguous, emits an Investigation Proposal with
+  the gathered evidence so the operator can decide.
+cadence: daily
+# Sensor-style: when the underlying Signals stop firing (operator
+# rotated the file, cache envelope returned to baseline), the proposal
+# auto-archives via the standard resolves_when_silent loop.
+resolves_when_silent: true
+invariants:
+  - id: action_kind_allowed
+    description: >
+      Bloat Investigator emits Investigation Proposals only — concrete
+      file edits (rotation, trimming) require an L2 applier we haven't
+      built yet. The named cause + file_top_contributors evidence is
+      enough for the operator to act manually.
+    check_kind: action_kind_allowed
+    params:
+      allowlist: [Investigation]
+  - id: touches_forbidden
+    description: >
+      Bloat Investigator does not touch auth, tools, channel_config, or
+      gateway_core. It can only suggest workspace file edits via prose;
+      no autonomous writes.
+    check_kind: touches_forbidden
+    params:
+      forbidden: [auth, tools, channel_config, gateway_core]
