@@ -1,0 +1,195 @@
+#!/usr/bin/env python3
+"""dup-primitive-lint — hard gate on re-defining the shared primitives.
+
+Phase 6.2 of the 80→100 roadmap consolidated three families of duplicated
+helpers into blessed homes:
+
+  atomic write   → evolve_util.atomic_write_text / atomic_write_json
+  UTC timestamp  → evolve_util.now_iso / now_iso_offset / now_iso_micro
+  bot identity   → evolve_config.bot_home / get_bot_user
+                   (re-exported with admin-flavoured defaults by
+                   evolve_admin.config — that delegation is allowlisted)
+
+Before consolidation, 44 files defined their own atomic write, 81 their
+own now-iso, and 20 their own bot-home — several of the bot-home copies
+carried the bot_id≠macOS-account bug class (Path(f"/Users/{bot_id}")).
+A bug fixed in one copy stayed broken in the others.
+
+Unlike except-pass-lint there is NO baseline: migration was completed in
+the same PR that added this gate, so any hit is a regression. Import the
+blessed implementation instead — with an alias if you want to keep a
+local name::
+
+    from evolve_util import atomic_write_json as _atomic_write_json
+
+Detection is AST-based: any ``def``/``async def`` whose name (modulo a
+single leading underscore) is in the banned set, outside the blessed
+files. If you legitimately need a same-named function with DIFFERENT
+semantics (rare — e.g. plist-authoritative user resolution), rename it
+to say what it actually does; the collision with a blessed name is
+exactly the confusion this gate exists to prevent.
+
+Usage:
+  tools/dup-primitive-lint <file.py> [...]   # lint specific files
+  tools/dup-primitive-lint --all             # lint all production .py
+  tools/dup-primitive-lint --staged          # lint git-staged .py
+
+Exit status: 0 clean; 1 if any banned definition is found.
+"""
+from __future__ import annotations
+
+import argparse
+import ast
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+_LINT_ROOTS = ("packages",)
+
+# Files allowed to define the primitives (the blessed homes).
+_ALLOWLIST = {
+    "packages/analyzer/evolve_util.py",
+    "packages/analyzer/evolve_config.py",
+    # Thin delegation with admin-flavoured defaults (load_network()).
+    "packages/admin/evolve_admin/config.py",
+}
+
+# Banned definition names, matched after stripping one leading underscore.
+_BANNED = {
+    # atomic-write family → evolve_util
+    "atomic_write",
+    "atomic_write_text",
+    "atomic_write_json",
+    "atomic_write_str",
+    "atomic_write_bytes",
+    "write_atomic",
+    # now-iso family → evolve_util
+    "now_iso",
+    "utc_now_iso",
+    "now_iso_offset",
+    "now_iso_micro",
+    "now_iso_utc",
+    "iso_now",
+    # bot-identity family → evolve_config (re-exported by evolve_admin.config)
+    "bot_home",
+    "get_bot_user",
+    "bot_user",
+    "bot_user_for",
+    "bot_home_dir",
+    "bot_home_path",
+    "resolve_bot_home",
+    # account-name home resolution (8.3 portability sweep) → evolve_config
+    "user_home",
+    "user_home_dir",
+    "home_for_user",
+}
+
+
+def _is_test_path(rel: str) -> bool:
+    parts = rel.replace("\\", "/").split("/")
+    if any(p in ("tests", "test") for p in parts):
+        return True
+    base = parts[-1]
+    return base.startswith("test_") or base == "conftest.py"
+
+
+def _banned_defs(path: Path) -> list[tuple[int, str]]:
+    """(lineno, name) for every banned function definition in *path*."""
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (SyntaxError, UnicodeDecodeError, ValueError):
+        return []
+    hits: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            name = node.name
+            stripped = name[1:] if name.startswith("_") else name
+            if stripped in _BANNED:
+                hits.append((node.lineno, name))
+    return hits
+
+
+def _iter_production_files() -> list[Path]:
+    out: list[Path] = []
+    for root in _LINT_ROOTS:
+        for dirpath, _dirs, files in os.walk(REPO_ROOT / root):
+            if "__pycache__" in dirpath:
+                continue
+            for f in files:
+                if not f.endswith(".py"):
+                    continue
+                p = Path(dirpath) / f
+                rel = str(p.relative_to(REPO_ROOT))
+                if _is_test_path(rel):
+                    continue
+                out.append(p)
+    return out
+
+
+def _staged_py_files() -> list[Path]:
+    r = subprocess.run(
+        ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+    )
+    out = []
+    for name in r.stdout.splitlines():
+        if name.endswith(".py") and not _is_test_path(name):
+            p = REPO_ROOT / name
+            if p.exists():
+                out.append(p)
+    return out
+
+
+def _rel(p: Path) -> str:
+    try:
+        return str(p.resolve().relative_to(REPO_ROOT))
+    except ValueError:
+        return str(p)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("files", nargs="*", help="specific .py files to lint")
+    ap.add_argument("--all", action="store_true", help="lint all production files")
+    ap.add_argument("--staged", action="store_true", help="lint git-staged files")
+    args = ap.parse_args()
+
+    if args.all:
+        targets = _iter_production_files()
+    elif args.staged:
+        targets = _staged_py_files()
+    else:
+        targets = [Path(f) for f in args.files]
+        if not targets:
+            ap.print_usage()
+            return 2
+
+    failed = False
+    for p in targets:
+        rel = _rel(p)
+        if rel in _ALLOWLIST or _is_test_path(rel):
+            continue
+        for lineno, name in _banned_defs(p):
+            failed = True
+            print(
+                f"{rel}:{lineno}: def {name} — re-defines a shared primitive; "
+                f"import it from evolve_util / evolve_config instead "
+                f"(alias if you want the local name)."
+            )
+
+    if failed:
+        print(
+            "\ndup-primitive-lint: new local copies of shared primitives "
+            "found (see above). One blessed home per primitive — "
+            "tools/dup-primitive-lint docstring has the mapping.",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

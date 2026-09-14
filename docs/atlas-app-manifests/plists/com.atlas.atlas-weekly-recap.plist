@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.atlas.atlas-weekly-recap</string>
+  <key>UserName</key>
+  <string>atlas</string>
+  <key>GroupName</key>
+  <string>staff</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/atlas/.openclaw/workspace/scripts/atlas-recap-cron.sh</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>TZ</key>
+    <string>America/Los_Angeles</string>
+  </dict>
+  <!-- StartCalendarInterval: default Sunday at 09:00 local. Substitute at install time via:
+       plutil -replace StartCalendarInterval.Weekday -integer 0 <plist>
+       plutil -replace StartCalendarInterval.Hour -integer $H <plist>
+       plutil -replace StartCalendarInterval.Minute -integer $M <plist>
+       (Weekday: Sunday=0, Monday=1, ..., Saturday=6) -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key>
+    <integer>0</integer>
+    <key>Hour</key>
+    <integer>9</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/tmp/atlas-atlas-recap-out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/atlas-atlas-recap-err.log</string>
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>

@@ -1,0 +1,24 @@
+
+── OpenClaw Upgrade ──────────────────────────────────
+  Installed:  2026.7.0
+  Checking npm registry…  Latest:     2026.7.1      
+
+  Upgrading 2026.7.0 → 2026.7.1
+
+  Running safe-upgrade preflight…
+  ✅ preflight: all gates passed
+  Running: install -g --prefix=/opt/homebrew openclaw@2026.7.1
+  ❌ npm install failed:
+npm error code ENOTEMPTY
+npm error dest /opt/homebrew/lib/node_modules/.openclaw-2N5mgx4q
+
+
+  → Found stale npm temp dir at /opt/homebrew/lib/node_modules/.openclaw-2N5mgx4q.
+     This is residue from a prior failed `npm install -g openclaw` — npm renames
+     the live dir to a `.openclaw-XXX` sibling during its atomic swap, and if the
+     install bails before completion the sibling is left behind, blocking the next
+     install's rename step with ENOTEMPTY. Remove it and retry:
+       sudo rm -rf /opt/homebrew/lib/node_modules/.openclaw-2N5mgx4q
+       sudo evolve-admin menu upgrade
+  Try running the command directly:
+    sudo npm install -g --prefix=/opt/homebrew openclaw@2026.7.1

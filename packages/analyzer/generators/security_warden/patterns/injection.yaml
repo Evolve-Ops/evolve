@@ -1,0 +1,69 @@
+# Prompt injection regex patterns — Stage 1 of the two-stage scanner.
+#
+# Each pattern is a high-precision marker for a known instruction-override
+# attack class. Stage 2 (LLM verifier in scanners/prompt_injection.py)
+# disambiguates true positives from quoted/educational uses.
+#
+# Spec: docs/archive/specs/spec-security-warden-completion-2026-04-18.md §4.3.
+#
+# Operator preference (narrow high-signal): start small with patterns that
+# rarely fire in legitimate prose. Add patterns only after measuring the
+# false-positive rate of the existing set on real transcripts.
+
+patterns:
+  - id: ignore_previous_instructions
+    description: >
+      Canonical override marker — "ignore/disregard/forget the previous instructions".
+      Verb list covers English (ignore/disregard/forget) plus non-English cognates
+      (olvida/oublie/esqueça/dimentica/vergiss/missachte) and noun list covers the
+      shared targets across English/Spanish/French/Portuguese/Italian/German.
+      Consolidated to avoid cross-language regex overlap producing
+      multi-pattern signatures.
+    regex: '(?i)\b(ignor[ae]|ignor[ae]z|disregard|forget|olvid[ae]|olvide|esqueç?[ae]|esquece|esqueca|oublie[zs]?|dimentic[ae]|descart[ae]|missachte|ignoriere|vergiss)\s+(\w+\s+){0,3}(instructions?|instrucci[oó]n\w*|instru[cç][õo]es|istruzioni|prompts?|rules?|reglas?|règles?|regras?|regole|normas?|directrices|directrizes|directives?|direttive|consignes|guidelines?|Anweisungen|Regeln|Richtlinien|Vorgaben|Aufforderungen)\b'
+
+  - id: system_tag_breakout
+    description: Closing/opening synthetic system or instruction tags to break out of a role boundary.
+    regex: '(?i)<\/?(system|instructions?|prompt|user|assistant)\s*>'
+
+  - id: system_prompt_marker
+    description: Inline "system prompt:" / "developer prompt:" markers attempting to inject as system.
+    regex: '(?im)^\s*(system|developer|admin)\s+prompt\s*:\s*\S'
+
+  - id: mandatory_override
+    description: All-caps imperatives common in injection payloads ("MANDATORY:", "NEVER OVERRIDE:", "SYSTEM OVERRIDE:").
+    regex: '\b(MANDATORY|NEVER\s+OVERRIDE|SYSTEM\s+OVERRIDE|OVERRIDE\s+ALL|CRITICAL\s+OVERRIDE)\s*[:.]'
+
+  - id: forget_your_role
+    description: Attempts to dissolve the bot's role or identity.
+    regex: '(?i)\bforget\s+(you\s+(are|were)|your\s+(role|identity|name|instructions|character|persona))\b'
+
+  - id: dan_jailbreak
+    description: Well-known DAN ("Do Anything Now") jailbreak persona.
+    regex: '(?i)\b(DAN|do\s+anything\s+now)\b.{0,120}\b(mode|persona|character|jailbreak|jailbroken|unrestricted|no\s+rules?|broken\s+free|confines|typical\s+(rules?|restrictions?|filters?|limits?))\b'
+
+  - id: developer_or_jailbreak_mode
+    description: Pretending the model has a special unrestricted mode.
+    regex: '(?i)\b(developer|jailbreak|unrestricted|god|sudo|root|admin)\s+mode\b'
+
+  - id: new_instructions_marker
+    description: "Inline 'new instructions:' / 'updated instructions:' attempting to replace the system prompt."
+    regex: '(?i)\b(new|updated|revised|replacement|additional)\s+(instructions?|directives?|rules?)\s*:\s*\S'
+
+  - id: pretend_or_simulate_no_rules
+    description: Pretend / simulate / role-play framing combined with jailbreak / no-rules language.
+    regex: '(?i)\b(pretend|simulate|act\s+as|role[-\s]?play\s+as)\b.{0,80}\b(jailbroken|jailbreak|unrestricted|no\s+(rules?|restrictions?|filters?|guidelines?)|without\s+(rules|restrictions|filters|guidelines))\b'
+
+  # ── Multilingual role/persona coverage ──────────────────────────────────────
+  # The English-only forget_your_role and pretend_or_simulate_no_rules
+  # patterns above leave a gap for non-English versions of those attacks.
+  # The "ignore previous instructions" pattern was consolidated above; these
+  # remain separate because the role-noun and pretend-verb structures don't
+  # share a clean form between English and the Romance/German cluster.
+
+  - id: forget_your_role_multilingual
+    description: "Role-replacement framing in Spanish, French, Portuguese, Italian, German."
+    regex: '(?i)\b(olvid[ae]|esqueç?[ae]|oublie[zs]?|vergiss|dimentic[ae])\s+(tu\s+|ton\s+|ta\s+|seu\s+|sua\s+|deine[nm]?\s+|il\s+tuo\s+|la\s+tua\s+)(rol|papel|r[oô]le|identidad[e]?|identidade|identit[éà]|ruolo|persona|nombre|nome|nom|Rolle|Identit[äa]t)\b'
+
+  - id: pretend_no_rules_multilingual
+    description: "Pretend / act-as / simulate framing combined with no-rules language in Spanish, French, Portuguese, Italian, German."
+    regex: '(?i)\b(act[uú]a|simula|simul[ae]|finja|finge|finjas|haz\s+como\s+si|fais\s+(comme\s+si|semblant)|tu\s+so\s+als|fingi)\b.{0,100}\b(sin\s+(reglas|restricciones|filtros|límites|limites)|sans\s+(règles|restrictions|filtres|limites)|sem\s+(regras|restrições|filtros|limites)|ohne\s+(Regeln|Beschränkungen|Filter|Grenzen)|senza\s+(regole|restrizioni|filtri|limiti)|jailbroken|jailbreak)\b'

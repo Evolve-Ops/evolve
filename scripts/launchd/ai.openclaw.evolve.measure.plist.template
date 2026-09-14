@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- 
+  Evolve daily metrics measurement job.
+  Replace BOT_USER and WORKSPACE_PATH before installing.
+  Install: sudo cp <file> /Library/LaunchDaemons/ && sudo launchctl load <file>
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.openclaw.evolve.measure.BOT_USER</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>WORKSPACE_PATH/evolve/measure.py</string>
+        <string>--network</string>
+        <string>WORKSPACE_PATH/evolve/network.json</string>
+    </array>
+
+    <key>UserName</key>
+    <string>BOT_USER</string>
+
+    <!-- Daily at 1:00 AM local time -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>1</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/BOT_USER/.openclaw/logs/evolve-measure.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/BOT_USER/.openclaw/logs/evolve-measure.err.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>

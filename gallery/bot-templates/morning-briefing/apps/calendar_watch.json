@@ -1,0 +1,118 @@
+{
+  "schema_version": 5,
+  "manifest_type": "evolve_application",
+  "id": "app_calendar_watch",
+  "name": "Calendar Watch",
+  "display_name": "Calendar Watch",
+  "author": "evolve",
+  "description": "Lightweight calendar monitor. Flags scheduling conflicts, surfaces the first event when traveling, and alerts on same-day additions. Complements the Morning Briefing app — quiet by default, speaks up when something needs attention.",
+  "status": "active",
+
+  "skill_deps": ["calendar"],
+  "optional_skill_deps": [],
+
+  "dependencies": [],
+  "app_dependencies": [],
+
+  "requirements": {
+    "integrations": ["calendar"],
+    "secrets": [],
+    "system": [],
+    "python_packages": []
+  },
+
+  "interface_contract": {
+    "populated_by_forge": false,
+    "extracted_at": null,
+    "data_files": [],
+    "cli": [
+      {
+        "command": "python3 scripts/calendar_watch.py check",
+        "key_flags": [
+          "--lookahead-hours N",
+          "--conflict-buffer-min N",
+          "--quiet"
+        ],
+        "output_signals": [
+          "CONFLICT:",
+          "FIRST_EVENT:",
+          "SAME_DAY_ADDED:",
+          "WATCH_OK"
+        ]
+      }
+    ],
+    "key_paths": {
+      "cli":           "scripts/calendar_watch.py",
+      "cron_trigger":  "scripts/calendar-watch-cron.sh"
+    },
+    "signal_prefixes": ["CONFLICT:", "FIRST_EVENT:", "SAME_DAY_ADDED:", "WATCH_OK"],
+    "cron_schedule": "every 30 minutes (configurable)"
+  },
+
+  "identity": {
+    "purpose": "Stay quiet unless the calendar needs attention. When something conflicts, overlaps, or is added same-day with no buffer, alert the operator once and wait for acknowledgment.",
+    "scope_includes": [
+      "Scan today's calendar events for overlapping or back-to-back conflicts (configurable buffer, default 0 min — flag exact overlaps only)",
+      "Surface the first event of the day as a reminder when the operator is in a different timezone ('your 9am call is in 40 minutes')",
+      "Alert on same-day calendar additions that were not in the morning briefing",
+      "Emit structured output signals parseable by the briefing app and verify daemon"
+    ],
+    "scope_excludes": [
+      "Creating, editing, or deleting calendar events",
+      "Sending alerts for events that have already passed",
+      "Monitoring calendars beyond the operator's primary calendar",
+      "Integration with task management or email"
+    ],
+    "user": "The bot operator — alerts sent to their configured messaging channel when something needs attention. Silent (WATCH_OK) when nothing does."
+  },
+
+  "build_spec": "# Calendar Watch — Build Specification\n\n## Overview\n\nBuild a lightweight calendar monitor that runs every 30 minutes (or on demand) and alerts only when something needs attention. The key design constraint: **silent by default**. `WATCH_OK` means the check ran and nothing needs attention. An alert means something specific.\n\n---\n\n## File Layout\n\n```\nscripts/\n  calendar_watch.py        ← main CLI: check\n  calendar-watch-cron.sh   ← cron trigger\n```\n\n---\n\n## scripts/calendar_watch.py — CLI\n\n### `check`\nScan the operator's calendar for conditions worth alerting on.\n\n**Conflict detection:**\n- Fetch today's events (Calendar skill, calendar.readonly)\n- Flag any pair where event A ends after event B starts (or within `--conflict-buffer-min` minutes, default 0 = exact overlap only)\n- Emit `CONFLICT: [{time}] {EventA} overlaps {EventB}` for each conflict found\n- Send a channel alert the first time a conflict is found; don't re-alert for the same pair\n\n**First-event reminder:**\n- If the operator's `time_zone` differs from system timezone (traveling indicator), surface the first event with local + home timezone: `FIRST_EVENT: {event} at {local_time} ({home_time} home)`\n- Only emit once per event (deduplicate via a seen-events set, written to a temp file)\n\n**Same-day additions:**\n- Compare current event list against the list seen at briefing time (stored in memory/today-snapshot.json)\n- If a new event appears: `SAME_DAY_ADDED: {event} added at {time}`\n- Update the snapshot\n\n**Output contract:**\n- Any alerts found: emit the relevant signals, send channel message, exit 0\n- No alerts: emit `WATCH_OK` to stdout, exit 0 silently (no channel message)\n- API failure: emit `WATCH_FAILED: {reason}` to stderr, exit 1\n\n---\n\n## Deduplication\n\nTrack which conflict pairs and same-day additions have already been alerted on:\n- Write to `memory/today-alerts.json` (reset at midnight)\n- Format: `{\"alerted\": [\"EventA|EventB\", \"new:EventC\"], \"date\": \"YYYY-MM-DD\"}`\n- Check this before sending any alert; skip if already sent\n\n---\n\n## calendar-watch-cron.sh\n\n```bash\n#!/bin/bash\n# calendar-watch-cron.sh — runs every 30 minutes\n# Alerts operator only when something needs attention.\n\nWORKSPACE=\"/Users/{bot_id}/.openclaw/workspace\"\nLOGFILE=\"/tmp/{bot_id}-calendar-watch.log\"\n\nOUTPUT=$(python3 \"$WORKSPACE/scripts/calendar_watch.py\" check 2>&1)\nEXIT_CODE=$?\n\nif echo \"$OUTPUT\" | grep -qE \"^(CONFLICT|FIRST_EVENT|SAME_DAY_ADDED):\" ; then\n    echo \"$OUTPUT\" >> \"$LOGFILE\"\nfi\n\nexit $EXIT_CODE\n```\n\nRegister as a system-context LaunchDaemon at `/Library/LaunchDaemons/com.{bot_id}.calendar-watch.plist` with `StartInterval` of 1800 (30 min). LaunchAgents (~/Library/LaunchAgents/) don't load on the headless mini — no GUI session — so LaunchDaemons running as the bot user via `UserName` are the right shape.\n\n---\n\n## Test sequence\n\n```bash\n# 1. Syntax check\npython3 -m py_compile scripts/calendar_watch.py\n\n# 2. Check — expect WATCH_OK or structured output (depends on actual calendar state)\npython3 scripts/calendar_watch.py check\n# Expected exit 0 in both cases\n\n# 3. Executable\ntest -x scripts/calendar-watch-cron.sh && echo 'OK: cron script executable'\n```\n",
+
+  "example_triggers": [
+    "Do I have any conflicts today?",
+    "Check my calendar for problems",
+    "What time is my first meeting?",
+    "Any new events added since this morning?"
+  ],
+
+  "test_cases": [
+    {
+      "trigger": "Do I have any conflicts today?",
+      "expected": "Call calendar_watch.py check, report any CONFLICT: signals found or 'No conflicts today' if WATCH_OK"
+    },
+    {
+      "trigger": "What time is my first meeting?",
+      "expected": "Surface the first event from today's calendar with start time in the operator's configured timezone"
+    }
+  ],
+
+  "success_criteria": {
+    "observable_outcomes": [
+      "Conflict alerts arrive before the conflicting events (not after)",
+      "Silent when no conflicts — no spurious notifications",
+      "Same conflict not re-alerted across successive runs",
+      "WATCH_OK emitted every run (parseable by verify daemon for uptime tracking)"
+    ],
+    "failure_signals": [
+      "WATCH_FAILED: — Calendar API access failed; check the Google OAuth profile shared by the gmail + calendar skills",
+      "Re-alerting the same conflict every 30 minutes (dedup broken)"
+    ],
+    "quality_bar": {
+      "minimum": "Operator learns about a scheduling conflict before the event, not after",
+      "excellent": "Operator never has to manually check for conflicts — the watch handles it, silently, unless something needs attention"
+    }
+  },
+
+  "constraints": {
+    "safety": [
+      "Read-only Calendar access only",
+      "Never alerts for events that have already started (filter by start > now)"
+    ],
+    "dependencies": ["calendar (required) — Google Calendar read via Google OAuth"],
+    "boundaries": [
+      "Monitors today only — tomorrow's events are covered by the morning briefing",
+      "Does not auto-resolve conflicts — alerts operator and waits",
+      "Does not read or interact with email"
+    ]
+  }
+}

@@ -1,0 +1,251 @@
+name: oc-contract
+
+# The OpenClaw compatibility contract, run against a REAL installed OpenClaw.
+#
+# Design: internal/design-oc-upgrade-safety-2026-09-08.md §2 row 3. On
+# 2026-09-07 one click moved nine bots from OC 2026.7.1 to 2026.9.2 and every
+# Evolve-side failure that followed was an assumption a point release had
+# changed without anyone checking. The contract
+# (packages/plugin/src/contract/) turns those assumptions into tests; this
+# workflow runs them against the versions the release claims, and against
+# whatever npm publishes next, so the answer exists BEFORE an operator is
+# offered the upgrade.
+#
+# WHY THIS IS A SEPARATE WORKFLOW, AND WHY IT NEVER GOES RED
+# A new OpenClaw release breaking one of Evolve's assumptions is news about
+# OpenClaw. It is not a reason to redden an unrelated plugin PR, and a red
+# nightly that nobody can fix in their own branch trains people to ignore it.
+# So the contract step is `continue-on-error` and the verdict is published
+# three ways instead: the job summary, an uploaded artifact, and — on a
+# failure — a tracking issue naming the checks. The plugin's own gates
+# (plugin-tsc in ci.yml) are untouched.
+#
+# WHY IT DOES NOT COMMIT THE MATRIX ROW
+# `internal/oc-compatibility.md` is the published matrix, and this job
+# produces its rows — but it does not push them. Pushing to `main` from CI
+# would move the canary release pointer's candidate stream (CLAUDE.md,
+# "release mode"), and opening a PR from CI does not work in this repo on the
+# default token (see the AUTH history in help-refresh.yml: six silent weekly
+# failures). The row is therefore emitted into the summary, the artifact and
+# the issue, ready to paste — the file is updated by the change that lands the
+# compatibility work.
+
+on:
+  pull_request:
+    paths:
+      - "packages/plugin/**"
+      - "packages/admin/evolve_admin/deploy.py"
+      - ".github/workflows/oc-contract.yml"
+  schedule:
+    # Nightly, at a quiet hour. Cron has no timezone.
+    - cron: "37 4 * * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "OpenClaw version to test (default: the tested list + npm latest)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: oc-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  targets:
+    name: Resolve OpenClaw versions to test
+    runs-on: ubuntu-latest
+    outputs:
+      versions: ${{ steps.pick.outputs.versions }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: pick
+        name: Tested versions + npm latest
+        # The union, deliberately: the tested list is what this release
+        # CLAIMS (and a regression there is the most important failure we can
+        # find), and npm latest is the version an operator's Update card is
+        # about to show them. An empty tested list — the honest state until
+        # the contract first goes green — still yields npm latest, so the
+        # nightly always has something to say.
+        run: |
+          set -euo pipefail
+          explicit='${{ inputs.version }}'
+          if [ -n "$explicit" ]; then
+            printf 'versions=%s\n' "$(printf '%s' "$explicit" | jq -Rc 'split(",")|map(gsub("^\\s+|\\s+$";""))|map(select(length>0))')" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          tested='[]'
+          if [ -f packages/plugin/compat.json ]; then
+            tested="$(jq -c '.openclaw.tested // []' packages/plugin/compat.json)"
+          fi
+          latest="$(curl -fsSL https://registry.npmjs.org/openclaw/latest | jq -r '.version')"
+          printf 'versions=%s\n' "$(jq -nc --argjson t "$tested" --arg l "$latest" '($t + [$l]) | unique')" >> "$GITHUB_OUTPUT"
+
+  contract:
+    name: Contract vs OpenClaw ${{ matrix.version }}
+    needs: targets
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ${{ fromJson(needs.targets.outputs.versions) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Build the plugin (the contract compiles with it)
+        working-directory: packages/plugin
+        run: |
+          npm ci --workspaces=false
+          npm run build
+
+      - name: Resolve the Node this OpenClaw requires
+        id: engine
+        # Found by this workflow's own first run: OpenClaw 2026.9.3 declares
+        # `engines.node: >=24.16.0 <25 || >=26.1.0` and its preinstall script
+        # HARD-FAILS under Node 22 — the version the plugin builds on. A
+        # matrix pinned to one Node can only ever test the past, so the
+        # runtime under test picks its own Node. (Evolve's pod-side
+        # `gate_node_version` preflight makes the same demand of the host; a
+        # contract run that could not honour it would be answering a
+        # different question than the operator's.)
+        run: |
+          set -euo pipefail
+          engines="$(curl -fsSL "https://registry.npmjs.org/openclaw/${{ matrix.version }}" \
+            | jq -r '.engines.node // ""')"
+          # First `>=X` clause wins; the trailing `<25`/alternative clauses
+          # only narrow it, and setup-node resolves a bare major to its latest.
+          major="$(printf '%s' "$engines" | grep -oE '>=[0-9]+' | head -1 | tr -d '>=')"
+          echo "engines=$engines" >> "$GITHUB_OUTPUT"
+          echo "node=${major:-22}" >> "$GITHUB_OUTPUT"
+          echo "OpenClaw ${{ matrix.version }} engines.node = ${engines:-(unset)} -> Node ${major:-22}"
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ steps.engine.outputs.node }}
+
+      - name: Install OpenClaw ${{ matrix.version }} to a scratch prefix
+        id: install
+        # An install that cannot happen is a contract ANSWER, not a workflow
+        # error — "this release needs a Node you do not have" is precisely the
+        # kind of thing an operator must learn before the Update card offers
+        # it. So this never fails the job; the verdict step reports it.
+        continue-on-error: true
+        # A PREFIX, never a global install: the contract's whole premise is
+        # side-by-side versions (oc-runtime-versioned-per-bot), and a global
+        # install here would make the runner's state order-dependent across
+        # the matrix legs.
+        run: |
+          set -euo pipefail
+          npm install --prefix "$RUNNER_TEMP/oc-${{ matrix.version }}" \
+            "openclaw@${{ matrix.version }}"
+
+      - name: Run the compatibility contract
+        id: contract
+        if: ${{ steps.install.outcome == 'success' }}
+        continue-on-error: true
+        # Read-only against the installed OpenClaw: the probe refuses
+        # write-capable flags by construction and runs every CLI invocation
+        # inside a throwaway HOME. There is no live bot on a runner, and this
+        # step must never acquire the habit of assuming one.
+        run: |
+          set -euo pipefail
+          node packages/plugin/dist/contract/cli.js \
+            --prefix "$RUNNER_TEMP/oc-${{ matrix.version }}" \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --json "$RUNNER_TEMP/contract-${{ matrix.version }}.json" \
+            --matrix internal/oc-compatibility.md \
+            | tee "$RUNNER_TEMP/contract-${{ matrix.version }}.txt"
+
+      - name: Publish the verdict
+        if: ${{ always() }}
+        run: |
+          set -uo pipefail
+          json="$RUNNER_TEMP/contract-${{ matrix.version }}.json"
+          {
+            echo "## OpenClaw ${{ matrix.version }}"
+            echo
+            echo "engines.node: \`${{ steps.engine.outputs.engines }}\` — tested on Node ${{ steps.engine.outputs.node }}"
+            echo
+            if [ "${{ steps.install.outcome }}" != "success" ]; then
+              echo "**Not installable here.** \`npm install openclaw@${{ matrix.version }}\` failed;"
+              echo "see the install step. A version Evolve cannot install is a version it"
+              echo "cannot validate, so it stays \"not yet validated\"."
+              echo
+            fi
+            if [ -f "$json" ]; then
+              echo '```'
+              cat "$RUNNER_TEMP/contract-${{ matrix.version }}.txt" || true
+              echo '```'
+              echo
+              echo "Matrix row for \`internal/oc-compatibility.md\`:"
+              echo
+              grep -F "| ${{ matrix.version }} |" internal/oc-compatibility.md || true
+            else
+              echo "The contract produced no run — see the step log."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the run
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: oc-contract-${{ matrix.version }}
+          path: |
+            ${{ runner.temp }}/contract-${{ matrix.version }}.json
+            ${{ runner.temp }}/contract-${{ matrix.version }}.txt
+            internal/oc-compatibility.md
+          if-no-files-found: warn
+
+      - name: File or refresh the tracking issue
+        # Only on the nightly / manual runs: a PR author who changed the
+        # plugin gets the verdict in their checks tab and does not need an
+        # issue opened under their commit. Deduped by title, exactly as
+        # publish-drift.yml does it — the working precedent in this repo.
+        if: ${{ always() && github.event_name != 'pull_request' && (steps.contract.outcome == 'failure' || steps.install.outcome != 'success') }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_TITLE: "OpenClaw contract fails on ${{ matrix.version }}"
+        run: |
+          set -uo pipefail
+          json="$RUNNER_TEMP/contract-${{ matrix.version }}.json"
+          {
+            echo "The OpenClaw compatibility contract does not pass on **${{ matrix.version }}**."
+            echo "Until it does, Evolve will not offer this version on the Update card"
+            echo "(it shows as \"not yet validated by Evolve\", with an operator override"
+            echo "behind a typed confirmation naming these checks)."
+            echo
+            echo "### Checks that did not pass"
+            echo
+            if [ -f "$json" ]; then
+              jq -r '.results[] | select(.status != "pass") | "- `\(.id)` (\(.status)) — \(.detail)\n  - incident: \(.incident)"' "$json"
+            elif [ "${{ steps.install.outcome }}" != "success" ]; then
+              echo "- \`npm install openclaw@${{ matrix.version }}\` failed, so no check could run."
+              echo "  \`engines.node\` is \`${{ steps.engine.outputs.engines }}\`; the run used Node ${{ steps.engine.outputs.node }}."
+            else
+              echo "- the contract produced no run; see the workflow log"
+            fi
+            echo
+            echo "Design: \`internal/design-oc-upgrade-safety-2026-09-08.md\` §2 row 3."
+            echo "Matrix: \`internal/oc-compatibility.md\`."
+            echo
+            echo "_Filed by .github/workflows/oc-contract.yml (run ${{ github.run_id }})._"
+          } > /tmp/oc-contract-issue.md
+
+          existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --search "\"$ISSUE_TITLE\" in:title" --json number,title \
+            --jq ".[] | select(.title == \"$ISSUE_TITLE\") | .number" | head -1)"
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --repo "$GITHUB_REPOSITORY" --body-file /tmp/oc-contract-issue.md
+            echo "refreshed tracking issue #$existing"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$ISSUE_TITLE" \
+              --body-file /tmp/oc-contract-issue.md
+            echo "filed a new tracking issue"
+          fi
