@@ -1,0 +1,41 @@
+# edr_triage_dev_issue — EDR-LOCAL charter-as-data (tiered-oversight Move 1).
+#
+# This file is DATA for EDR's future event loop (design-edr-2026-06-11.md
+# Q11): when the loop exists, it dispatches this generator on matching
+# Signals exactly as the product's signal-subscriber daemon dispatches
+# charter-subscribed generators. Until then it is the inspectable mandate
+# the module enforces in code (edr/edr/triage/dev_issue.py — the DATA
+# tables there are the executable form of this scope).
+#
+# Deliberately NOT registered under packages/analyzer/generators/ — that
+# tree ships to pods (guard G1: EDR is dev-env-only, never a pod
+# affordance), and the product's registry/runner are not wired to it.
+
+id: edr_triage_dev_issue
+subscribes_to:
+  - dev_issue
+
+scope: >
+  Triage firing dev_issue Signals in an EDR-local store into routed
+  Proposals: classification (bug/feature/noise/needs-classification),
+  severity on the signal scale (conservative; default info), the
+  agent-able-vs-human routing verdict, a target aspect from the
+  META-session-guide registry (default "unrouted (operator)"), and the
+  motivating_signals[] linkage. Pure Python, label/title-driven — no LLM
+  (rsi-low-cost-preference: LLM is escalation, not default).
+
+invariants:
+  - agent_able DEFAULTS TO HUMAN (design §6.1). True only when BOTH the
+    explicit human-applied label `edr:agent-able` AND a parseable
+    falsifiable `Proof:` line are present. No heuristic guessing in v1 —
+    the envelope widens from a measured landing rate (§5.3), never optimism.
+  - Triage routes; it never dispatches. Dispatch is P1.3, behind the R1
+    human gate. Promotion is excluded from all auto-lanes.
+  - Severity judgment lands in the Proposal (provenance.signals.triage +
+    urgency); the Signal is never mutated — it keeps the adapter's
+    no-judgment info floor.
+  - Deterministic proposal ids (edr-triage-gh-<n>); idempotent re-runs;
+    a rejected/archived proposal is never recreated — the human verdict
+    stands.
+  - Writes go through the REAL imported arbiter.store (reuse, never fork);
+    the machine-readable verdict lives at provenance.signals["triage"].

@@ -1,0 +1,8 @@
+{
+  "_comment": "Community defaults for post-apply outcome check-in timing. This file ships with Evolve. Local overrides live in /Users/Shared/evolve/calibration/outcomes.json.",
+  "schema_version": 1,
+  "outcomes": {
+    "check_in_days": 7,
+    "window_days": 3
+  }
+}

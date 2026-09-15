@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+"""plugin-capability-lint — the Evolve plugin may not widen its declared
+capability surface without a reviewed baseline edit.
+
+``deploy.install_oc_plugin`` passes ``--accept-capabilities`` (OC 2026.9.2
+makes the consent prompt terminal and deploy is headless — spec §4.2). That
+blanket-answers OC's own widening check, so a capability added to
+``packages/plugin/openclaw.plugin.json`` would otherwise be granted fleet-wide
+on the next deploy with nobody in the loop. This gate puts the human back:
+widening fails until the addition is written into the baseline in the same PR,
+which makes it show up in review as its own diff.
+
+Same shape as the repo's other checked-in baselines (``tools/ruff-baseline.txt``,
+``tools/file-size-baseline.txt``): the baseline only ratchets DOWN on its own;
+growing it is a deliberate, reviewable edit.
+
+  tools/plugin-capability-lint                  # check
+  tools/plugin-capability-lint --update-baseline  # re-freeze after review
+  tools/plugin-capability-lint --show             # print the current surface
+
+Exit status: 0 clean (narrowing only warns), 1 if the surface widened.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT / "packages" / "admin"))
+
+from evolve_admin.plugin_capability_surface import (  # noqa: E402
+    declared_surface, diff_narrowing, diff_widening, format_diff,
+)
+
+DEFAULT_MANIFEST = REPO_ROOT / "packages" / "plugin" / "openclaw.plugin.json"
+DEFAULT_BASELINE_MODULE = (
+    REPO_ROOT / "packages" / "admin" / "evolve_admin" / "plugin_capability_baseline.py"
+)
+
+_HEADER = '''"""Reviewed baseline for the Evolve plugin's declared capability surface.
+
+**Generated — do not hand-edit.** Regenerate with::
+
+    tools/plugin-capability-lint --update-baseline
+
+A diff to this file is the reviewable record that someone accepted a new
+privilege for the plugin. Read it that way: every added string is a capability
+that ``--accept-capabilities`` will grant on every bot at the next deploy,
+without a prompt. See :mod:`evolve_admin.plugin_capability_surface` and
+[internal/spec-plugin-install-trust-2026-06-06.md](../../../internal/spec-plugin-install-trust-2026-06-06.md) §4.3.
+
+A Python module rather than a JSON data file on purpose: the install-time check
+in ``plugin_signature.verify_plugin_signature`` imports this, and an import that
+cannot resolve is a hard failure. A data file could go missing from a built
+package and fail open, which is the one thing a trust baseline must never do.
+"""
+
+from __future__ import annotations
+
+BASELINE: dict[str, list[str]] = '''
+
+
+def _render(surface: dict) -> str:
+    body = json.dumps(surface, indent=4, sort_keys=True)
+    # json renders [] on one line and lists multi-line; both are valid Python.
+    return _HEADER + body + "\n"
+
+
+def _load_baseline(path: Path) -> dict:
+    ns: dict = {}
+    exec(compile(path.read_text(), str(path), "exec"), ns)
+    return ns["BASELINE"]
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--update-baseline", action="store_true")
+    ap.add_argument("--show", action="store_true")
+    # Overrides exist so the tests can drive the real script against a temp
+    # tree. Mutating the committed manifest in-place would race the sharded
+    # admin suite, which runs four processes over one checkout.
+    ap.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
+    ap.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE_MODULE)
+    args = ap.parse_args()
+
+    current = declared_surface(json.loads(args.manifest.read_text()))
+
+    if args.show:
+        print(json.dumps(current, indent=2, sort_keys=True))
+        return 0
+
+    if args.update_baseline:
+        args.baseline.write_text(_render(current))
+        total = sum(len(v) for v in current.values())
+        print(f"✓ baseline re-frozen: {total} declared capabilities")
+        return 0
+
+    baseline = _load_baseline(args.baseline)
+    widened = diff_widening(baseline, current)
+    narrowed = diff_narrowing(baseline, current)
+
+    if narrowed:
+        print(
+            f"ℹ  plugin capability surface NARROWED ({format_diff(narrowed)}) — "
+            f"safe, but re-freeze so the baseline stops claiming more than the "
+            f"plugin declares: tools/plugin-capability-lint --update-baseline"
+        )
+
+    if widened:
+        print(
+            f"\n✗ the Evolve plugin's declared capability surface WIDENED past "
+            f"its reviewed baseline:\n\n    {format_diff(widened)}\n\n"
+            f"deploy passes --accept-capabilities, so each of these is granted "
+            f"on EVERY bot at the next deploy with no prompt. If that is "
+            f"intended, review it and re-freeze in this same PR:\n"
+            f"    tools/plugin-capability-lint --update-baseline\n"
+            f"The baseline diff is the record that someone accepted it.",
+            file=sys.stderr,
+        )
+        return 1
+
+    print("✓ plugin capability surface matches its reviewed baseline")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

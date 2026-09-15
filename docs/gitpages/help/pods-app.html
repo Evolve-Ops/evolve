@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Evolve Pods — the multi-pod desktop app · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">pods-app</span><span class="chip">desktop-app</span><span class="chip">multi-pod</span></div><div class="reviewed">Last reviewed 2026-06-23</div></div><h1 id="evolve-pods-the-multi-pod-desktop-app">Evolve Pods — the multi-pod desktop app</h1>
+<p><strong>Evolve Pods</strong> is a small macOS desktop app that puts <strong>one Dock icon</strong> over all
+your pods and lets you <strong>tab between them</strong>. Each pod opens in its own window
+pointed at that pod's dashboard, keeps its own login, and stays an independent
+island — the app adds no shared state and no bridge between pods. It's pure
+navigation.</p>
+<p>If you run a <strong>single pod</strong>, you don't need this app at all — just use the
+dashboard in your browser, or <a href="pwa-install.html">install it as a PWA</a>. Evolve Pods
+earns its keep only when you're juggling several pods and want one window for all
+of them.</p>
+<hr>
+<h2 id="current-status-build-it-yourself-for-now">Current status: build it yourself (for now)</h2>
+<p>Be aware of where this app stands today, honestly:</p>
+<blockquote>
+<p>🚧 <strong>Evolve Pods is operator-built, not yet distributed.</strong> There is no signed
+download. You build it once on your Mac from the source in the repository. A
+signed, auto-updating download is <strong>specified but deferred</strong> — it will be built
+when the app needs to leave the machine that built it, not before. Until then,
+the local build below is the supported path.</p>
+</blockquote>
+<p>That means today you get the app by compiling it yourself. It's a short, one-time
+build.</p>
+<hr>
+<h2 id="build-and-install-it">Build and install it</h2>
+<p>The app is built with <strong>Tauri v2</strong>. You need <strong>Rust</strong> and the <strong>Tauri CLI</strong> — you
+do <em>not</em> need Node (the interface is plain static files served by Tauri).</p>
+<pre><code class="language-bash"># One-time toolchain setup
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+cargo install tauri-cli --version &quot;^2.0&quot; --locked
+
+# Build the app
+cd desktop/src-tauri
+cargo tauri build
+</code></pre>
+<p>This produces <code>Evolve Pods.app</code> (and a <code>.dmg</code>) under
+<code>target/release/bundle/macos/</code>. <strong>Drag <code>Evolve Pods.app</code> into your Applications
+folder</strong> and you're done.</p>
+<blockquote>
+<p>⚠️ <strong>Gatekeeper note — the app is unsigned.</strong> Because there's no Apple
+code-signing certificate yet, macOS will refuse to open it on a double-click the
+first time. <strong>Right-click the app → Open</strong>, then confirm in the dialog. macOS
+remembers your choice, so you only do this once.</p>
+</blockquote>
+<hr>
+<h2 id="using-it">Using it</h2>
+<ul>
+<li><strong>One window, one icon</strong> for all your pods.</li>
+<li><strong>Add a pod</strong> from the settings panel by name + dashboard URL; the app can also
+  auto-discover pods on your machine (<code>localhost</code>) and across your Tailscale
+  network so you don't have to type the URL.</li>
+<li><strong>Tab between pods</strong> — the tab bar appears once you have more than one pod, and
+  you can switch with the Pods menu, <strong>Ctrl+Tab</strong>, or <strong>⌘1–9</strong>.</li>
+<li><strong>Offline-tolerant</strong> — the app always opens even if a pod is down; a dead pod
+  shows a "Can't reach…" message with a Retry button and never blocks the others.</li>
+<li>Each pod still shows its <strong>own pairing screen</strong> on first visit — that's correct;
+  the app holds no tokens and bridges nothing between pods.</li>
+</ul>
+<hr>
+<h2 id="what-deferred-means-for-updates">What "deferred" means for updates</h2>
+<p>You <strong>don't</strong> rebuild this app for ordinary Evolve updates. The app loads each
+pod's dashboard as live remote content, so when a pod updates itself, its
+dashboard updates and the app shows the new version on the next load — exactly
+like a browser. You only rebuild Evolve Pods if the <strong>app's own</strong> code changes,
+which is rare.</p>
+<p>When signed distribution and a built-in auto-updater land (the deferred
+milestone), this manual build-and-drag path retires. Until then, it's the whole
+story.</p>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/pods-app.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>

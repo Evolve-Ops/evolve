@@ -1,0 +1,19 @@
+{
+  "_comment": "Community defaults for the Forge engine's learnable parameters. RSI-learned overrides live in /Users/Shared/evolve/calibration/forge.json. Only values that have been locally calibrated need to appear there — missing keys fall through to these defaults.",
+  "schema_version": 1,
+  "forge": {
+    "critique_rounds": {
+      "_comment": "Default number of build/critique cycles per forge run. RSI can adjust upward if more rounds consistently produce better-approved outputs. Per-app constraints.critique_rounds overrides this.",
+      "value": 2
+    },
+    "min_improvement_confidence": {
+      "_comment": "Minimum effective detector confidence before a forge improvement run is triggered automatically. RSI adjusts this based on the ratio of approved vs. rejected forge runs. Higher = fewer but more reliable improvement runs.",
+      "value": 0.65
+    },
+    "outcome_stats": {
+      "_comment": "Accumulated approval/rejection counts across all forge runs. Updated by forge_engine.py after each operator decision. Used by the RSI loop to adjust min_improvement_confidence.",
+      "approved": 0,
+      "rejected": 0
+    }
+  }
+}

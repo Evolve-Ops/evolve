@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Evolve per-bot apply watcher.
+  Installed on EVERY bot (not just primary).
+  Runs as BOT_USER — applies proposals targeting this bot within its own
+  user context. No sudo or cross-user writes needed.
+
+  Replace BOT_USER and WORKSPACE_PATH before installing.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.openclaw.evolve.apply.BOT_USER</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>WORKSPACE_PATH/evolve/apply.py</string>
+        <string>--bot-id</string>
+        <string>BOT_USER</string>
+    </array>
+
+    <key>UserName</key>
+    <string>BOT_USER</string>
+
+    <!-- Poll every 5 minutes -->
+    <key>StartInterval</key>
+    <integer>300</integer>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/BOT_USER/.openclaw/logs/evolve-apply.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/BOT_USER/.openclaw/logs/evolve-apply.err.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+</dict>
+</plist>

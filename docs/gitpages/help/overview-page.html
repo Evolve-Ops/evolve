@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Overview Page · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">overview-page</span><span class="chip">pod-status</span><span class="chip">bot-tiles</span><span class="chip">dashboard</span></div><div class="reviewed">Last reviewed 2026-06-05</div></div><h1 id="help-overview-page">Overview Page</h1>
+<p>The Overview page shows the live state of your entire pod at a glance — which bots are online, what's pending, and whether anything needs attention.</p>
+<p><strong>Ask evo to act on what you see.</strong> The chat widget's suggested prompts on
+this page are operator-shaped:</p>
+<ul>
+<li><em>"what's wrong with team-bot-a?"</em> — evo pulls team-bot-a's bot tile, audit findings, and
+  recent errors, then narrates the situation.</li>
+<li><em>"restart team-bot-a's gateway"</em> — wraps the same restart the bot-tile's inline
+  button drives; useful when you're already chatting.</li>
+<li><em>"redeploy evolve"</em> — applies an evolve-version upgrade to the primary bot.</li>
+<li><em>"pause all bots"</em> or <em>"resume all bots"</em> — pod-wide pause / resume (the
+  destructive confirm gate still applies).</li>
+</ul>
+<p>The Dashboard's evo context includes every bot's current tile chips, so
+asking <em>"why is the version_drift chip firing on admin-bot?"</em> gets a direct answer.</p>
+<hr>
+<h2 id="what-you-see">What You See</h2>
+<p><strong>Top stats bar:</strong>
+- <strong>Active Pods</strong> — number of bots currently online (responding to health probes)
+- <strong>Proposals Pending</strong> — improvement proposals waiting for your approval (click to go to Recommendations)
+- <strong>Pod Health</strong> — composite health score from the last scan (click to go to Maintenance → Pod Health)</p>
+<p><strong>Banners</strong> (shown when relevant):
+- <strong>Health banner</strong> — pod health issues detected; click to see details
+- <strong>Sync banner</strong> — Evolve repo is out of date with the latest version
+- <strong>OC banner</strong> — OpenClaw version issues on one or more bots</p>
+<p><strong>ETR strip</strong> (Evolve Test Rig — shown only when its dashboard is reachable from this browser):
+- Status dot, open issue counts, current catalog state
+- Link to the ETR dashboard at <code>localhost:5052</code>. The strip hides silently on phones or remote browsers where ETR isn't reachable, so the absence of this strip is normal.</p>
+<p><strong>Pods section:</strong>
+- One card per bot in your pod
+- Shows gateway status, last heartbeat, active sessions
+- <strong>+ Add Bot</strong> button starts the bot setup wizard</p>
+<p><strong>Make Your Pod Better strip:</strong>
+- Recommendations from Better Engine — operational, security, cost, app-quality, onboarding, exploration, whimsy
+- Filter by bot or recommendation type. These complement the full proposal queue on the Recommendations page.</p>
+<p><strong>Getting Started strip</strong> (only on fresh pods):
+- A short checklist of next setup steps, hidden once your pod has activity.</p>
+<hr>
+<h2 id="what-bot-cards-show">What Bot Cards Show</h2>
+<p>Each bot card shows:
+- <strong>Status dot</strong> — green (online), yellow (degraded), red (offline)
+- Bot name and user account
+- Gateway health (responding/not responding)
+- Active session count
+- Last activity time</p>
+<hr>
+<h2 id="common-questions">Common Questions</h2>
+<p><strong>Why does a bot show as offline?</strong>
+The gateway isn't responding to health probes. This usually means:
+1. The OC gateway crashed — go to Maintenance → Status to restart it
+2. The launchd service isn't running — check Maintenance → Infra Jobs
+3. heal.py hasn't had a chance to restart it yet (heals every ~5 minutes)</p>
+<p><strong>What are Proposals Pending?</strong>
+The analysis engine found patterns in your bots' sessions and generated improvement suggestions. These could be config changes, script changes, or investigation recommendations. They need your approval before anything changes. Go to Recommendations to review them.</p>
+<p><strong>What does Pod Health mean?</strong>
+A composite 0–100 score based on: gateway liveness, API key health, app test results, security audit results, and cost anomalies. A score of 100 means everything is working perfectly. Below 60 is a warning; below 40 is critical. Go to Maintenance → Pod Health for details on what's contributing to a low score.</p>
+<p><strong>The + Add Bot button — what does it do?</strong>
+Opens the bot setup wizard. This creates a new macOS user, installs OpenClaw, deploys the Evolve plugin, configures channels and API keys, and registers the bot with the pod. You'll need at least one API key and one messaging channel token ready.</p>
+<p><strong>How often does this page update?</strong>
+The stats bar and pod cards poll automatically. Gateway health is checked every time the page loads; the pod health score reflects the last manual or scheduled scan.</p>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/overview-page.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>

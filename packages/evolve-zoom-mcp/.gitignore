@@ -1,0 +1,10 @@
+# Build artifacts
+*.egg-info/
+build/
+dist/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local credentials (should never be in repo, but defensive)
+credentials.json

@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+"""context-efficiency-census — where one bot's input tokens actually come from.
+
+READ-ONLY. One bot, trailing N days: history composition per call (fixed
+prefix / tool descriptions / conversation, with tool results per tool and the
+share re-carried after use), cache reads vs full-price tokens plus the
+cache-break cause table (which prefix block changed, from the prefix-hash
+ledger), re-emitted documents, session shape, and the money line — the
+costliest session replayed under each lever's assumption.
+
+Thin wrapper around ``packages/analyzer/context_census.py`` (the testable
+core). Brief: internal/dispatch/done/context-efficiency-census.md.
+
+Run on a pod as the evolve user (it holds the read ACL on every bot's
+.openclaw/ and on the shared dir), from a directory that user can read::
+
+    cd /tmp && sudo -n -u evolve <venv>/bin/python <repo>/tools/context-efficiency-census --bot <id> --days 3
+
+Options: --sessions-dir, --shared-dir, --min-doc-tokens, --prefix-floor,
+--cache-ttl-minutes, --power-model, --session, --json, --json-out.
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+_ANALYZER = REPO_ROOT / "packages" / "analyzer"
+if str(_ANALYZER) not in sys.path:
+    sys.path.insert(0, str(_ANALYZER))
+
+from context_census import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main())

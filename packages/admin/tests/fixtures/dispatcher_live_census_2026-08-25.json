@@ -1,0 +1,41 @@
+{
+  "_provenance": {
+    "observed_on": "2026-08-25",
+    "surface": "Reports -> Subscriptions -> Recent Messages (one UTC day of the dispatcher audit log)",
+    "recorded_by": [
+      "internal/spec-delta-digest-audit-noise-2026-08-25.md - the row census and the three dedup_keys",
+      "PR #3801 (closed as superseded by #3802 / 429a9123) - the distinct (dedup_key, message_excerpt) pair count"
+    ],
+    "what_this_is": "A COUNT CENSUS of a real log, not a copy of it. Only counts and key names are recorded.",
+    "what_this_is_not": [
+      "raw log rows - none are reproduced here",
+      "message bodies - the recorded fact is HOW MANY distinct message_excerpts each dedup_key carried, not what they said. message_excerpt is the body truncated at _AUDIT_EXCERPT_CHARS (240), so excerpt constancy implies body constancy only for bodies under 240 chars; heal drift lines are well inside that.",
+      "a per-key split of the 287 rows - that was never recorded, so it is not stated"
+    ],
+    "scrubbing": "Bot ids are the pseudonyms the spec and the D1 tests already use (team-bot-a / team-bot-b); dedup_key hashes are the truncated forms the spec records. No real bot id, chat id or filesystem path appears in this file."
+  },
+
+  "total_rows": 292,
+
+  "by_producer": [
+    {"rows": 287, "source": "heal", "catalog_event": "security.config_drift", "result": "deferred"},
+    {"rows": 2, "source": "audit", "catalog_event": "security.audit_finding", "result": "sent"},
+    {"rows": 1, "source": "pod_report", "catalog_event": "summaries.daily_pod_report", "result": "sent"},
+    {"rows": 1, "source": "digest_dispatcher", "catalog_event": "meta.digest", "result": "sent"},
+    {"rows": 1, "source": "update_watcher", "catalog_event": "updates.evolve_repo", "result": "deferred"}
+  ],
+
+  "config_drift": {
+    "rows": 287,
+    "producer_cadence_seconds": 300,
+    "producer_declared_cooldown_seconds": 86400,
+    "dedup_keys": [
+      "heal/config_drift/team-bot-a/2a3299ef",
+      "heal/config_drift/team-bot-b/cf60be1b",
+      "heal/config_drift/team-bot-a/0d16ffc1"
+    ],
+    "distinct_dedup_keys": 3,
+    "distinct_dedup_key_message_excerpt_pairs": 3,
+    "premise_this_establishes": "3 pairs across 3 keys means every one of the 287 rows carried an excerpt - and so, at these body lengths, a body - that was CONSTANT for its key. That is the premise the byte-identity claim rests on, and it is an OBSERVATION here rather than an inference from heal._alert_backup_drift's render path."
+  }
+}

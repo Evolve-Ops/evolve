@@ -1,0 +1,308 @@
+{
+  "packages/admin/evolve_admin/web/static/js/core/api.js": {
+    "no-empty": {
+      "count": 2
+    },
+    "no-unused-vars": {
+      "count": 2
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/core/dom-utils.js": {
+    "no-unused-vars": {
+      "count": 2
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/core/router.js": {
+    "no-unused-vars": {
+      "count": 1
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/core/subtabs.js": {
+    "no-unused-vars": {
+      "count": 2
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/add-bot-wizard.js": {
+    "no-unused-vars": {
+      "count": 6
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/ai-optimization.js": {
+    "no-empty": {
+      "count": 1
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/alerts-extended.js": {
+    "no-empty": {
+      "count": 1
+    },
+    "no-unused-vars": {
+      "count": 1
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/alerts.js": {
+    "no-empty": {
+      "count": 1
+    },
+    "no-unused-vars": {
+      "count": 4
+    },
+    "no-useless-assignment": {
+      "count": 1
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/apps.js": {
+    "no-empty": {
+      "count": 1
+    },
+    "no-unused-vars": {
+      "count": 47
+    },
+    "no-useless-assignment": {
+      "count": 1
+    },
+    "no-useless-escape": {
+      "count": 2
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/backup.js": {
+    "no-empty": {
+      "count": 1
+    },
+    "no-unused-vars": {
+      "count": 18
+    },
+    "no-useless-assignment": {
+      "count": 1
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/bot-detail.js": {
+    "no-unused-vars": {
+      "count": 11
+    },
+    "no-useless-assignment": {
+      "count": 1
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/cost-measures.js": {
+    "no-unused-vars": {
+      "count": 5
+    },
+    "no-useless-assignment": {
+      "count": 1
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/cost.js": {
+    "no-empty": {
+      "count": 2
+    },
+    "no-unused-vars": {
+      "count": 11
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/create-app-wizard.js": {
+    "no-unused-vars": {
+      "count": 14
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/credentials.js": {
+    "no-empty": {
+      "count": 2
+    },
+    "no-unused-vars": {
+      "count": 6
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/errors.js": {
+    "no-empty": {
+      "count": 5
+    },
+    "no-unused-vars": {
+      "count": 11
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/evo-drawer.js": {
+    "no-empty": {
+      "count": 9
+    },
+    "no-unused-vars": {
+      "count": 1
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/forge.js": {
+    "no-unused-vars": {
+      "count": 11
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/gallery.js": {
+    "no-unused-vars": {
+      "count": 11
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/github-setup-wizard.js": {
+    "no-unused-vars": {
+      "count": 3
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/home.js": {
+    "no-empty": {
+      "count": 17
+    },
+    "no-unused-vars": {
+      "count": 7
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/inbox.js": {
+    "no-unused-vars": {
+      "count": 1
+    },
+    "no-useless-escape": {
+      "count": 2
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/maintenance.js": {
+    "no-unused-vars": {
+      "count": 13
+    },
+    "no-useless-assignment": {
+      "count": 1
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/model-catalog.js": {
+    "no-unused-vars": {
+      "count": 4
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/monitoring.js": {
+    "no-unused-vars": {
+      "count": 3
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/onboard-modal.js": {
+    "no-empty": {
+      "count": 2
+    },
+    "no-unused-vars": {
+      "count": 14
+    },
+    "no-useless-assignment": {
+      "count": 1
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/overview.js": {
+    "no-unused-vars": {
+      "count": 16
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/page-chat.js": {
+    "no-empty": {
+      "count": 2
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/plugins.js": {
+    "no-empty": {
+      "count": 7
+    },
+    "no-unused-vars": {
+      "count": 28
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/pod-config-health.js": {
+    "no-unused-vars": {
+      "count": 14
+    },
+    "no-useless-assignment": {
+      "count": 3
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/pod-config.js": {
+    "no-empty": {
+      "count": 2
+    },
+    "no-unused-vars": {
+      "count": 7
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/recovery.js": {
+    "no-unused-vars": {
+      "count": 12
+    },
+    "no-useless-assignment": {
+      "count": 3
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/reports.js": {
+    "no-unused-vars": {
+      "count": 2
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/self-improvement.js": {
+    "no-empty": {
+      "count": 1
+    },
+    "no-unused-vars": {
+      "count": 30
+    },
+    "no-useless-escape": {
+      "count": 6
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/sessions-anomaly.js": {
+    "no-unused-vars": {
+      "count": 2
+    },
+    "no-useless-assignment": {
+      "count": 1
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/settings.js": {
+    "no-unused-vars": {
+      "count": 17
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/skill-install.js": {
+    "no-empty": {
+      "count": 3
+    },
+    "no-unused-vars": {
+      "count": 15
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/skills.js": {
+    "no-useless-assignment": {
+      "count": 1
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/pages/users.js": {
+    "no-empty": {
+      "count": 6
+    },
+    "no-unused-vars": {
+      "count": 4
+    },
+    "no-useless-assignment": {
+      "count": 3
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/widgets/pwa-install.js": {
+    "no-empty": {
+      "count": 2
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/widgets/pwa-tunnel.js": {
+    "no-useless-assignment": {
+      "count": 1
+    }
+  },
+  "packages/admin/evolve_admin/web/static/js/widgets/terminal.js": {
+    "no-empty": {
+      "count": 12
+    },
+    "no-unused-vars": {
+      "count": 1
+    },
+    "no-useless-assignment": {
+      "count": 1
+    }
+  }
+}
