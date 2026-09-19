@@ -1,0 +1,59 @@
+{
+  "_comment": "Community defaults for all pattern detector thresholds. This file ships with Evolve and may be updated by new releases. Local overrides live in /Users/Shared/evolve/calibration/detectors.json and take precedence over these values.",
+  "schema_version": 1,
+  "detectors": {
+    "high_maintenance_ratio": {
+      "enabled": true,
+      "avg_ratio_threshold": 0.35,
+      "consecutive_days_threshold": 3,
+      "consecutive_check_window": 5,
+      "confidence_base": 0.75,
+      "confidence_multiplier": 1.0
+    },
+    "api_key_fallback": {
+      "enabled": true,
+      "confidence_base": 0.92,
+      "confidence_multiplier": 1.0
+    },
+    "declining_resolution_rate": {
+      "enabled": true,
+      "min_history_days": 7,
+      "recent_window_days": 3,
+      "min_decline_threshold": 0.15,
+      "confidence_base": 0.65,
+      "confidence_multiplier": 1.0
+    },
+    "zero_activity": {
+      "enabled": true,
+      "no_data_days_threshold": 3,
+      "confidence_base": 0.85,
+      "confidence_multiplier": 1.0
+    },
+    "low_satisfaction_application": {
+      "enabled": true,
+      "satisfaction_threshold": 3,
+      "confidence_base": 0.65,
+      "confidence_multiplier": 1.0
+    },
+    "promise_breach": {
+      "enabled": true,
+      "min_summaries": 3,
+      "promise_rate_threshold": 0.40,
+      "confidence_base": 0.60,
+      "confidence_multiplier": 1.0
+    },
+    "efficiency_problems": {
+      "enabled": true,
+      "min_summaries": 5,
+      "min_flagged_count": 3,
+      "flag_rate_threshold": 0.25,
+      "confidence_base": 0.70,
+      "confidence_multiplier": 1.0
+    },
+    "detector_staleness": {
+      "enabled": true,
+      "rejection_rate_threshold": 0.80,
+      "min_proposals_to_evaluate": 5
+    }
+  }
+}

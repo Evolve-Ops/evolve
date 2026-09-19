@@ -1,0 +1,5 @@
+# required-check-quarantine-baseline — frozen `wc -l` ceiling for
+# tools/required-check-quarantine.txt (D-CS9). The ratchet
+# (tools/required-check-quarantine-ratchet) blocks any growth past this
+# number, so it may only ratchet DOWN.
+32

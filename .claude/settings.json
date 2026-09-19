@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s http://localhost:5052*)",
+      "Bash(curl -sv http://localhost:5052*)",
+      "Bash(curl -s 'http://localhost:5052*)",
+      "Bash(bash -n *)",
+      "Bash(bash -x *)",
+      "Bash(tools/evolve-verify invoke *)",
+      "Bash(./tools/evolve-verify invoke *)",
+      "Bash(python3 tools/etr-dashboard/app.py*)",
+      "Bash(pgrep -a -f *)",
+      "Bash(git add *)",
+      "Bash(git rm *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(git fetch *)",
+      "Bash(git pull *)",
+      "Bash(git checkout *)",
+      "Bash(git switch *)",
+      "Bash(git stash *)",
+      "Bash(git merge *)",
+      "Bash(git rebase *)",
+      "Bash(git cherry-pick *)",
+      "Bash(git reset *)",
+      "Bash(git worktree *)",
+      "Bash(git branch *)",
+      "Bash(git tag *)",
+      "Bash(git -C *)",
+      "Bash(gh pr create *)",
+      "Bash(gh pr merge *)",
+      "Bash(ssh pod-admin-user@deploy-host *)",
+      "Bash(cd /Users/dev/GitHub/evolve && *)",
+      "Bash(cd /Users/dev/github/evolve && *)",
+      "Bash(cd /Users/dev/github/evolve/.claude/worktrees/* && *)"
+    ]
+  }
+}

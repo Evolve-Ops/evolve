@@ -1,0 +1,7 @@
+{
+  "_comment": "AXIS: oc_compat.validation_state().state, and nothing else. Same installed runtime. `tested` is positive evidence — a manifest entry or a recorded contract run whose ok is true. Replayed by packages/admin/tests/test_oc_runtime_controls.py::test_version_coherence_known_good_passes.",
+  "_axis": "validation_state.state",
+  "installed_version": "2026.9.2",
+  "validation_state": {"state": "tested", "tested": ["2026.9.2"], "failing": []},
+  "expect": {"status": "PASS", "name": "oc_version_validated"}
+}

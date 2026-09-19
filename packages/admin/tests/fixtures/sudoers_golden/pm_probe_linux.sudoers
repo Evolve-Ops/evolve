@@ -1,0 +1,51 @@
+# /etc/sudoers.d/pm-probe
+# PM read-only pod probe — narrow NOPASSWD grants for the admin account.
+# Rendered by: evolve-admin install-pm-probe-sudoers  (never hand-written)
+# Client:      tools/pm-mini-probe (stdio MCP server on the operator's laptop)
+# Brief:       internal/dispatch/done/pm-mini-probe-readonly-mcp.md
+#
+# Every grant below is a READ. There is deliberately no write verb, no
+# service verb, and no interpreter that can be handed a script path.
+# Removing this file returns the probe to unprivileged reads only;
+# removing the MCP block on the laptop closes the door entirely.
+#
+# NO WILDCARD OCCUPIES AN ARGUMENT POSITION HERE. sudo matches command
+# arguments as one space-separated string, where '*' crosses '/' and
+# spaces (sudoers(5) Wildcards) — so a '*' anywhere below would grant
+# root an arbitrary argument string, not a bounded subtree.
+
+Defaults:pod-admin !requiretty
+
+# -- 1. Read one file, through the fixed-argv reader ------------------------
+# The ONLY root reader. It takes exactly one operand, realpaths it, refuses
+# anything outside the pod's own trees AFTER resolution, refuses a symlink at
+# every component AND a hard link at the leaf (a second name for an inode is
+# the same read channel without the symlink), refuses credential-shaped paths,
+# and caps output at 64 KB.
+# The grant carries no argument specification because sudo cannot express that
+# contract; the reader enforces it as root. Source: evolve_admin/pm_probe_cat.py,
+# installed root-owned 0755 by install-pm-probe-sudoers and kept current by
+# `evolve-admin ensure-pod-perms`.
+pod-admin ALL=(root) NOPASSWD: /usr/local/libexec/pm-probe-cat
+
+# -- 2. evolve-admin read forms ----------------------------------------------
+# Enumerated as EXACT argument strings. 'ensure-pod-perms' appears only in its
+# --check-only form (without the flag it APPLIES); 'audit-acls' and 'health'
+# appear without --apply / --fix, which a trailing wildcard would have handed
+# back. Verbs needing a free positional (list-rollback-points, lifecycle
+# inventory) are absent — the probe runs those unprivileged.
+pod-admin ALL=(root) NOPASSWD: /var/lib/evolve-venv/bin/evolve-admin health
+pod-admin ALL=(root) NOPASSWD: /var/lib/evolve-venv/bin/evolve-admin health --json
+pod-admin ALL=(root) NOPASSWD: /var/lib/evolve-venv/bin/evolve-admin audit-acls
+pod-admin ALL=(root) NOPASSWD: /var/lib/evolve-venv/bin/evolve-admin audit-acls --json
+pod-admin ALL=(root) NOPASSWD: /var/lib/evolve-venv/bin/evolve-admin recovery-status
+pod-admin ALL=(root) NOPASSWD: /var/lib/evolve-venv/bin/evolve-admin recovery-status --json
+pod-admin ALL=(root) NOPASSWD: /var/lib/evolve-venv/bin/evolve-admin list-rollbacks
+pod-admin ALL=(root) NOPASSWD: /var/lib/evolve-venv/bin/evolve-admin list-rollbacks --json
+pod-admin ALL=(root) NOPASSWD: /var/lib/evolve-venv/bin/evolve-admin ensure-pod-perms --check-only
+pod-admin ALL=(root) NOPASSWD: /var/lib/evolve-venv/bin/evolve-admin release status
+pod-admin ALL=(root) NOPASSWD: /var/lib/evolve-venv/bin/evolve-admin release status --json
+pod-admin ALL=(root) NOPASSWD: /var/lib/evolve-venv/bin/evolve-admin breaker status
+pod-admin ALL=(root) NOPASSWD: /var/lib/evolve-venv/bin/evolve-admin breaker status --json
+pod-admin ALL=(root) NOPASSWD: /var/lib/evolve-venv/bin/evolve-admin features list
+

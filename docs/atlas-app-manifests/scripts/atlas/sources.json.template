@@ -1,0 +1,21 @@
+{
+  "_comment": "Atlas daily-digest source configuration. Install this at workspace/atlas/sources.json. Operator edits this file directly to add/remove sources.",
+  "rss": [
+    {"name": "anthropic-blog", "url": "https://www.anthropic.com/news/rss.xml"},
+    {"name": "openai-blog", "url": "https://openai.com/blog/rss.xml"},
+    {"name": "google-blog-ai", "url": "https://blog.google/technology/ai/rss"},
+    {"name": "openclaw-blog", "url": "https://openclaw.dev/feed.xml"},
+    {"name": "hn-frontpage", "url": "https://hnrss.org/frontpage?q=openclaw+OR+agent+OR+MCP+OR+LLM"},
+    {"name": "r-LocalLLaMA", "url": "https://www.reddit.com/r/LocalLLaMA/.rss"}
+  ],
+  "github_releases": [
+    {"name": "openclaw-core", "repo": "anthropics/openclaw"},
+    {"name": "agentskills-io", "repo": "agentskills/agentskills.io"}
+  ],
+  "brave_queries": [
+    "openclaw case study",
+    "agent bot deployment failure",
+    "AI agent security incident",
+    "MCP server release"
+  ]
+}

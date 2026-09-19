@@ -1,0 +1,339 @@
+#!/usr/bin/env python3
+"""store-access-lint — sanction the Proposal/Signal store read path.
+
+Roadmap 7.1 Phase B (spec
+internal/spec-state-store-and-deploy-resilience-2026-06-10.md §1.1, §1.3).
+
+The two state stores have ONE sanctioned access path each:
+
+  proposals/  → ``arbiter.store``  (iter_proposals / find_proposal / …)
+  signals/    → ``signals.store``  (iter_active / iter_signals / find_signal / …)
+
+Before Phase B the claim that "the store helpers are the only sanctioned
+access path" was aspirational: ~25 modules reached past the API and read
+the store directories directly (``shared_dir / "proposals" / "pending"``,
+``shared_dir / "signals" / "firing"``, …). A backend swap (Phase D's
+SQLite) would silently break every one of them. Phase B migrated the
+readers onto the API and added THIS gate so new direct readers can't
+re-accrue.
+
+What it flags
+-------------
+Any path expression that joins a ``"proposals"`` / ``"signals"`` segment
+with one of that store's CANONICAL lifecycle subdirs:
+
+  proposals: pending | snoozed | applied | archived
+  signals:   firing  | snoozed | archived
+
+i.e. an AST ``a / "proposals" / "pending"`` style ``Path`` build. These
+are the subdirs the store APIs own; reading them directly is the thing
+Phase D would break. Non-canonical sibling subdirs (proposals/approved,
+proposals/apply-results, signals/log, …) are NOT store-managed and are
+out of scope — they belong to the legacy L1 pipeline retired in Phase C.
+
+What it does NOT flag
+---------------------
+  * ``subdirs=(...)`` / ``subdir=`` keyword args to the store API — those
+    pass the canonical names INTO the sanctioned helper; that's correct.
+  * Any physical line carrying an inline ``# store-access-lint:`` escape
+    annotation (used by the store-internal low-level paths and the
+    deliberate analyzer-unavailable fallbacks that the migration kept).
+
+Ratchet model
+-------------
+Per-file counts are frozen in ``tools/store-access-baseline.txt``. The
+gate BLOCKS any covered file that EXCEEDS its count, so the number may
+only ratchet DOWN: migrate a reader onto the API (or annotate a genuine
+store-internal case) and rerun ``--update-baseline`` for a reviewable
+diff. The remaining baselined entries are the legacy L1 apply/review
+pipeline (Phase C) and the store-internal mtime/stat/scandir paths that
+the iter_* APIs can't express.
+
+Usage
+-----
+  tools/store-access-lint <file.py> [...]   # lint specific files
+  tools/store-access-lint --all             # lint all production .py
+  tools/store-access-lint --staged          # lint git-staged .py
+  tools/store-access-lint --all --update-baseline   # regenerate baseline
+
+Exit status: 0 if no file exceeds its baseline; 1 if a new direct read
+was added; 2 on usage error.
+"""
+from __future__ import annotations
+
+import argparse
+import ast
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+BASELINE_PATH = REPO_ROOT / "tools" / "store-access-baseline.txt"
+
+# Only production code is gated. Tests build store fixtures by hand on
+# purpose; the migration tools and the testing harness do too.
+_LINT_ROOTS = ("packages",)
+
+# The blessed store modules themselves — they ARE the sanctioned path, so
+# their internal directory joins are definitionally exempt.
+_ALLOWLIST = {
+    "packages/analyzer/arbiter/store.py",
+    "packages/analyzer/signals/store.py",
+}
+
+# Store → its canonical (store-API-owned) lifecycle subdirs. Reading these
+# directly is what Phase D would break; sibling non-canonical subdirs are
+# out of scope (Phase C legacy pipeline).
+_CANONICAL = {
+    "proposals": {"pending", "snoozed", "applied", "archived"},
+    "signals": {"firing", "snoozed", "archived"},
+}
+
+# Store-root helpers: ``signals_root(x) / "firing"`` reaches past the
+# iter_* API just as ``x / "signals" / "firing"`` does, so the same
+# canonical-subdir set applies to a join off one of these calls.
+_ROOT_HELPER_STORE = {
+    "signals_root": "signals",
+    "proposals_root": "proposals",
+}
+
+# Inline escape hatch (mirrors sudo-grant-lint's annotation approach). A
+# physical line carrying this comment is not counted — used by the
+# store-internal low-level paths and the analyzer-unavailable fallbacks.
+_ANNOTATION = "# store-access-lint:"
+
+
+def _is_store_root_constant(node: ast.AST) -> str | None:
+    """If ``node`` is a string constant naming a store root, return it."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        if node.value in _CANONICAL:
+            return node.value
+    return None
+
+
+def _root_helper_store(node: ast.AST) -> str | None:
+    """If ``node`` is a ``signals_root(...)`` / ``proposals_root(...)`` call,
+    return the store it roots (handles both bare and ``mod.signals_root``)."""
+    if isinstance(node, ast.Call):
+        fn = node.func
+        name = None
+        if isinstance(fn, ast.Name):
+            name = fn.id
+        elif isinstance(fn, ast.Attribute):
+            name = fn.attr
+        if name in _ROOT_HELPER_STORE:
+            return _ROOT_HELPER_STORE[name]
+    return None
+
+
+def _chain_has_store_root(node: ast.AST, store: str) -> bool:
+    """True if a ``a / ... `` Div-chain roots at ``store``.
+
+    Walks down the left side of nested ``/`` BinOps looking for either a
+    literal ``Constant`` equal to ``store`` (``x / "signals" / "firing"``)
+    or a ``signals_root(...)`` / ``proposals_root(...)`` call rooting the
+    same store (``signals_root(x) / "firing"``).
+    """
+    cur = node
+    while isinstance(cur, ast.BinOp) and isinstance(cur.op, ast.Div):
+        if _is_store_root_constant(cur.right) == store:
+            return True
+        if _is_store_root_constant(cur.left) == store:
+            return True
+        if _root_helper_store(cur.right) == store:
+            return True
+        if _root_helper_store(cur.left) == store:
+            return True
+        cur = cur.left
+    if _is_store_root_constant(cur) == store:
+        return True
+    return _root_helper_store(cur) == store
+
+
+class _Visitor(ast.NodeVisitor):
+    def __init__(self) -> None:
+        self.hits: list[int] = []  # 1-based line numbers
+
+    def visit_BinOp(self, node: ast.BinOp) -> None:  # noqa: N802
+        if isinstance(node.op, ast.Div) and isinstance(node.right, ast.Constant):
+            rhs = node.right.value
+            if isinstance(rhs, str):
+                for store, subdirs in _CANONICAL.items():
+                    if rhs in subdirs and _chain_has_store_root(node.left, store):
+                        self.hits.append(node.right.lineno)
+                        break
+        self.generic_visit(node)
+
+
+def _count_direct_reads(path: Path) -> int:
+    try:
+        src = path.read_text(encoding="utf-8")
+    except OSError:
+        return 0
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return 0
+    lines = src.splitlines()
+    v = _Visitor()
+    v.visit(tree)
+    n = 0
+    for lineno in v.hits:
+        # Skip annotated lines (1-based -> 0-based index).
+        if 0 <= lineno - 1 < len(lines) and _ANNOTATION in lines[lineno - 1]:
+            continue
+        n += 1
+    return n
+
+
+def _iter_production_py() -> list[Path]:
+    out: list[Path] = []
+    for root in _LINT_ROOTS:
+        base = REPO_ROOT / root
+        if not base.exists():
+            continue
+        for p in base.rglob("*.py"):
+            rel = _rel(p)
+            if rel in _ALLOWLIST:
+                continue
+            parts = set(p.parts)
+            if "tests" in parts or "testing" in parts:
+                continue
+            out.append(p)
+    return out
+
+
+def _load_baseline() -> dict[str, int]:
+    if not BASELINE_PATH.exists():
+        return {}
+    out: dict[str, int] = {}
+    for line in BASELINE_PATH.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split("\t", 1)
+        if len(parts) != 2:
+            continue
+        try:
+            out[parts[1]] = int(parts[0])
+        except ValueError:
+            continue
+    return out
+
+
+def _write_baseline(counts: dict[str, int]) -> None:
+    lines = [
+        "# store-access-baseline — direct Proposal/Signal store-dir reads per",
+        "# file (canonical lifecycle subdirs only). Generated by",
+        "# `tools/store-access-lint --all --update-baseline`.",
+        "#",
+        "# The lint BLOCKS any file that EXCEEDS its count, so this may only",
+        "# ratchet DOWN. Migrate the reader onto arbiter.store / signals.store",
+        "# (or annotate a genuine store-internal case with `# store-access-lint:`)",
+        "# then rerun --update-baseline. The residual entries are the legacy L1",
+        "# apply/review pipeline (retired in 7.1 Phase C) and the store-internal",
+        "# mtime/stat/scandir paths the iter_* APIs cannot express. Goal: 0.",
+        "",
+    ]
+    for path in sorted(counts):
+        if counts[path] > 0:
+            lines.append(f"{counts[path]}\t{path}")
+    BASELINE_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _staged_files() -> list[Path]:
+    r = subprocess.run(
+        ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+    )
+    out: list[Path] = []
+    for name in r.stdout.splitlines():
+        if not name.endswith(".py"):
+            continue
+        p = REPO_ROOT / name
+        if p.exists() and _rel(p) not in _ALLOWLIST:
+            parts = set(p.parts)
+            if "tests" in parts or "testing" in parts:
+                continue
+            out.append(p)
+    return out
+
+
+def _rel(p: Path) -> str:
+    try:
+        return str(p.resolve().relative_to(REPO_ROOT))
+    except ValueError:
+        return str(p)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description="Sanction the Proposal/Signal store read path: forbid new "
+        "direct reads of the canonical store subdirs (roadmap 7.1 Phase B).",
+    )
+    ap.add_argument("files", nargs="*", help="specific files to lint")
+    ap.add_argument("--all", action="store_true", help="lint all production .py")
+    ap.add_argument("--staged", action="store_true", help="lint git-staged .py")
+    ap.add_argument(
+        "--update-baseline", action="store_true",
+        help="regenerate the baseline from current counts (requires --all)",
+    )
+    args = ap.parse_args()
+
+    baseline = _load_baseline()
+
+    if args.update_baseline:
+        if not args.all:
+            print("--update-baseline requires --all", file=sys.stderr)
+            return 2
+        counts = {_rel(p): _count_direct_reads(p) for p in _iter_production_py()}
+        _write_baseline(counts)
+        total = sum(counts.values())
+        nfiles = sum(1 for v in counts.values() if v > 0)
+        print(f"baseline written: {total} direct read(s) across {nfiles} file(s)")
+        return 0
+
+    if args.all:
+        targets = _iter_production_py()
+    elif args.staged:
+        targets = _staged_files()
+    else:
+        targets = [Path(f) for f in args.files]
+
+    violations: list[tuple[str, int, int]] = []
+    for p in targets:
+        rel = _rel(p)
+        if rel in _ALLOWLIST or not p.exists():
+            continue
+        parts = set(p.parts)
+        if "tests" in parts or "testing" in parts:
+            continue
+        n = _count_direct_reads(p)
+        allowed = baseline.get(rel, 0)
+        if n > allowed:
+            violations.append((rel, n, allowed))
+
+    if violations:
+        print("✗ new direct read(s) of the Proposal/Signal store directories:\n")
+        for rel, n, allowed in violations:
+            print(f"  {rel}: {n} direct read(s), baseline allows {allowed}")
+        print(
+            "\nThe store directories have ONE sanctioned read path each:\n"
+            "  proposals/ → arbiter.store  (iter_proposals / find_proposal / …)\n"
+            "  signals/   → signals.store  (iter_active / iter_signals / …)\n"
+            "\nReading shared_dir/proposals/<subdir> or shared_dir/signals/<subdir>\n"
+            "directly is what the Phase D SQLite swap would silently break. Route\n"
+            "the read through the store API instead. If this is a genuine\n"
+            "store-internal low-level path (mtime/stat/scandir the iter_* APIs\n"
+            "can't express) or a deliberate analyzer-unavailable fallback, add an\n"
+            "inline `# store-access-lint: <reason>` annotation and rerun\n"
+            "`tools/store-access-lint --all --update-baseline` for a reviewable diff.\n"
+            "\nSpec: internal/spec-state-store-and-deploy-resilience-2026-06-10.md §1.1"
+        )
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,1090 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Evolve</title>
+  <style>
+    :root {
+      --bg: #0d0d0d;
+      --bg2: #1a1a1a;
+      --bg3: #242424;
+      --border: #2e2e2e;
+      --text: #e0e0e0;
+      --text2: #999;
+      --blue: #7eb8f7;
+      --green: #4ade80;
+      --yellow: #fbbf24;
+      --red: #f87171;
+      --purple: #c084fc;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    /* ── Layout ─────────────────────────────────────────────────────── */
+    .layout { display: flex; min-height: 100vh; }
+
+    .sidebar {
+      width: 220px;
+      background: var(--bg2);
+      border-right: 1px solid var(--border);
+      padding: 24px 0;
+      flex-shrink: 0;
+    }
+
+    .sidebar-logo {
+      padding: 0 20px 24px;
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: var(--blue);
+      letter-spacing: -0.5px;
+    }
+
+    .sidebar-logo span { color: var(--text2); font-weight: 400; font-size: 0.75rem; display: block; margin-top: 2px; }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 20px;
+      cursor: pointer;
+      color: var(--text2);
+      font-size: 0.9rem;
+      transition: all 0.15s;
+      border-left: 2px solid transparent;
+    }
+    .nav-item:hover { color: var(--text); background: var(--bg3); }
+    .nav-item.active { color: var(--blue); border-left-color: var(--blue); background: var(--bg3); }
+
+    .main { flex: 1; padding: 32px; overflow-y: auto; }
+
+    /* ── Components ─────────────────────────────────────────────────── */
+    .page { display: none; }
+    .page.active { display: block; }
+
+    h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 6px; }
+    .subtitle { color: var(--text2); font-size: 0.9rem; margin-bottom: 28px; }
+
+    .grid { display: grid; gap: 16px; }
+    .grid-2 { grid-template-columns: repeat(2, 1fr); }
+    .grid-3 { grid-template-columns: repeat(3, 1fr); }
+    .grid-4 { grid-template-columns: repeat(4, 1fr); }
+
+    .card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+    }
+    .card-title { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text2); margin-bottom: 10px; }
+    .card-value { font-size: 2rem; font-weight: 700; }
+    .card-sub { font-size: 0.8rem; color: var(--text2); margin-top: 4px; }
+
+    .bot-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+      cursor: pointer;
+      transition: border-color 0.15s;
+    }
+    .bot-card:hover { border-color: var(--blue); }
+
+    .bot-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+    .bot-name { font-weight: 600; font-size: 1rem; }
+    .bot-role { font-size: 0.7rem; padding: 2px 8px; border-radius: 4px; background: var(--bg3); color: var(--text2); }
+    .bot-role.primary { background: rgba(126,184,247,0.15); color: var(--blue); }
+    .bot-role.forge { background: rgba(192,132,252,0.15); color: var(--purple); }
+
+    .score-ring {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+    .score-circle {
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.1rem;
+      font-weight: 700;
+      border: 3px solid;
+      flex-shrink: 0;
+    }
+    .score-a { border-color: var(--green); color: var(--green); }
+    .score-b { border-color: #a3e635; color: #a3e635; }
+    .score-c { border-color: var(--yellow); color: var(--yellow); }
+    .score-d { border-color: #fb923c; color: #fb923c; }
+    .score-f { border-color: var(--red); color: var(--red); }
+    /* ── Bot Detail ─────────────────────────────────────────────────────── */
+    .back-btn { display:inline-flex;align-items:center;gap:6px;color:var(--text2);font-size:0.85rem;cursor:pointer;margin-bottom:20px;padding:6px 0; }
+    .back-btn:hover { color:var(--text); }
+    .detail-header { display:flex;align-items:center;gap:20px;margin-bottom:24px; }
+    .detail-score-circle { width:72px;height:72px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:1.4rem;font-weight:700;border:3px solid;flex-shrink:0; }
+    canvas.sparkline { width:100%;height:60px;display:block; }
+    .history-table { width:100%;border-collapse:collapse;font-size:0.82rem; }
+    .history-table th { text-align:left;color:var(--text2);font-weight:400;padding:6px 10px;border-bottom:1px solid var(--border);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.04em; }
+    .history-table td { padding:8px 10px;border-bottom:1px solid var(--border); }
+    .history-table tr:last-child td { border-bottom:none; }
+    .history-table tr:hover td { background:var(--bg3); }
+    .tier-bar { display:flex;height:8px;border-radius:4px;overflow:hidden;margin:6px 0; }
+    .tier-bar-t1 { background:var(--green); }
+    .tier-bar-t2 { background:var(--yellow); }
+    .tier-bar-amb { background:var(--text2); }
+    .ph-row { display:flex;align-items:flex-start;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);font-size:0.83rem; }
+    .ph-row:last-child { border-bottom:none; }
+    .ph-date { color:var(--text2);font-size:0.75rem;white-space:nowrap; }
+
+
+    .metric-row { display: flex; justify-content: space-between; font-size: 0.82rem; padding: 4px 0; border-bottom: 1px solid var(--border); }
+    .metric-row:last-child { border-bottom: none; }
+    .metric-label { color: var(--text2); }
+    .metric-value { font-weight: 500; }
+    .ok { color: var(--green); }
+    .warn { color: var(--yellow); }
+    .crit { color: var(--red); }
+
+    .trend-up { color: var(--green); }
+    .trend-down { color: var(--red); }
+    .trend-flat { color: var(--text2); }
+
+    /* Proposals */
+    .proposal-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+      margin-bottom: 14px;
+    }
+    .proposal-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 10px; }
+    .proposal-bot { font-size: 0.75rem; padding: 2px 8px; border-radius: 4px; background: var(--bg3); color: var(--text2); }
+    .proposal-confidence {
+      font-size: 0.75rem;
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+    .conf-high { background: rgba(74,222,128,0.15); color: var(--green); }
+    .conf-med { background: rgba(251,191,36,0.15); color: var(--yellow); }
+    .conf-low { background: rgba(248,113,113,0.15); color: var(--red); }
+
+    .proposal-problem { font-size: 0.95rem; margin-bottom: 10px; font-weight: 500; }
+    .proposal-cause { font-size: 0.83rem; color: var(--text2); margin-bottom: 14px; line-height: 1.5; }
+
+    .proposal-actions { display: flex; gap: 8px; }
+    .btn {
+      padding: 7px 16px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      font-size: 0.83rem;
+      font-weight: 500;
+      transition: opacity 0.15s;
+    }
+    .btn:hover { opacity: 0.85; }
+    .btn-approve { background: var(--green); color: #000; }
+    .btn-reject { background: var(--bg3); color: var(--text); border: 1px solid var(--border); }
+    .btn-defer { background: var(--bg3); color: var(--text2); border: 1px solid var(--border); }
+    .btn-primary { background: var(--blue); color: #000; }
+    .btn-danger { background: var(--red); color: #000; }
+
+    .rejection-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.7);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+    }
+    .rejection-modal.open { display: flex; }
+    .modal-box {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 28px;
+      width: 440px;
+      max-width: 90vw;
+    }
+    .modal-title { font-size: 1rem; font-weight: 600; margin-bottom: 16px; }
+    .reason-option {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.88rem;
+      margin-bottom: 6px;
+    }
+    .reason-option:hover { background: var(--bg3); }
+    .reason-option input { accent-color: var(--blue); }
+    .modal-actions { display: flex; gap: 8px; margin-top: 18px; justify-content: flex-end; }
+
+    /* Settings */
+    .settings-section { margin-bottom: 32px; }
+    .settings-title { font-size: 1rem; font-weight: 600; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+
+    .instance-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 8px;
+    }
+    .instance-info { display: flex; align-items: center; gap: 12px; }
+    .instance-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+    .instance-dot.offline { background: var(--red); }
+    .instance-dot.unknown { background: var(--text2); }
+    .instance-name { font-weight: 500; }
+    .instance-meta { font-size: 0.8rem; color: var(--text2); }
+
+    .form-group { margin-bottom: 14px; }
+    .form-label { display: block; font-size: 0.82rem; color: var(--text2); margin-bottom: 6px; }
+    .form-input {
+      width: 100%;
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 12px;
+      color: var(--text);
+      font-size: 0.88rem;
+    }
+    .form-input:focus { outline: none; border-color: var(--blue); }
+
+    .add-bot-panel {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+      margin-top: 12px;
+    }
+    .code-block {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 14px;
+      font-family: "SF Mono", Monaco, monospace;
+      font-size: 0.8rem;
+      line-height: 1.6;
+      color: #a8d8a8;
+      white-space: pre-wrap;
+      margin: 10px 0;
+    }
+
+    .status-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.72rem;
+      font-weight: 500;
+    }
+    .badge-ok { background: rgba(74,222,128,0.15); color: var(--green); }
+    .badge-warn { background: rgba(251,191,36,0.15); color: var(--yellow); }
+    .badge-crit { background: rgba(248,113,113,0.15); color: var(--red); }
+    .badge-pending { background: rgba(126,184,247,0.15); color: var(--blue); }
+
+    @media (max-width: 900px) {
+      .grid-3, .grid-4 { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 600px) {
+      .sidebar { display: none; }
+      .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="layout">
+
+  <!-- Sidebar -->
+  <nav class="sidebar">
+    <div class="sidebar-logo">
+      ⚡ Evolve
+      <span id="network-id">Loading...</span>
+    </div>
+    <div class="nav-item active" onclick="showPage('overview')">
+      📊 Overview
+    </div>
+    <div class="nav-item" onclick="showPage('proposals')">
+      📋 Proposals
+      <span id="proposal-badge" style="margin-left:auto; background: var(--blue); color:#000; border-radius:10px; padding:1px 7px; font-size:0.7rem; display:none"></span>
+    </div>
+    <div class="nav-item" onclick="showPage('optimization')">
+      🔀 AI Optimization
+    </div>
+    <div class="nav-item" onclick="showPage('settings')">
+      ⚙️ Settings
+    </div>
+  </nav>
+
+  <!-- Main content -->
+  <main class="main">
+
+    <!-- Overview Page -->
+    <div class="page active" id="page-overview">
+      <h1>Network Overview</h1>
+      <p class="subtitle" id="overview-subtitle">Loading...</p>
+
+      <div class="grid grid-4" style="margin-bottom:24px">
+        <div class="card">
+          <div class="card-title">Network Score</div>
+          <div class="card-value" id="network-score">—</div>
+          <div class="card-sub">7-day composite</div>
+        </div>
+        <div class="card">
+          <div class="card-title">Active Bots</div>
+          <div class="card-value" id="active-bots">—</div>
+          <div class="card-sub">of <span id="total-bots">—</span> configured</div>
+        </div>
+        <div class="card">
+          <div class="card-title">Pending Proposals</div>
+          <div class="card-value" id="pending-proposals">—</div>
+          <div class="card-sub"><a href="#" onclick="showPage('proposals')" style="color:var(--blue)">Review →</a></div>
+        </div>
+        <div class="card">
+          <div class="card-title">API Key Alerts</div>
+          <div class="card-value" id="api-alerts">—</div>
+          <div class="card-sub">metered turns today</div>
+        </div>
+      </div>
+
+      <h2 style="font-size:1rem; margin-bottom:14px; color:var(--text2)">Bot Status</h2>
+      <div class="grid grid-3" id="bot-cards">
+        <div class="card" style="color:var(--text2)">Loading bot data...</div>
+      </div>
+    </div>
+
+    <!-- Proposals Page -->
+    <div class="page" id="page-proposals">
+      <h1>Proposals</h1>
+      <p class="subtitle">Improvement proposals generated by the analysis engine. Each requires your approval before going to Forge for validation.</p>
+
+      <div id="proposals-list">
+        <div class="card" style="color:var(--text2)">Loading proposals...</div>
+      </div>
+    </div>
+
+    <!-- AI Optimization Page -->
+    <div class="page" id="page-optimization">
+      <h1>AI Optimization</h1>
+      <p class="subtitle">Model routing and account assignment by session type.</p>
+
+      <h2 style="font-size:1rem; margin-bottom:14px; color:var(--text2)">Account Routing</h2>
+      <div class="grid grid-2" style="margin-bottom:24px">
+        <div class="card">
+          <div class="card-title">Account Routing</div>
+          <div class="card-value" id="acct-routing-status">—</div>
+          <div class="card-sub" id="acct-routing-sub">Loading...</div>
+        </div>
+        <div class="card">
+          <div class="card-title">Configured Tiers</div>
+          <div class="card-value" id="acct-tier-count">—</div>
+          <div class="card-sub">account tiers in network.json</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:24px">
+        <div class="card-title" style="margin-bottom:12px">Session Type → Auth Profile</div>
+        <div id="acct-session-map" style="color:var(--text2);font-size:0.88rem">Loading...</div>
+      </div>
+    </div>
+
+    <!-- Settings Page -->
+    <div class="page" id="page-settings">
+      <h1>Settings</h1>
+      <p class="subtitle">Configure the Evolve network — add or remove bot instances, adjust thresholds.</p>
+
+      <div class="settings-section">
+        <div class="settings-title">Bot Instances</div>
+        <div id="instance-list">Loading...</div>
+
+        <div style="margin-top: 16px;">
+          <button class="btn btn-primary" onclick="toggleAddBot()">+ Add Instance</button>
+        </div>
+
+        <div class="add-bot-panel" id="add-bot-panel" style="display:none">
+          <h3 style="margin-bottom:16px; font-size:0.95rem">Add Bot Instance</h3>
+
+          <div class="grid grid-2">
+            <div class="form-group">
+              <label class="form-label">Bot ID (macOS username)</label>
+              <input class="form-input" id="new-bot-id" placeholder="e.g. bot2" oninput="updateAddBotCommands()">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Role</label>
+              <select class="form-input" id="new-bot-role" onchange="updateAddBotCommands()">
+                <option value="member">member</option>
+                <option value="primary">primary</option>
+                <option value="forge">forge</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Gateway port</label>
+            <input class="form-input" id="new-bot-port" placeholder="e.g. 19002" oninput="updateAddBotCommands()">
+          </div>
+
+          <p style="font-size:0.83rem; color:var(--text2); margin-bottom:8px">
+            Run this from admin to deploy the plugin to the new bot:
+          </p>
+          <div class="code-block" id="add-bot-commands">Enter bot ID above to generate deploy commands.</div>
+
+          <div style="display:flex; gap:8px; margin-top:12px">
+            <button class="btn btn-primary" onclick="confirmAddBot()">Add to Network</button>
+            <button class="btn btn-reject" onclick="toggleAddBot()">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-title">Tier Classifier</div>
+        <div class="grid grid-2">
+          <div class="form-group">
+            <label class="form-label">Model</label>
+            <input class="form-input" id="classifier-model" placeholder="anthropic/claude-haiku-4-5">
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="saveThresholds()">Save</button>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-title">Alerts</div>
+        <div class="grid grid-2">
+          <div class="form-group">
+            <label class="form-label">Telegram Chat ID</label>
+            <input class="form-input" id="alert-chat-id" placeholder="Your chat ID">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Alert channel</label>
+            <select class="form-input" id="alert-channel">
+              <option value="telegram">telegram</option>
+              <option value="slack">slack</option>
+            </select>
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="saveAlerts()">Save Alert Config</button>
+      </div>
+    </div>
+
+
+    <!-- Bot Detail Page -->
+    <div class="page" id="page-botdetail">
+      <div class="back-btn" onclick="closeBotDetail()">&#8592; Back to Overview</div>
+      <div class="detail-header">
+        <div class="detail-score-circle score-a" id="detail-score-circle">?</div>
+        <div>
+          <h1 id="detail-bot-name">Bot</h1>
+          <p id="detail-bot-meta" style="color:var(--text2);font-size:0.88rem;margin-top:4px"></p>
+        </div>
+      </div>
+      <div class="grid grid-3" style="margin-bottom:24px">
+        <div class="card"><div class="card-title">Score (30d)</div><div class="card-value" id="detail-score">-</div><div class="card-sub" id="detail-trend"></div></div>
+        <div class="card"><div class="card-title">Maintenance ratio (7d)</div><div class="card-value" id="detail-maint">-</div><div class="card-sub">target &lt;20%</div></div>
+        <div class="card"><div class="card-title">API key turns (7d)</div><div class="card-value" id="detail-api">-</div><div class="card-sub">should be 0</div></div>
+      </div>
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-title">30-day score trend</div>
+        <div style="position:relative;height:60px;margin:10px 0 4px">
+          <canvas class="sparkline" id="detail-sparkline"></canvas>
+        </div>
+        <div id="detail-sparkline-labels" style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--text2);margin-top:4px"></div>
+      </div>
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-title">Session tier breakdown (30d)</div>
+        <div class="tier-bar" id="detail-tier-bar"></div>
+        <div style="display:flex;gap:16px;font-size:0.78rem;margin-top:6px">
+          <span><span style="color:var(--green)">&#9632;</span> Tier 1: <strong id="detail-t1-pct">-</strong></span>
+          <span><span style="color:var(--yellow)">&#9632;</span> Tier 2: <strong id="detail-t2-pct">-</strong></span>
+          <span><span style="color:var(--text2)">&#9632;</span> Ambiguous: <strong id="detail-amb-pct">-</strong></span>
+        </div>
+      </div>
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-title">Daily metrics history</div>
+        <table class="history-table">
+          <thead><tr><th>Date</th><th>Score</th><th>T1 ratio</th><th>Maint ratio</th><th>Sessions</th><th>Resolutions</th><th>API turns</th></tr></thead>
+          <tbody id="detail-history-rows"><tr><td colspan="7" style="color:var(--text2);text-align:center;padding:20px">Loading...</td></tr></tbody>
+        </table>
+      </div>
+      <div class="card">
+        <div class="card-title">Proposal history</div>
+        <div id="detail-proposal-history">Loading...</div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- Rejection modal -->
+<div class="rejection-modal" id="rejection-modal">
+  <div class="modal-box">
+    <div class="modal-title">Why are you rejecting this proposal?</div>
+    <div id="rejection-reasons">
+      <label class="reason-option"><input type="radio" name="reason" value="too-aggressive"> Too aggressive — change is larger than needed</label>
+      <label class="reason-option"><input type="radio" name="reason" value="wrong-layer"> Wrong layer — fixing symptoms, not root cause</label>
+      <label class="reason-option"><input type="radio" name="reason" value="already-fixed"> Already fixed — this was resolved manually</label>
+      <label class="reason-option"><input type="radio" name="reason" value="low-priority"> Low priority — not worth addressing right now</label>
+      <label class="reason-option"><input type="radio" name="reason" value="wrong-root-cause"> Wrong root cause — the diagnosis is incorrect</label>
+      <label class="reason-option"><input type="radio" name="reason" value="other"> Other (note below)</label>
+    </div>
+    <div class="form-group" style="margin-top:12px">
+      <textarea class="form-input" id="rejection-note" placeholder="Optional note..." rows="2" style="resize:vertical"></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-reject" onclick="closeRejectionModal()">Cancel</button>
+      <button class="btn btn-danger" onclick="confirmRejection()">Reject Proposal</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────────
+let networkData = null;
+let scoreboardData = null;
+let proposalsData = [];
+let pendingRejectionId = null;
+
+// ── Navigation ────────────────────────────────────────────────────────────────
+function showPage(page) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-' + page).classList.add('active');
+  event.currentTarget.classList.add('active');
+  if (page === 'optimization') loadOptimization();
+}
+
+// ── Data fetching ─────────────────────────────────────────────────────────────
+async function fetchJSON(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${url}: ${res.status}`);
+  return res.json();
+}
+
+async function loadAll() {
+  try {
+    const [network, scoreboard, proposals] = await Promise.all([
+      fetchJSON('/evolve/api/network'),
+      fetchJSON('/evolve/api/scoreboard'),
+      fetchJSON('/evolve/api/proposals'),
+    ]);
+    networkData = network;
+    scoreboardData = scoreboard;
+    proposalsData = proposals.pending || [];
+    render();
+  } catch (err) {
+    console.error('Evolve data load failed:', err);
+    document.getElementById('overview-subtitle').textContent = 'Error loading data: ' + err.message;
+  }
+}
+
+// ── Rendering ──────────────────────────────────────────────────────────────────
+function render() {
+  if (networkData) {
+    document.getElementById('network-id').textContent = networkData.networkId || '';
+    renderSettings();
+  }
+  if (scoreboardData) renderOverview();
+  renderProposals();
+}
+
+function gradeClass(grade) {
+  return { A: 'score-a', B: 'score-b', C: 'score-c', D: 'score-d', F: 'score-f' }[grade] || 'score-f';
+}
+
+function trendSymbol(trend) {
+  return { improving: '↑', degrading: '↓', stable: '→' }[trend] || '→';
+}
+
+function trendClass(trend) {
+  return { improving: 'trend-up', degrading: 'trend-down', stable: 'trend-flat' }[trend] || 'trend-flat';
+}
+
+function statusClass(status) {
+  return { ok: 'ok', warning: 'warn', critical: 'crit' }[status] || '';
+}
+
+function renderOverview() {
+  const sb = scoreboardData;
+  const bots = sb.bots || {};
+  const botIds = Object.keys(bots);
+  const activeBots = botIds.filter(id => (bots[id].days_with_data || 0) > 0).length;
+  const totalUnexpectedBilling = botIds.reduce((s, id) => s + (bots[id].unexpected_billing_turns_7d || 0), 0);
+  const pendingCount = proposalsData.length;
+
+  document.getElementById('network-score').textContent = sb.network_score || '—';
+  document.getElementById('active-bots').textContent = activeBots;
+  document.getElementById('total-bots').textContent = botIds.length;
+  document.getElementById('pending-proposals').textContent = pendingCount;
+  document.getElementById('api-alerts').textContent = totalUnexpectedBilling;
+  document.getElementById('api-alerts').className = 'card-value ' + (totalUnexpectedBilling > 0 ? 'crit' : 'ok');
+
+  const now = new Date();
+  document.getElementById('overview-subtitle').textContent =
+    `Last updated ${now.toLocaleTimeString()} · Network: ${networkData?.networkId || '—'}`;
+
+  // Proposal badge
+  const badge = document.getElementById('proposal-badge');
+  if (pendingCount > 0) {
+    badge.textContent = pendingCount;
+    badge.style.display = 'inline';
+  }
+
+  // Bot cards
+  const container = document.getElementById('bot-cards');
+  container.innerHTML = botIds.map(botId => {
+    const s = bots[botId];
+    const role = networkData?.bots?.[botId]?.role || 'member';
+    const maint = s.maintenance_ratio_7d || 0;
+    const maintClass = maint > 0.35 ? 'crit' : maint > 0.2 ? 'warn' : 'ok';
+    const unexpectedBilling = s.unexpected_billing_turns_7d || 0;
+    const billingClass = unexpectedBilling > 0 ? 'crit' : 'ok';
+
+    return `
+      <div class="bot-card" onclick="showBotDetail('${botId}')">
+        <div class="bot-header">
+          <span class="bot-name">${botId}</span>
+          <span class="bot-role ${role}">${role}</span>
+        </div>
+        <div class="score-ring">
+          <div class="score-circle ${gradeClass(s.grade)}">${s.grade || '?'}</div>
+          <div>
+            <div style="font-size:1.3rem; font-weight:700">${s.score || 0}<span style="font-size:0.8rem; color:var(--text2)">/100</span></div>
+            <div class="${trendClass(s.trend)}" style="font-size:0.8rem">${trendSymbol(s.trend)} ${s.trend || 'stable'}</div>
+          </div>
+        </div>
+        <div>
+          <div class="metric-row">
+            <span class="metric-label">Maintenance ratio</span>
+            <span class="metric-value ${maintClass}">${(maint * 100).toFixed(0)}%</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">Billing alerts</span>
+            <span class="metric-value ${billingClass}">${unexpectedBilling}</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">Days with data</span>
+            <span class="metric-value">${s.days_with_data || 0}/30</span>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function renderProposals() {
+  const container = document.getElementById('proposals-list');
+  if (proposalsData.length === 0) {
+    container.innerHTML = '<div class="card" style="color:var(--text2);text-align:center;padding:40px">✅ No pending proposals — all clear</div>';
+    return;
+  }
+
+  container.innerHTML = proposalsData.map(p => {
+    const conf = p.confidence || 0;
+    const confClass = conf >= 0.85 ? 'conf-high' : conf >= 0.70 ? 'conf-med' : 'conf-low';
+    const confLabel = (conf * 100).toFixed(0) + '% confidence';
+
+    return `
+      <div class="proposal-card" id="proposal-${p.id}">
+        <div class="proposal-header">
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <span class="proposal-bot">${p.target_bot}</span>
+            <span class="status-badge badge-pending">${p.type}</span>
+            <span class="proposal-confidence ${confClass}">${confLabel}</span>
+          </div>
+          <span style="font-size:0.75rem;color:var(--text2)">${p.id}</span>
+        </div>
+        <div class="proposal-problem">${p.problem}</div>
+        <div class="proposal-cause">
+          <strong style="color:var(--text)">Root cause:</strong> ${p.root_cause}
+          ${p.minimum_test ? `<br><strong style="color:var(--text)">Minimum test:</strong> ${p.minimum_test}` : ''}
+        </div>
+        ${p.proposed_change?.description ? `
+          <div style="background:var(--bg3);border-radius:6px;padding:10px;margin-bottom:14px;font-size:0.83rem;color:var(--text2)">
+            <strong style="color:var(--text)">Proposed:</strong> ${p.proposed_change.description}
+          </div>` : ''}
+        <div class="proposal-actions">
+          <button class="btn btn-approve" onclick="approveProposal('${p.id}')">✓ Approve</button>
+          <button class="btn btn-reject" onclick="openRejectionModal('${p.id}')">✗ Reject</button>
+          <button class="btn btn-defer" onclick="deferProposal('${p.id}')">→ Defer</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function renderSettings() {
+  if (!networkData) return;
+  const bots = networkData.bots || {};
+  const container = document.getElementById('instance-list');
+
+  container.innerHTML = Object.entries(bots).map(([botId, info]) => {
+    const statusDot = info.last_seen
+      ? (Date.now() - new Date(info.last_seen).getTime() < 6 * 3600 * 1000 ? '' : ' unknown')
+      : ' unknown';
+
+    return `
+      <div class="instance-row">
+        <div class="instance-info">
+          <div class="instance-dot${statusDot}"></div>
+          <div>
+            <div class="instance-name">${botId}</div>
+            <div class="instance-meta">role: ${info.role || 'member'} · port: ${info.port || '—'}</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <span class="status-badge ${info.role === 'primary' ? 'badge-ok' : info.role === 'forge' ? 'badge-pending' : ''}">${info.role || 'member'}</span>
+          ${botId !== networkData.primary ? `<button class="btn btn-danger" onclick="removeBotConfirm('${botId}')" style="padding:4px 10px;font-size:0.75rem">Remove</button>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+
+  document.getElementById('classifier-model').value = networkData.classifiers?.tier?.model || 'anthropic/claude-haiku-4-5';
+
+  const a = networkData.alerts || {};
+  document.getElementById('alert-chat-id').value = a.chatId || '';
+  document.getElementById('alert-channel').value = a.channel || 'telegram';
+}
+
+// ── Actions ───────────────────────────────────────────────────────────────────
+async function approveProposal(id) {
+  await fetch('/evolve/api/proposals/' + id + '/approve', { method: 'POST' });
+  proposalsData = proposalsData.filter(p => p.id !== id);
+  renderProposals();
+  document.getElementById('pending-proposals').textContent = proposalsData.length;
+}
+
+function openRejectionModal(id) {
+  pendingRejectionId = id;
+  document.getElementById('rejection-modal').classList.add('open');
+  document.getElementById('rejection-note').value = '';
+  document.querySelectorAll('input[name="reason"]').forEach(r => r.checked = false);
+}
+
+function closeRejectionModal() {
+  document.getElementById('rejection-modal').classList.remove('open');
+  pendingRejectionId = null;
+}
+
+async function confirmRejection() {
+  const reason = document.querySelector('input[name="reason"]:checked')?.value || 'other';
+  const note = document.getElementById('rejection-note').value;
+  await fetch('/evolve/api/proposals/' + pendingRejectionId + '/reject', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason, note }),
+  });
+  proposalsData = proposalsData.filter(p => p.id !== pendingRejectionId);
+  closeRejectionModal();
+  renderProposals();
+  document.getElementById('pending-proposals').textContent = proposalsData.length;
+}
+
+async function deferProposal(id) {
+  await fetch('/evolve/api/proposals/' + id + '/defer', { method: 'POST' });
+  proposalsData = proposalsData.filter(p => p.id !== id);
+  renderProposals();
+}
+
+function toggleAddBot() {
+  const panel = document.getElementById('add-bot-panel');
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+}
+
+function updateAddBotCommands() {
+  const botId = document.getElementById('new-bot-id').value.trim();
+  const role = document.getElementById('new-bot-role').value;
+  const port = document.getElementById('new-bot-port').value.trim();
+  const commands = document.getElementById('add-bot-commands');
+
+  if (!botId) {
+    commands.textContent = 'Enter bot ID above to generate deploy commands.';
+    return;
+  }
+
+  const sharedDir = networkData?.sharedDir || '/Users/Shared/evolve';
+  const networkId = networkData?.networkId || 'my-network';
+
+  commands.textContent = `# Run as admin:
+
+# 1. Copy analyzer scripts
+WS=$(sudo cat /Users/${botId}/.openclaw/openclaw.json | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('agents',{}).get('defaults',{}).get('workspace','/Users/${botId}/.openclaw/workspace'))")
+sudo mkdir -p "$WS/evolve"
+sudo cp /Users/bot1/.openclaw/workspace/evolve/*.py "$WS/evolve/"
+sudo cp /Users/bot1/.openclaw/workspace/evolve/network.json "$WS/evolve/"
+sudo chown -R ${botId} "$WS/evolve"
+
+# 2. Add to openclaw.json plugins section
+# (message ${botId} to do this step — requires gateway restart)
+
+# 3. Restart ${botId}'s gateway via ocadmin`;
+}
+
+async function confirmAddBot() {
+  const botId = document.getElementById('new-bot-id').value.trim();
+  const role = document.getElementById('new-bot-role').value;
+  const port = parseInt(document.getElementById('new-bot-port').value.trim()) || null;
+
+  if (!botId) return;
+
+  await fetch('/evolve/api/network/bots', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ botId, role, port }),
+  });
+
+  await loadAll();
+  toggleAddBot();
+}
+
+async function removeBotConfirm(botId) {
+  if (!confirm(`Remove ${botId} from the network? This stops tracking it but doesn't uninstall the plugin.`)) return;
+  await fetch('/evolve/api/network/bots/' + botId, { method: 'DELETE' });
+  await loadAll();
+}
+
+async function saveThresholds() {
+  const classifierModel = document.getElementById('classifier-model').value;
+  await fetch('/evolve/api/network/config', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ classifiers: { tier: { model: classifierModel } } }),
+  });
+  alert('Saved');
+}
+
+async function saveAlerts() {
+  const alerts = {
+    chatId: document.getElementById('alert-chat-id').value,
+    channel: document.getElementById('alert-channel').value,
+  };
+  await fetch('/evolve/api/network/config', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ alerts }),
+  });
+  alert('Alert config saved');
+}
+
+// ── Bot Detail ───────────────────────────────────────────────────────────────
+let _detailBotId = null;
+
+function showBotDetail(botId) {
+  _detailBotId = botId;
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-botdetail').classList.add('active');
+  loadBotDetail(botId);
+}
+
+function closeBotDetail() {
+  _detailBotId = null;
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-overview').classList.add('active');
+}
+
+async function loadBotDetail(botId) {
+  let metrics = [];
+  let allProposals = { pending: [], approved: [], deployed: [] };
+  try {
+    const [mRes, pRes] = await Promise.all([
+      fetch('/evolve/api/metrics/' + botId),
+      fetch('/evolve/api/proposals'),
+    ]);
+    if (mRes.ok) metrics = await mRes.json();
+    if (pRes.ok) allProposals = await pRes.json();
+  } catch(e) { console.error('Bot detail load:', e); }
+
+  const sb = scoreboardData && scoreboardData.bots ? (scoreboardData.bots[botId] || {}) : {};
+  const role = networkData && networkData.bots ? (networkData.bots[botId] || {}).role || 'member' : 'member';
+  const port = networkData && networkData.bots ? (networkData.bots[botId] || {}).port || '-' : '-';
+
+  document.getElementById('detail-bot-name').textContent = botId;
+  document.getElementById('detail-bot-meta').textContent =
+    'role: ' + role + ' · port: ' + port + ' · ' + metrics.length + ' days of data';
+
+  const grade = sb.grade || '?';
+  const sc = document.getElementById('detail-score-circle');
+  sc.textContent = grade;
+  sc.className = 'detail-score-circle ' + gradeClass(grade);
+
+  const maint = sb.maintenance_ratio_7d;
+  const maintStr = maint != null ? (maint*100).toFixed(0)+'%' : '-';
+  const maintEl = document.getElementById('detail-maint');
+  maintEl.textContent = maintStr;
+  maintEl.className = 'card-value ' + (maint > 0.35 ? 'crit' : maint > 0.2 ? 'warn' : 'ok');
+
+  document.getElementById('detail-score').textContent = sb.score != null ? sb.score : '-';
+  const tEl = document.getElementById('detail-trend');
+  tEl.textContent = trendSymbol(sb.trend) + ' ' + (sb.trend || 'stable');
+  tEl.className = trendClass(sb.trend);
+
+  const unexpectedBilling = sb.unexpected_billing_turns_7d || 0;
+  const apiEl = document.getElementById('detail-api');
+  apiEl.textContent = unexpectedBilling;
+  apiEl.className = 'card-value ' + (unexpectedBilling > 0 ? 'crit' : 'ok');
+
+  renderSparkline(metrics);
+  renderTierBreakdown(metrics);
+  renderHistoryTable(metrics);
+  renderProposalHistory(botId, allProposals);
+}
+
+function renderSparkline(metrics) {
+  const canvas = document.getElementById('detail-sparkline');
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.parentElement.offsetWidth || 600, H = 60;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  ctx.scale(dpr, dpr);
+
+  if (!metrics.length) {
+    ctx.fillStyle = '#999'; ctx.font = '12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('No data yet', W/2, H/2);
+    return;
+  }
+  const scores = metrics.map(m => m.score || 0);
+  const minS = Math.max(0, Math.min(...scores) - 5);
+  const maxS = Math.min(100, Math.max(...scores) + 5);
+  const range = maxS - minS || 1;
+  const pts = scores.map((s, i) => ({
+    x: scores.length > 1 ? (i / (scores.length-1)) * W : W/2,
+    y: H - ((s-minS)/range) * (H-8) - 4,
+  }));
+
+  const grad = ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'rgba(126,184,247,0.3)');
+  grad.addColorStop(1,'rgba(126,184,247,0)');
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, H);
+  pts.forEach(p => ctx.lineTo(p.x, p.y));
+  ctx.lineTo(pts[pts.length-1].x, H);
+  ctx.closePath(); ctx.fillStyle = grad; ctx.fill();
+  ctx.beginPath();
+  pts.forEach((p,i) => i===0 ? ctx.moveTo(p.x,p.y) : ctx.lineTo(p.x,p.y));
+  ctx.strokeStyle = '#7eb8f7'; ctx.lineWidth = 2; ctx.stroke();
+
+  const labels = document.getElementById('detail-sparkline-labels');
+  if (metrics.length >= 2) {
+    labels.innerHTML = '<span>' + (metrics[0].date||'') + '</span><span>' + (metrics[metrics.length-1].date||'') + '</span>';
+  }
+}
+
+function renderTierBreakdown(metrics) {
+  if (!metrics.length) {
+    ['t1','t2','amb'].forEach(k => { document.getElementById('detail-'+k+'-pct').textContent = '-'; });
+    document.getElementById('detail-tier-bar').innerHTML = '<div style="width:100%;background:var(--bg3)"></div>';
+    return;
+  }
+  let t1=0,t2=0,amb=0;
+  metrics.forEach(m => { t1+=m.tier1_sessions||0; t2+=m.tier2_sessions||0; amb+=m.ambiguous_sessions||0; });
+  const total = t1+t2+amb || 1;
+  const p1=(t1/total*100).toFixed(0), p2=(t2/total*100).toFixed(0), pa=(amb/total*100).toFixed(0);
+  document.getElementById('detail-tier-bar').innerHTML =
+    '<div class="tier-bar-t1" style="width:'+p1+'%"></div>' +
+    '<div class="tier-bar-t2" style="width:'+p2+'%"></div>' +
+    '<div class="tier-bar-amb" style="flex:1"></div>';
+  document.getElementById('detail-t1-pct').textContent = p1+'%';
+  document.getElementById('detail-t2-pct').textContent = p2+'%';
+  document.getElementById('detail-amb-pct').textContent = pa+'%';
+}
+
+function renderHistoryTable(metrics) {
+  const tbody = document.getElementById('detail-history-rows');
+  if (!metrics.length) {
+    tbody.innerHTML = '<tr><td colspan="7" style="color:var(--text2);text-align:center;padding:20px">No metrics data yet</td></tr>';
+    return;
+  }
+  const sorted = metrics.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  tbody.innerHTML = sorted.map(m => {
+    const maint = m.maintenance_ratio_7d != null ? m.maintenance_ratio_7d : m.maintenance_ratio;
+    const ms = maint != null ? (maint*100).toFixed(0)+'%' : '-';
+    const mc = maint > 0.35 ? 'crit' : maint > 0.2 ? 'warn' : 'ok';
+    const t1r = m.tier1_ratio != null ? (m.tier1_ratio*100).toFixed(0)+'%' : '-';
+    const api = m.unexpected_billing_turns || 0;
+    return '<tr>' +
+      '<td>'+(m.date||'-')+'</td>' +
+      '<td><strong>'+(m.score!=null?m.score:'-')+'</strong></td>' +
+      '<td>'+t1r+'</td>' +
+      '<td class="'+mc+'">'+ms+'</td>' +
+      '<td>'+(m.sessions!=null?m.sessions:'-')+'</td>' +
+      '<td>'+(m.resolved_sessions!=null?m.resolved_sessions:'-')+'</td>' +
+      '<td class="'+(api>0?'crit':'')+'">'+api+'</td>' +
+      '</tr>';
+  }).join('');
+}
+
+function renderProposalHistory(botId, allProposals) {
+  const container = document.getElementById('detail-proposal-history');
+  const icons = {pending:'&#128309;',approved:'&#9989;',deployed:'&#128640;'};
+  const all = [
+    ...(allProposals.pending||[]).map(p=>({...p,_s:'pending'})),
+    ...(allProposals.approved||[]).map(p=>({...p,_s:'approved'})),
+    ...(allProposals.deployed||[]).map(p=>({...p,_s:'deployed'})),
+  ].filter(p=>p.target_bot===botId)
+   .sort((a,b)=>(b.generated||'').localeCompare(a.generated||''));
+
+  if (!all.length) {
+    container.innerHTML = '<div style="color:var(--text2);font-size:0.85rem">No proposals for this bot yet.</div>';
+    return;
+  }
+  container.innerHTML = all.map(p => {
+    const date = (p.generated||'').slice(0,10);
+    return '<div class="ph-row">' +
+      '<div style="font-size:1rem;flex-shrink:0">'+(icons[p._s]||'?')+'</div>' +
+      '<div style="flex:1">' +
+        '<div style="font-weight:500">'+(p.problem||'')+'</div>' +
+        '<div style="color:var(--text2);font-size:0.78rem;margin-top:3px">'+(p.type||'')+' &middot; conf: '+((p.confidence||0)*100).toFixed(0)+'% &middot; '+p._s+'</div>' +
+      '</div>' +
+      '<div class="ph-date">'+date+'</div>' +
+      '</div>';
+  }).join('');
+}
+
+// ── Account Routing (AI Optimization page) ────────────────────────────────────
+async function loadOptimization() {
+  try {
+    const data = await fetchJSON('/evolve/api/accounts/status');
+    const enabled = data.routing_enabled;
+    document.getElementById('acct-routing-status').textContent = enabled ? 'Enabled' : 'Disabled';
+    document.getElementById('acct-routing-status').style.color = enabled ? 'var(--green)' : 'var(--text2)';
+    document.getElementById('acct-routing-sub').textContent = enabled
+      ? 'Sessions routed to configured auth profiles'
+      : 'Enable in network.json accounts.routing.enabled';
+
+    const tiers = data.tiers || {};
+    document.getElementById('acct-tier-count').textContent = Object.keys(tiers).length;
+
+    const map = data.session_type_map || {};
+    const mapEl = document.getElementById('acct-session-map');
+    if (Object.keys(map).length === 0) {
+      mapEl.textContent = 'No account tiers configured.';
+    } else {
+      mapEl.innerHTML = Object.entries(map).map(([sessionType, profile]) =>
+        `<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border)">` +
+        `<span style="color:var(--text)">${sessionType}</span>` +
+        `<span style="color:var(--blue);font-family:monospace">${profile}</span>` +
+        `</div>`
+      ).join('');
+    }
+  } catch (err) {
+    document.getElementById('acct-routing-sub').textContent = 'Error: ' + err.message;
+  }
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+loadAll();
+setInterval(loadAll, 60000); // refresh every 60 seconds
+</script>
+</body>
+</html>

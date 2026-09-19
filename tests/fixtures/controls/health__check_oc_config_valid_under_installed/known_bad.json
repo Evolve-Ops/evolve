@@ -1,0 +1,15 @@
+{
+  "_comment": "AXIS: the validator's `valid` boolean, flipped. Everything else is byte-identical to known_good.json except the issues the validator names, which exist only because `valid` is false. The 2026-09-07 shape: the new binary rejects keys the old one accepted, on a pod that is otherwise running. Replayed by packages/admin/tests/test_oc_runtime_controls.py::test_config_valid_known_bad_warns.",
+  "_axis": "validator_result.valid",
+  "members": ["botalpha"],
+  "network": {"networkId": "fixture-net", "bots": {"botalpha": {"role": "member"}}},
+  "validator_result": {
+    "valid": false,
+    "issues": [
+      {"path": "agents.botalpha.model", "message": "unknown provider 'llama-cpp'"},
+      {"path": "channels.slack.streaming", "message": "unknown key under channels.slack"}
+    ],
+    "error": ""
+  },
+  "expect": {"status": "WARN", "name": "botalpha:config_valid_under_oc", "message_contains": "unknown provider 'llama-cpp'"}
+}

@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+"""readability-lint — the 10th-grader bar, enforced.
+
+The pod dossier speaks to an operator in sentences, and the design's D-T8
+makes the readability of those sentences a GATE rather than a review comment:
+a headline that reaches for jargon reds the build. This is that gate.
+
+WHAT IT CHECKS. Every entry in ``dossier.headlines.HEADLINES`` — the registry
+that holds every operator-facing sentence the dossier can say — against
+``dossier.readability.check``:
+
+  grade       Flesch-Kincaid grade level above 10. Documented in
+              dossier/readability.py, including its known blind spot: the
+              arithmetic sees sentence length and word length and NOTHING
+              else, so a short jargon sentence scores well. The four rules
+              below exist because of that blind spot, not beside it.
+  acronym     two or more capitals in a row (USD, ISO, UI). No allowlist —
+              every acronym we would reach for has a plain-English form.
+  field_name  snake_case / camelCase / a.dotted.path in a sentence.
+  jargon      a word from the curated set that is ours, not the reader's
+              (producer, rollup, manifest, schema, signal, null, ...).
+  sentences   more than a whole headline may hold. A registry entry is a
+              CLAUSE — one sentence — because a trend clause gets appended
+              to it at render time; only the keys in ``headlines.STANDALONE``
+              are whole two-sentence headlines. Enforcing the split here is
+              what stops a two-clause headline becoming a paragraph.
+
+AND ONE STRUCTURAL RULE. ``dossier/modules.py`` may not build a headline from
+a string literal: a literal there is prose the registry never saw and this
+gate therefore cannot score. The check is AST-based — a ``headline`` key or
+keyword whose value is a plain string constant. Without it the gate would be
+trivially bypassable by the exact edit a hurried change makes.
+
+SEVERITY. Unlike the hybrid lints, this one is BLOCK-only: there is no
+baseline and no warn tier, because there is no legacy debt to ratchet down —
+the registry was born under the gate. A hit is always a new sentence that
+does not meet the bar.
+
+Usage:
+  tools/readability-lint              # score the registry + structural rule
+  tools/readability-lint --verbose    # print the grade of every sentence
+  tools/readability-lint --text "..." # score one string (authoring aid)
+
+Exit status: 0 clean; 1 if any sentence or structural rule fails.
+"""
+from __future__ import annotations
+
+import argparse
+import ast
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+_ANALYZER = REPO_ROOT / "packages" / "analyzer"
+if str(_ANALYZER) not in sys.path:
+    sys.path.insert(0, str(_ANALYZER))
+
+from dossier import readability  # noqa: E402
+from dossier.headlines import HEADLINES, STANDALONE  # noqa: E402
+
+#: The synthesizer. Its headlines must come from the registry, never from a
+#: literal — see AND ONE STRUCTURAL RULE above.
+_SYNTHESIZER = _ANALYZER / "dossier" / "modules.py"
+
+
+def _literal_headlines(path: Path) -> list[tuple[int, str]]:
+    """``(lineno, text)`` for every headline built from a string literal."""
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return []
+    hits: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Dict):
+            for key, value in zip(node.keys, node.values):
+                if (isinstance(key, ast.Constant) and key.value == "headline"
+                        and isinstance(value, ast.Constant)
+                        and isinstance(value.value, str)):
+                    hits.append((value.lineno, value.value))
+        elif isinstance(node, ast.keyword) and node.arg == "headline":
+            if (isinstance(node.value, ast.Constant)
+                    and isinstance(node.value.value, str)):
+                hits.append((node.value.lineno, node.value.value))
+    return hits
+
+
+def _report_registry(verbose: bool) -> int:
+    failures = 0
+    for key in sorted(HEADLINES):
+        text = HEADLINES[key]
+        findings = readability.check(
+            text, max_sentences=(readability.MAX_SENTENCES
+                                 if key in STANDALONE else 1),
+        )
+        if verbose and not findings:
+            print(f"  ok    grade {readability.grade(text):>5.1f}  {key}")
+        if not findings:
+            continue
+        failures += 1
+        print(f"  FAIL  {key}")
+        print(f"        {text!r}")
+        for finding in findings:
+            print(f"        - {finding}")
+    return failures
+
+
+def main(argv: "list[str] | None" = None) -> int:
+    ap = argparse.ArgumentParser(
+        description="Enforce the dossier's plain-English bar on every headline.",
+    )
+    ap.add_argument("--verbose", action="store_true",
+                    help="print the grade of every passing sentence too")
+    ap.add_argument("--text", help="score one string and exit (authoring aid)")
+    args = ap.parse_args(argv)
+
+    if args.text is not None:
+        findings = readability.check(args.text)
+        print(f"grade {readability.grade(args.text):.1f}  {args.text!r}")
+        for finding in findings:
+            print(f"  - {finding}")
+        return 1 if findings else 0
+
+    print(f"readability-lint: {len(HEADLINES)} registered sentence(s), "
+          f"bar = grade {readability.MAX_GRADE:.0f}")
+    failures = _report_registry(args.verbose)
+
+    literals = _literal_headlines(_SYNTHESIZER)
+    for lineno, text in literals:
+        print(f"  FAIL  {_SYNTHESIZER.relative_to(REPO_ROOT)}:{lineno}")
+        print(f"        headline built from a literal: {text!r}")
+        print("        - move it into dossier.headlines.HEADLINES and render "
+              "it with say(); a literal here is prose this gate cannot see")
+
+    if not failures and not literals:
+        print("readability-lint: OK")
+        return 0
+
+    print(
+        f"\n{failures} sentence(s) below the bar, {len(literals)} un-registered "
+        f"headline literal(s).\nThe dossier speaks to an operator who does not "
+        f"read our source. A headline\nthat needs a glossary is a headline that "
+        f"does not work — rewrite it, do not\nraise MAX_GRADE or delete a jargon "
+        f"word to get past this (both are product\ndecisions, and both belong in "
+        f"a diff that says so).\n"
+    )
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

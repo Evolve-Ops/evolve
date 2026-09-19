@@ -1,0 +1,187 @@
+{
+  "pkg_id": "p-aab5e569",
+  "pkg_version": "2026.06.11-2.2",
+  "gallery_version": "2026.06.11-2.2",
+  "schema_version": 5,
+  "manifest_type": "evolve_application",
+  "display_name": "EA Pack",
+  "author": "evolve",
+  "description": "Curated bundle of executive-assistant behaviors. Installs the four single-purpose apps that together form a daily EA rhythm — Morning Briefing, Evening Sweep, Pre-Meeting Brief, Commitment Tracker — along with their data-layer dependencies (Contacts, Task Manager, Calendar Sync). Installs no scripts of its own; it exists so an operator can pick 'the EA bundle' in one step instead of installing seven apps individually.",
+  "application_tags": [
+    "starter-pack",
+    "archetype-personal-assistant",
+    "personal-productivity",
+    "executive-assistant",
+    "ea-suite",
+    "morning-routine",
+    "evening-routine",
+    "calendar",
+    "calendar-summary",
+    "contacts",
+    "task-management",
+    "daily-digest",
+    "productivity",
+    "integration"
+  ],
+  "id": "app_ea_pack",
+  "name": "EA Pack",
+  "status": "active",
+  "dependencies": [],
+  "app_dependencies": [
+    {
+      "pkg_id": "p-9bfa1c84",
+      "display_name": "Task Manager",
+      "required": true,
+      "reason": "Foundation data layer. Persistent task registry; Morning Briefing, Evening Sweep, and Commitment Tracker all read from it."
+    },
+    {
+      "pkg_id": "p-4136a932",
+      "display_name": "Contacts",
+      "required": true,
+      "reason": "Foundation data layer. Per-person relationship memory; Pre-Meeting Brief uses it for attendee context and Commitment Tracker uses it for commitment storage."
+    },
+    {
+      "pkg_id": "p-fe9acef3",
+      "display_name": "Calendar Sync",
+      "required": true,
+      "reason": "Foundation data layer. Local calendar cache; Morning Briefing and Pre-Meeting Brief both read its memory/calendar-today.json and memory/calendar-upcoming.json."
+    },
+    {
+      "pkg_id": "p-a9a74bf7",
+      "display_name": "Morning Briefing",
+      "required": true,
+      "reason": "Behavior: morning surface. Once-per-day brief covering schedule, top emails, weather, and news (configurable). Installed transitively when EA Pack is selected."
+    },
+    {
+      "pkg_id": "p-1d3e8f47",
+      "display_name": "Evening Sweep",
+      "required": true,
+      "reason": "Behavior: evening surface. End-of-day task summary — what was completed, what's still open, what's overdue — plus commitment follow-ups."
+    },
+    {
+      "pkg_id": "p-2c7a9b6e",
+      "display_name": "Pre-Meeting Brief",
+      "required": true,
+      "reason": "Behavior: calendar-driven surface. Briefing ~60 minutes before each external meeting, including attendee context drawn from Contacts."
+    },
+    {
+      "pkg_id": "p-3b4f5d29",
+      "display_name": "Commitment Tracker",
+      "required": true,
+      "reason": "Behavior: conversation-driven surface. Captures commitments made in conversation into Contacts memory and surfaces overdue ones."
+    }
+  ],
+  "requirements": {
+    "integrations": [],
+    "secrets": [],
+    "system": [],
+    "python_packages": []
+  },
+  "interface_contract": {
+    "populated_by_forge": false,
+    "extracted_at": null,
+    "data_files": [],
+    "cli": [],
+    "key_paths": {},
+    "signal_prefixes": [],
+    "output_signal_formats": {}
+  },
+  "files": [],
+  "install_job": null,
+  "improvement_history": [],
+  "identity": {
+    "purpose": "Package the four single-purpose executive-assistant behaviors plus their three data-layer dependencies as one installable unit, so an operator can choose 'EA bundle' instead of picking seven apps individually. The meta-spec itself has no behavior — every brief, sweep, and follow-up belongs to a downstream app. Removing this meta-spec would not remove any capability; it would only require the operator to install the seven dependencies one at a time.",
+    "scope_includes": [
+      "Declare a strict app_dependencies graph that the installer resolves into the seven underlying apps",
+      "Bundle the EA-suite tags onto a single discoverable surface so operators searching for 'morning brief', 'evening sweep', or 'pre-meeting' all land on the same coordinated offering",
+      "Carry the operator-facing description for the bundle (its name, blurb, and tag set), nothing more"
+    ],
+    "scope_excludes": [
+      "Installing any script of its own — every script lives in a downstream app",
+      "Declaring scheduled_actions of its own — every cron / heartbeat instruction belongs to a downstream app",
+      "Declaring integrations of its own — every integration is required transitively through Calendar Sync (Google Calendar) or whichever Morning Briefing depends on",
+      "Overriding configuration of downstream apps — each downstream app reads its own network.json::capabilities block; this meta-spec does not introduce a `capabilities.ea_pack` block"
+    ],
+    "bot_interaction_pattern": "None — this is a meta-package, not a runtime app. The bot never invokes anything labeled 'ea-pack'; it invokes the underlying behavior apps directly.",
+    "user": "The operator at install time. After install completes, EA Pack is invisible at runtime — every actual brief and sweep is surfaced by one of the downstream apps."
+  },
+  "success_criteria": {
+    "observable_outcomes": [
+      "Selecting EA Pack in the admin UI installs all seven dependencies in the correct order (foundations before behaviors)",
+      "After install, each of the four behavior apps shows as `status: active` in the bot's apps list with its own scheduled_actions and interface_contract",
+      "After install, the operator receives a morning brief, an evening sweep, and a pre-meeting brief on their first day of normal usage (when calendar + tasks contain data)",
+      "Uninstalling EA Pack only removes the meta-spec from the bot's apps list — downstream apps remain installed and continue to function (operator decides whether to remove them individually)"
+    ],
+    "failure_signals": [
+      "EA Pack installs but only N of 7 dependencies appear in the bot's apps list — installer dependency resolution is incomplete",
+      "Two downstream apps disagree on a shared file's format (e.g. Evening Sweep parses a tasks.json field that Task Manager doesn't emit) — the contract between behaviors and foundations has drifted",
+      "Behavior apps install but their scheduled_actions don't fire — Phase 4.5 didn't materialize plists or HEARTBEAT.md sections",
+      "Operator follows the EA Pack install but no daily messages arrive within 48 hours — at least one behavior app failed Build silently"
+    ],
+    "quality_bar": {
+      "minimum": "EA Pack is a strict superset of its dependencies — installing it produces exactly the same bot capability set as installing the seven apps manually, in the same order.",
+      "excellent": "An operator who knows nothing about Evolve's apps-as-contracts framing can pick 'EA Pack' and within one day be receiving morning briefs, evening sweeps, and pre-meeting briefs from the bot, with attendee context drawn from Contacts memory they've been populating in conversation."
+    }
+  },
+  "constraints": {
+    "privacy": [
+      "EA Pack carries no data of its own — every privacy obligation passes through to a downstream app. See the Contacts spec for relationship-memory privacy, Calendar Sync for calendar-data handling, and Morning Briefing / Evening Sweep / Pre-Meeting Brief for delivery-channel boundaries."
+    ],
+    "safety": [
+      "The meta-spec declares no scripts and no scheduled actions, so it cannot fail at runtime. The downstream apps' safety constraints apply individually.",
+      "Installer must resolve dependencies in topological order: data-layer apps (Contacts, Task Manager, Calendar Sync) before behavior apps. A behavior app installed without its foundation will emit a *_FAILED: signal on its first run."
+    ],
+    "dependencies": [
+      "All seven dependencies above are REQUIRED. There is no degraded mode where EA Pack works without one of them — the bundle's value is that the operator gets the full EA rhythm in one install.",
+      "If a future operator wants only a subset (e.g. morning brief + commitment tracker, no calendar work), they should install those apps individually rather than EA Pack."
+    ],
+    "boundaries": [
+      "EA Pack does not introduce a network.json::capabilities.ea_pack config block — each downstream app reads its own capabilities block (e.g. capabilities.evening_sweep, capabilities.pre_meeting_brief, capabilities.morning_briefing).",
+      "EA Pack does not own any HEARTBEAT.md section — every heartbeat instruction belongs to a downstream app's scheduled_actions.",
+      "EA Pack version bumps are only required when the dependency graph changes (a behavior added, a dependency renamed, a required→optional flip). Bumping a downstream app's pkg_version does not require an EA Pack bump."
+    ]
+  },
+  "build_spec": "# EA Pack — Build Specification\n\n## Overview\n\nThis is a **meta-package**. It declares no files of its own; the installer is expected to resolve `app_dependencies` and install each downstream app independently.\n\nThere is nothing for forge to build at install time. The Build phase is a no-op:\n\n- No scripts to write.\n- No data files to seed.\n- No plists or HEARTBEAT.md sections to materialize.\n- No openclaw.json mutations.\n\nIf the installer ships EA Pack to a bot and the seven dependencies are already installed, the bot's apps list gains an `app_ea_pack` entry whose only content is the metadata above (description, tags, identity, dependency list). Removing the EA Pack entry removes only that metadata.\n\n## Dependency graph\n\n```\n  Morning Briefing ──┐\n  Evening Sweep ─────┼── depend on ──┐\n  Pre-Meeting Brief ─┤                ├── Task Manager (foundation)\n  Commitment Tracker ┘                ├── Contacts     (foundation)\n                                      └── Calendar Sync (foundation)\n```\n\n- **Foundation apps** (Task Manager, Contacts, Calendar Sync) own data formats and CLIs. They have no scheduled behaviors of their own (Task Manager's heartbeat surfaces are owned by its own spec, not by EA Pack).\n- **Behavior apps** (Morning Briefing, Evening Sweep, Pre-Meeting Brief, Commitment Tracker) own scheduled_actions that read the foundation data and deliver via `openclaw message send`.\n\n## Install order (installer responsibility)\n\nThe installer must apply dependencies in topological order — foundations first, then behaviors. A behavior app installed before its foundation will emit a `*_FAILED:` signal on its first scheduled run because the data file it reads (`tasks.json`, `memory/calendar-upcoming.json`, `memory/contacts/`) will not exist.\n\nA suggested install sequence:\n\n```\n1. Task Manager (p-9bfa1c84)\n2. Contacts (p-4136a932)\n3. Calendar Sync (p-fe9acef3)\n4. Morning Briefing (p-a9a74bf7)\n5. Evening Sweep (p-1d3e8f47)\n6. Pre-Meeting Brief (p-2c7a9b6e)\n7. Commitment Tracker (p-3b4f5d29)\n```\n\n## What changed from the prior EA Pack\n\nThe v2026.06.04-1.3 EA Pack tried to package four behaviors and two cron jobs as a single spec. The personal-bot install surfaced the problem: forge had to improvise which behaviors to wire up because the spec didn't pin the full file roster or scheduled_actions matrix. See [internal/gallery-spec-quality-audit-2026-06-05.md](internal/gallery-spec-quality-audit-2026-06-05.md) for the diagnosis.\n\nThis 2.0 release splits the four behaviors into their own single-purpose specs (Evening Sweep, Pre-Meeting Brief, Commitment Tracker — Morning Briefing already existed as its own spec) and reduces EA Pack to a manifest that declares the dependency graph. Operators who want individual pieces install them directly; operators who want the bundle install EA Pack.\n\n## What NOT to include\n\n- No scripts.\n- No scheduled_actions.\n- No HEARTBEAT.md content.\n- No openclaw.json fields.\n- No requirements.integrations[] — integrations are required transitively through Calendar Sync and (eventually) Morning Briefing.\n",
+  "example_triggers": [
+    "Install the EA pack",
+    "What's in the EA bundle?",
+    "Set up morning brief + evening sweep + pre-meeting brief",
+    "Give me the full executive-assistant rhythm"
+  ],
+  "test_cases": [
+    {
+      "trigger": "Install the EA pack",
+      "expected": "Admin UI / installer resolves app_dependencies and installs all seven downstream apps in topological order. After install, all seven appear in the bot's apps list with status=active."
+    },
+    {
+      "trigger": "What does the EA Pack include?",
+      "expected": "Bot reads this manifest's app_dependencies and reports: Morning Briefing, Evening Sweep, Pre-Meeting Brief, Commitment Tracker (behaviors) + Contacts, Task Manager, Calendar Sync (foundations)."
+    }
+  ],
+  "scheduled_actions": [],
+  "usage": {
+    "model": "user-initiated",
+    "trigger_recognition": {
+      "pattern": "EA Pack is a one-time installer. Mention it only when the user asks how to set up the executive-assistant rhythm, or when they ask which apps are bundled.",
+      "hint_words": [
+        "EA pack",
+        "EA bundle",
+        "executive assistant setup",
+        "install everything",
+        "morning brief and evening sweep"
+      ],
+      "requires_keyword": true
+    },
+    "auto_capture": {
+      "enabled": false,
+      "sources": []
+    },
+    "how_to_use": "EA Pack has no day-to-day runtime — it's an installer that brings in Morning Briefing, Pre-Meeting Brief, Evening Sweep, Email Triage, plus the data-layer dependencies. When the user asks about EA Pack, describe what's inside; direct them to the gallery install if they haven't installed yet.",
+    "bot_voice_examples": [
+      "EA Pack bundles Morning Briefing, Pre-Meeting Brief, Evening Sweep, and Email Triage — all four installable as one.",
+      "You already have the EA pack installed; it's running on cron.",
+      "To install EA Pack, run the gallery install from the Apps page."
+    ]
+  },
+  "verification": []
+}

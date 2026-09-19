@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "game_id": "disconnected",
+  "board_words": [
+    {"word": "AT", "position": "H8", "direction": "across"},
+    {"word": "YEZ", "position": "A1", "direction": "across"}
+  ],
+  "rack": "ATE",
+  "bag_count": 60
+}

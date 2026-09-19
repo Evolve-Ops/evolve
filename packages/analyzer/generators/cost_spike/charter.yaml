@@ -1,0 +1,36 @@
+id: cost_spike
+schema_version: 1
+type: optimizer
+dimension: cost
+# Surface routing: drift. A 5× week-over-week cost spike is the kind of
+# slow drift the operator should triage, but no fire is burning right
+# now. Spec: internal/spec-recommendations-rework-2026-06-02.md
+# §"Generator routing".
+surface: drift
+purpose: >
+  Surface week-over-week cost spikes for operator review. Consumes
+  ``cost_spike`` Signals from cost_watchdog and emits Investigation
+  Proposals so the operator can see the comparison context and decide
+  whether the increase is intentional (new bot use case, traffic spike)
+  or a regression (heartbeat leak, runaway cron, model upgrade by
+  mistake). Distinct from budget_hawk which watches absolute spend
+  against a configured cap — this watches relative-to-self change.
+cadence: daily
+# Sensor-style: when the cost_spike signal stops firing (current 7d
+# falls back in line with prior 7d, or the multiplier no longer
+# crosses) the proposal auto-archives.
+resolves_when_silent: true
+invariants:
+  - id: action_kind_allowed
+    description: >
+      Cost Spike emits Investigations only — the right response depends
+      on context the operator has and we don't (intentional change vs.
+      regression). No autonomous config writes.
+    check_kind: action_kind_allowed
+    params:
+      allowlist: [Investigation]
+  - id: touches_forbidden
+    description: Cost Spike does not touch auth, tools, or channel config.
+    check_kind: touches_forbidden
+    params:
+      forbidden: [auth, tools, channel_config, gateway_core]

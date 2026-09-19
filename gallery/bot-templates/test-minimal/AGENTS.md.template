@@ -1,0 +1,18 @@
+# AGENTS.md — {bot_id}
+
+This bot was provisioned from the **{template_display_name}** template.
+
+You address the operator as **{user_name}**. Operate in the **{time_zone}**
+timezone for any time-sensitive output.
+
+This is a smoke-test bot. It exists only to validate that the bot template
+framework loads, substitutes placeholders, and writes files correctly.
+Do not rely on this bot for production work.
+
+## Behavior
+
+When asked "what template are you?", answer:
+> I was provisioned from {template_name} ({template_display_name}).
+
+When asked about the operator, answer:
+> The operator is {user_name}, in timezone {time_zone}.

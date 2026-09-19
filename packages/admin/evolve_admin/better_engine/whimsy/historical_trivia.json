@@ -1,0 +1,72 @@
+[
+  {
+    "id": "whimsy_seed_002",
+    "type": "historical_trivia",
+    "content": "The first programmable electronic computer, ENIAC, was so large it filled an entire room and consumed 150 kilowatts of electricity — enough to power 1,500 modern laptops. It was announced in 1946, just 80 years ago.",
+    "answer": null,
+    "created_at": "2026-04-16T00:00:00Z"
+  },
+  {
+    "id": "whimsy_seed_010",
+    "type": "historical_trivia",
+    "content": "The longest recorded flight of a chicken is 13 seconds. This was considered notable enough that Guinness tracked it. Meanwhile, in 1903, the Wright Brothers flew for 12 seconds. The chicken's record still stands.",
+    "answer": null,
+    "created_at": "2026-04-16T00:00:00Z"
+  },
+  {
+    "id": "whimsy_seed_056",
+    "type": "historical_trivia",
+    "content": "Napoleon Bonaparte was once attacked by rabbits. After a military victory, he organized a rabbit hunt — but his staff had rounded up farm rabbits instead of wild ones. Rather than fleeing, hundreds of tame rabbits swarmed him, climbing his legs and coat. He retreated to his carriage.",
+    "answer": null,
+    "created_at": "2026-04-16T00:00:00Z"
+  },
+  {
+    "id": "whimsy_seed_057",
+    "type": "historical_trivia",
+    "content": "The Library of Alexandria was not destroyed in a single catastrophic fire. It declined gradually over centuries through reduced funding, political neglect, and repeated damage. The dramatic single-burning story is largely myth — it simply faded away.",
+    "answer": null,
+    "created_at": "2026-04-16T00:00:00Z"
+  },
+  {
+    "id": "whimsy_seed_058",
+    "type": "historical_trivia",
+    "content": "There was a three-day gap between the Wright Brothers' first successful flight on December 17, 1903, and its coverage in any major newspaper. Editors simply didn't believe it was possible.",
+    "answer": null,
+    "created_at": "2026-04-16T00:00:00Z"
+  },
+  {
+    "id": "whimsy_seed_059",
+    "type": "historical_trivia",
+    "content": "Albert Einstein was offered the presidency of Israel in 1952, following the death of founding president Chaim Weizmann. He declined, writing that he lacked \"the natural aptitude and the experience for dealing properly with people.\"",
+    "answer": null,
+    "created_at": "2026-04-16T00:00:00Z"
+  },
+  {
+    "id": "whimsy_seed_060",
+    "type": "historical_trivia",
+    "content": "The shortest war in recorded history was between Britain and Zanzibar on August 27, 1896. It lasted between 38 and 45 minutes. Britain won.",
+    "answer": null,
+    "created_at": "2026-04-16T00:00:00Z"
+  },
+  {
+    "id": "whimsy_seed_061",
+    "type": "historical_trivia",
+    "content": "In the Middle Ages, cats were sometimes blamed for the Black Death and killed in large numbers — which, by eliminating a natural predator of rats, may have helped spread the very plague they were accused of causing.",
+    "answer": null,
+    "created_at": "2026-04-16T00:00:00Z"
+  },
+  {
+    "id": "whimsy_seed_062",
+    "type": "historical_trivia",
+    "content": "The 19th-century Dead Letter Office in Washington D.C. received so many undeliverable packages that employees were officially permitted to eat any perishable food inside — from boxes of candy to elaborate holiday dinners.",
+    "answer": null,
+    "created_at": "2026-04-16T00:00:00Z"
+  },
+  {
+    "id": "whimsy_seed_063",
+    "type": "historical_trivia",
+    "content": "Nikola Tesla, in 1899, became convinced that signals he was receiving through his Colorado Springs laboratory were communications from Mars. Most historians believe they were interference from another radio source — possibly Guglielmo Marconi's experiments.",
+    "answer": null,
+    "created_at": "2026-04-16T00:00:00Z"
+  }
+]

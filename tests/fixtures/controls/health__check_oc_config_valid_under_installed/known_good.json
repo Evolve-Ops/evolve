@@ -1,0 +1,8 @@
+{
+  "_comment": "AXIS: the validator's `valid` boolean, and nothing else. Same bot, same network, same `val_err` (empty — the validator ran and answered). Replayed by packages/admin/tests/test_oc_runtime_controls.py::test_config_valid_known_good_passes.",
+  "_axis": "validator_result.valid",
+  "members": ["botalpha"],
+  "network": {"networkId": "fixture-net", "bots": {"botalpha": {"role": "member"}}},
+  "validator_result": {"valid": true, "issues": [], "error": ""},
+  "expect": {"status": "PASS", "name": "botalpha:config_valid_under_oc"}
+}

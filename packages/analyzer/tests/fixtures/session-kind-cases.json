@@ -1,0 +1,134 @@
+{
+  "_comment": [
+    "Shared case table for the session-kind rule. BOTH sides of the rule are",
+    "pinned against this file:",
+    "  * packages/analyzer/session_kinds.py       (tests/test_session_kinds.py)",
+    "  * packages/plugin/src/tools/ToolProfiles.ts (tests/toolProfiles.test.mjs)",
+    "A rule change that lands on only one side reddens the other suite.",
+    "Keys are real shapes observed on the reference pod 2026-09-02 (values",
+    "redacted to placeholders); 'channel' is what sessions.json recorded, or",
+    "null when it recorded nothing."
+  ],
+  "cases": [
+    {
+      "key": "agent:main:slack:channel:c0000000:thread:1.2",
+      "channel": "slack",
+      "kind": "user",
+      "expect_channel": "slack"
+    },
+    {
+      "key": "agent:main:telegram:direct:00000",
+      "channel": "telegram",
+      "kind": "user",
+      "expect_channel": "telegram"
+    },
+    {
+      "key": "agent:main:discord:channel:00000",
+      "channel": "discord",
+      "kind": "user",
+      "expect_channel": "discord"
+    },
+    {
+      "key": "agent:main:main:thread:1.2",
+      "channel": "slack",
+      "kind": "user",
+      "expect_channel": "slack"
+    },
+    {
+      "key": "agent:main:telegram:direct:@someone",
+      "channel": null,
+      "kind": "user",
+      "expect_channel": "telegram"
+    },
+    {
+      "key": "agent:main:bot-internal:room:1",
+      "channel": null,
+      "kind": "user",
+      "expect_channel": "bot-internal"
+    },
+    {
+      "key": "agent:main:cron:00000000-0000-4000-8000-000000000000",
+      "channel": null,
+      "kind": "scheduled",
+      "expect_channel": null
+    },
+    {
+      "key": "agent:main:main:heartbeat",
+      "channel": null,
+      "kind": "scheduled",
+      "expect_channel": null
+    },
+    {
+      "key": "agent:email-reader:main:heartbeat",
+      "channel": null,
+      "kind": "scheduled",
+      "expect_channel": null
+    },
+    {
+      "key": "agent:main:scheduled:00000",
+      "channel": null,
+      "kind": "scheduled",
+      "expect_channel": null
+    },
+    {
+      "key": "agent:main:explicit:evolve:tier-classifier:1788000000000",
+      "channel": null,
+      "kind": "evolve_internal",
+      "expect_channel": null
+    },
+    {
+      "key": "agent:main:explicit:evolve:preflight:placeholder-bot:1788000000000",
+      "channel": null,
+      "kind": "evolve_internal",
+      "expect_channel": null
+    },
+    {
+      "key": "agent:main:explicit:evolve:session-judge:placeholder-bot:1788000000000",
+      "channel": null,
+      "kind": "evolve_internal",
+      "expect_channel": null
+    },
+    {
+      "key": "agent:main:explicit:00000000-0000-4000-8000-000000000000",
+      "channel": null,
+      "kind": "oneshot",
+      "expect_channel": null
+    },
+    {
+      "key": "agent:main:explicit:some-caller-supplied-id",
+      "channel": null,
+      "kind": "oneshot",
+      "expect_channel": null
+    },
+    {
+      "key": "agent:main:explicit:admin-ui-alerts",
+      "channel": null,
+      "kind": "user",
+      "expect_channel": "admin-ui"
+    },
+    {
+      "key": "agent:main:explicit:admin-ui-anon-00000000",
+      "channel": null,
+      "kind": "user",
+      "expect_channel": "admin-ui"
+    },
+    {
+      "key": "agent:main:subagent:00000000-0000-4000-8000-000000000000",
+      "channel": null,
+      "kind": "subagent",
+      "expect_channel": null
+    },
+    {
+      "key": "agent:main:main",
+      "channel": null,
+      "kind": "other",
+      "expect_channel": null
+    },
+    {
+      "key": "",
+      "channel": null,
+      "kind": "other",
+      "expect_channel": null
+    }
+  ]
+}

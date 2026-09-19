@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Merged into the bundled Info.plist by Tauri at macOS build time.
+
+  App Transport Security: pods are reached over the operator's own trusted
+  infrastructure — http://localhost, a LAN hostname, or a tailnet address. WKWebView
+  blocks plaintext http:// by default, which would leave every http pod tab blank.
+  We allow plaintext loads so those pods render. This governs only transport
+  encryption of the operator's OWN configured pod URLs; it does NOT widen the
+  Tauri IPC/native-API surface (that stays locked to the local chrome webview via
+  capabilities/chrome.json). https pods are unaffected. Tighter alternative if a
+  deployment is all-loopback/.local: drop NSAllowsArbitraryLoads and keep only
+  NSAllowsLocalNetworking.
+-->
+<plist version="1.0">
+  <dict>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+      <key>NSAllowsArbitraryLoads</key>
+      <true/>
+      <key>NSAllowsLocalNetworking</key>
+      <true/>
+    </dict>
+  </dict>
+</plist>

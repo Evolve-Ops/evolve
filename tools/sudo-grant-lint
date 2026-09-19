@@ -1,0 +1,1027 @@
+#!/usr/bin/env python3
+"""sudo-grant-lint — every `sudo` call site must map to a NOPASSWD grant.
+
+The `evolve` service user (admin-ui, repo-puller, heal, verify, audit
+daemons) runs privileged operations via ``subprocess.run(["sudo", …])``.
+Each one needs a matching ``NOPASSWD`` line in ``/etc/sudoers.d/evolve``,
+rendered by ``setup_wizard._render_evolve_sudoers()`` off the
+``platform_profile`` command table (design-linux-port §5). When a call site
+and its grant drift, sudo — run non-interactively with no TTY — demands a
+password and the operation fails SILENTLY with::
+
+    sudo: a terminal is required to read the password
+
+This is a privilege-boundary drift that's invisible until a feature breaks
+in production (three instances in one 2026-06-11 investigation alone). This
+gate makes it a commit-time failure.
+
+WHAT IT CHECKS
+--------------
+For every ``subprocess.{run,Popen,call,check_output,check_call}`` whose
+argv list begins with the string ``"sudo"`` under ``packages/admin`` +
+``packages/analyzer`` (tests excluded), the lint resolves the binary, the
+``-u`` run-as user, and the literal argument tokens, then asks: is this
+call ACCOUNTED FOR?
+
+The same check is applied to the evolve-daemon ``_run_sudo`` WRAPPER calls.
+``deploy._run_sudo(cmd, result, …)`` (and the same callable threaded through
+the ``run_sudo`` parameter of ``bot_doc_seeding.write_doc``) execs
+``["sudo"] + resolved`` *inside* the wrapper, where the argv is a ``BinOp``
+(``["sudo"]`` + a Name), not a list literal — so the direct-subprocess matcher
+never sees it. The call site only passes a binary-first list with NO ``"sudo"``
+prefix and NO sudo options, always run as root; the wrapper resolves a bare
+binary (``cp`` → ``/bin/cp``) before exec. We model that shape explicitly so
+wrapper-routed privileged writes get the same grant-coverage check (grant
+lookup is by basename, so the bare/full forms are equivalent). This closes the
+gap that let ``install_evolve_app`` (#2923) and the ``write_doc`` doc-seeding
+writes (#2922) ship with no grant verifier.
+
+The wrapper is identified by name + the DeployResult it threads as a 2nd arg —
+the same-named single-arg ``_run_sudo(argv)`` in ``tools/audit_pod_acls`` runs
+under ``sudo evolve-admin`` (operator root) and is out of contract, so it is
+left alone. (``_run_sudo_steps`` in ``oc_cli_device`` takes a TUPLE of already-
+``sudo``-prefixed lists — a different shape, out of scope here.)
+
+A call is accounted for when EITHER
+
+  (a) it matches a real grant in the rendered sudoers (binary basename is
+      granted for a compatible run-as user, and no fully-static absolute-
+      path argument falls outside every grant's globs), OR
+  (b) it carries an inline ``# sudo-grant:`` annotation declaring why it
+      doesn't need an evolve grant.
+
+Grants are read from the test-pinned golden fixtures
+``packages/admin/tests/fixtures/sudoers_golden/evolve_{macos,linux}.sudoers``
+— byte-identical to ``_render_evolve_sudoers()`` (enforced by
+``test_sudoers_platform_profile.py``). Reading the goldens keeps this tool a
+dependency-free AST+text lint (no package import), the same shape as the
+sibling ratchets. That test pins the GRANT side; this lints the CONSUMER
+side.
+
+This is deliberately NOT full static inference (sudo args are dynamic,
+grants are globs, reachability is undecidable). It is an explicit-contract
+gate: you cannot add a sudo call whose binary/path isn't already granted
+without either adding the grant or declaring — in one comment — why no
+grant is needed. That structurally prevents the drift class.
+
+SCOPE — evolve's sudo contract, not every sudo on the box
+---------------------------------------------------------
+The gate only inspects calls whose binary is part of EVOLVE'S privileged
+surface: the ``platform_profile`` command table (design-linux-port §5
+establishes that table as "what evolve may sudo") plus ``openclaw``. Those
+are the binaries the evolve sudoers governs, and the only ones a daemon-
+context call can run NOPASSWD. Calls to anything else (``git``, ``sshd``,
+``pkill``, ``env``, ``PlistBuddy``, …) are operator/setup/CLI context that
+runs under the operator's own root sudo — the evolve sudoers never sees
+them, so policing them here would be pure noise. All three motivating
+bugs (cp/visudo argv drift) are in-contract; this is the documented class.
+
+ANNOTATIONS (the escape hatch — most calls need NONE)
+-----------------------------------------------------
+Place the comment on the call's first line, the line above it, or anywhere
+inside the call's line span::
+
+  # sudo-grant: root-only
+      Runs only when the process is already root (interactive `setup` /
+      `evolve-admin` CLI under the operator's own sudo). No evolve grant
+      needed. Exempt from grant matching.
+
+  # sudo-grant: ungranted-by-design: <reason>
+      Intentionally has no evolve grant (e.g. the puller's self-refresh
+      visudo+cp under Option B / PR #2759 — the service user must not be
+      able to rewrite its own sudoers). A reason string is REQUIRED.
+
+  # sudo-grant: granted             (optional note / section, e.g. "granted §16")
+      Human assertion that a grant covers this even though the static
+      matcher couldn't confirm it (e.g. an unresolvable dynamic path). The
+      binary must still actually be granted; this only suppresses an
+      arg-coverage warning.
+
+  # sudo-grant: known-gap: <reason/ticket>
+      A REAL, unresolved missing-grant the gate surfaced (e.g. a
+      `sudo -u <bot>` call the evolve user can't satisfy, or a deploy path
+      reading a file with no grant). Tracked, not yet fixed — downgraded to
+      a non-blocking warning so the gate stays green for unrelated work,
+      but kept VISIBLE so it isn't forgotten. A reason is REQUIRED, and
+      --strict re-blocks it. Use only for genuine gaps you've filed, never
+      to silence a fixable drift.
+
+SEVERITY (hybrid, like tools/ui-style-lint)
+-------------------------------------------
+  block  high-confidence: an unannotated call whose binary is NOT granted,
+         or whose static absolute-path argument is covered by NO grant;
+         a `granted` assertion whose binary isn't granted; a malformed or
+         reason-less annotation. Causes a non-zero exit.
+  warn   fuzzy: a tempfile-derived path that can only land outside every
+         candidate grant (the visudo-temp bug shape). Prints, doesn't fail.
+  --strict flips warn → block (so the tree stays pristine once clean).
+
+Usage:
+  tools/sudo-grant-lint <file.py> [...]   # lint specific files
+  tools/sudo-grant-lint --all             # lint all production .py (CI)
+  tools/sudo-grant-lint --staged          # diff-aware: only lines you touched
+  tools/sudo-grant-lint --full <file>...  # whole file even under --staged
+  tools/sudo-grant-lint --strict ...      # block on warnings too
+"""
+from __future__ import annotations
+
+import argparse
+import ast
+import os
+import re
+import subprocess
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# Only these trees run the privileged daemons; the style guide for the rest
+# of the repo is elsewhere.
+_LINT_ROOTS = ("packages/admin", "packages/analyzer")
+
+# The two rendered-sudoers goldens — byte-pinned to _render_evolve_sudoers()
+# by test_sudoers_platform_profile.py. We union both profiles: the code is
+# cross-platform, so a call's grant may live in either render.
+_GOLDEN_DIR = REPO_ROOT / "packages/admin/tests/fixtures/sudoers_golden"
+_GOLDENS = ("evolve_macos.sudoers", "evolve_linux.sudoers")
+
+# Directories sudo grants stage temp files through. A tempfile-derived
+# argument is only ever reachable by a grant whose token lives under one of
+# these roots; a grant naming a FIXED path elsewhere (e.g. the §22 visudo
+# grants on /etc/sudoers.d/evolve) can never match a tempfile — that is the
+# self-refresh bug this gate exists to surface.
+_TEMP_ROOTS = ("/tmp/", "/private/tmp/", "/var/folders/", "/var/tmp/")
+
+_ANNOTATION_RE = re.compile(
+    r"#\s*sudo-grant:\s*"
+    r"(?P<kind>root-only|ungranted-by-design|granted|known-gap)\b"
+    r"\s*[:(]?\s*(?P<detail>.*?)\s*$"
+)
+
+
+# ───────────────────────── grant model ──────────────────────────────────
+
+
+@dataclass(frozen=True)
+class Grant:
+    """One ``evolve ALL=(<runas>) NOPASSWD: [SETENV:] <binary> <args…>`` line."""
+
+    runas: str            # "root" or "ALL"
+    binary: str           # absolute path as written in the grant
+    base: str             # basename(binary)
+    args: tuple[str, ...]  # arg-glob tokens, sudoers backslash-escapes removed
+
+
+def _parse_goldens() -> list[Grant]:
+    grants: list[Grant] = []
+    for name in _GOLDENS:
+        path = _GOLDEN_DIR / name
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            line = line.strip()
+            # Skip the rendered-but-commented oc grant in the no-openclaw
+            # variant and every comment / Defaults line.
+            if not line.startswith("evolve ALL="):
+                continue
+            m = re.match(r"evolve ALL=\((?P<runas>[^)]+)\)\s+NOPASSWD:\s*(?P<rest>.*)$", line)
+            if not m:
+                continue
+            runas = m.group("runas").strip()
+            rest = m.group("rest").strip()
+            if rest.startswith("SETENV:"):
+                rest = rest[len("SETENV:"):].strip()
+            # sudoers escapes ':' as '\:' in argument patterns — undo so our
+            # matcher compares against the real string.
+            rest = rest.replace("\\:", ":")
+            tokens = rest.split()
+            if not tokens:
+                continue
+            binary, args = tokens[0], tuple(tokens[1:])
+            grants.append(Grant(runas=runas, binary=binary, base=_basename(binary), args=args))
+    return grants
+
+
+def _basename(p: str) -> str:
+    return p.rsplit("/", 1)[-1] if "/" in p else p
+
+
+def _in_contract_bases(grants: list[Grant]) -> frozenset[str]:
+    """Binary basenames that are part of evolve's sudo contract — the union
+    of every rendered grant's binary and the platform_profile command-table
+    basenames (so a table binary with NO grant yet still gets policed).
+    Calls to binaries outside this set are out of scope (see module docstring)."""
+    table = {b for b in _CMD_TABLE_BASENAMES.values() if b}
+    return frozenset({g.base for g in grants} | table)
+
+
+# ───────────────────────── token model ──────────────────────────────────
+#
+# Every argv element resolves to one Token. The kind drives matching:
+#   literal  fully-static string (may be an absolute path → high-confidence
+#            coverage check)
+#   glob     static anchors with a dynamic hole, e.g. f"/Users/{bot}/.openclaw"
+#            → "/Users/*/.openclaw"
+#   tmp      a tempfile.mkstemp / NamedTemporaryFile path (dir captured if literal)
+#   dynamic  anything we can't resolve — matches optimistically
+
+
+@dataclass(frozen=True)
+class Token:
+    kind: str          # literal | glob | tmp | dynamic
+    value: str = "*"   # literal/glob: the (glob) string; tmp: the temp-dir glob
+
+    @property
+    def is_abs_literal(self) -> bool:
+        return self.kind == "literal" and self.value.startswith("/")
+
+
+DYNAMIC = Token("dynamic")
+
+
+# ───────────────────────── per-file resolution ──────────────────────────
+
+
+class FileContext:
+    """Holds the parse + name-resolution scope for one file."""
+
+    def __init__(self, path: Path, text: str, tree: ast.AST):
+        self.path = path
+        self.lines = text.splitlines()
+        self.tree = tree
+        self._parents: dict[ast.AST, ast.AST] = {}
+        for parent in ast.walk(tree):
+            for child in ast.iter_child_nodes(parent):
+                self._parents[child] = parent
+        # Module-level NAME = <literal> constants.
+        self.module_consts: dict[str, Token] = {}
+        for node in tree.body:
+            self._collect_assign(node, self.module_consts, temp_names=None)
+        # Per-function caches, filled lazily.
+        self._func_scope: dict[ast.AST, tuple[dict[str, Token], set[str]]] = {}
+
+    # -- name scope -------------------------------------------------------
+
+    def enclosing_func(self, node: ast.AST) -> ast.AST | None:
+        cur = self._parents.get(node)
+        while cur is not None:
+            if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return cur
+            cur = self._parents.get(cur)
+        return None
+
+    def scope_for(self, node: ast.AST) -> tuple[dict[str, Token], set[str]]:
+        func = self.enclosing_func(node)
+        if func is None:
+            return self.module_consts, set()
+        cached = self._func_scope.get(func)
+        if cached is not None:
+            return cached
+        consts: dict[str, Token] = dict(self.module_consts)
+        temps: set[str] = set()
+        for stmt in ast.walk(func):
+            self._collect_assign(stmt, consts, temp_names=temps)
+        self._func_scope[func] = (consts, temps)
+        return consts, temps
+
+    def _collect_assign(
+        self, node: ast.AST, consts: dict[str, Token], temp_names: set[str] | None
+    ) -> None:
+        # with NamedTemporaryFile(...) as tmp:  → tmp is a tempfile handle
+        if isinstance(node, ast.With) and temp_names is not None:
+            for item in node.items:
+                if (
+                    isinstance(item.context_expr, ast.Call)
+                    and _callee_name(item.context_expr) in ("NamedTemporaryFile",)
+                    and isinstance(item.optional_vars, ast.Name)
+                ):
+                    temp_names.add(item.optional_vars.id)
+            return
+        if not isinstance(node, ast.Assign):
+            return
+        rhs = node.value
+        # fd, tmp = tempfile.mkstemp(...)   /   tmp = tempfile.mkstemp(...)[1]
+        if temp_names is not None and _is_tempfile_call(rhs):
+            for tgt in node.targets:
+                for name in _names_in_target(tgt):
+                    temp_names.add(name)
+            return
+        # tmp_path = tmp.name   (tmp is a NamedTemporaryFile handle)
+        if (
+            temp_names is not None
+            and isinstance(rhs, ast.Attribute)
+            and rhs.attr == "name"
+            and isinstance(rhs.value, ast.Name)
+            and rhs.value.id in temp_names
+        ):
+            for tgt in node.targets:
+                for name in _names_in_target(tgt):
+                    temp_names.add(name)
+            return
+        # NAME = <string / Path("…") / f"…">
+        if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            tok = self._literal_token(rhs)
+            if tok is not None:
+                consts[node.targets[0].id] = tok
+
+    def _literal_token(self, node: ast.AST) -> Token | None:
+        """A Token if *node* is a static string/path expression, else None."""
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return Token("literal", node.value)
+        if isinstance(node, ast.JoinedStr):
+            return _joinedstr_token(node)
+        # Path("/lit") / str("/lit")
+        if isinstance(node, ast.Call) and _callee_name(node) in ("Path", "str"):
+            if len(node.args) == 1:
+                return self._literal_token(node.args[0])
+        return None
+
+    # -- argv element → Token --------------------------------------------
+
+    def token(self, node: ast.AST) -> Token:
+        consts, temps = self.scope_for(node)
+        return self._token(node, consts, temps)
+
+    def _token(self, node: ast.AST, consts: dict[str, Token], temps: set[str]) -> Token:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return Token("literal", node.value)
+        if isinstance(node, ast.JoinedStr):
+            return _joinedstr_token(node)
+        if isinstance(node, ast.Call):
+            callee = _callee_name(node)
+            if callee in ("str", "Path") and len(node.args) == 1:
+                return self._token(node.args[0], consts, temps)
+            return DYNAMIC
+        if isinstance(node, ast.Name):
+            if node.id in temps:
+                return Token("tmp", _TEMP_ROOTS[0] + "*")
+            if node.id in consts:
+                return consts[node.id]
+            return DYNAMIC
+        return DYNAMIC
+
+
+def _joinedstr_token(node: ast.JoinedStr) -> Token:
+    """f-string → glob: literal parts verbatim, each {…} hole becomes ``*``."""
+    out: list[str] = []
+    has_hole = False
+    for part in node.values:
+        if isinstance(part, ast.Constant) and isinstance(part.value, str):
+            out.append(part.value)
+        else:
+            out.append("*")
+            has_hole = True
+    s = "".join(out)
+    if not has_hole:
+        return Token("literal", s)
+    # Collapse runs of ** that arise from adjacent holes.
+    s = re.sub(r"\*+", "*", s)
+    return Token("glob", s)
+
+
+def _callee_name(node: ast.Call) -> str | None:
+    if isinstance(node.func, ast.Name):
+        return node.func.id
+    if isinstance(node.func, ast.Attribute):
+        return node.func.attr
+    return None
+
+
+def _is_tempfile_call(node: ast.AST) -> bool:
+    if isinstance(node, ast.Subscript):  # tempfile.mkstemp(...)[1]
+        node = node.value
+    if not isinstance(node, ast.Call):
+        return False
+    return _callee_name(node) in ("mkstemp", "mkdtemp", "NamedTemporaryFile")
+
+
+def _names_in_target(tgt: ast.AST) -> list[str]:
+    if isinstance(tgt, ast.Name):
+        return [tgt.id]
+    if isinstance(tgt, (ast.Tuple, ast.List)):
+        out: list[str] = []
+        for e in tgt.elts:
+            out.extend(_names_in_target(e))
+        return out
+    return []
+
+
+# ───────────────────────── sudo call model ──────────────────────────────
+
+
+@dataclass
+class SudoCall:
+    lineno: int
+    end_lineno: int
+    runas: str               # "root" | "evolve" | "user" (any non-root user)
+    binary_base: str | None  # None → could not resolve the binary
+    binary_src: str          # how the binary was written (for messages)
+    args: list[Token]
+    snippet: str
+
+
+_SUBPROCESS_FUNCS = {"run", "Popen", "call", "check_output", "check_call"}
+_SUDO_OPT_TAKES_VALUE = {"-u", "--user", "-g", "--group", "-p", "--prompt", "-C", "-r", "-T"}
+
+
+def _is_subprocess_call(node: ast.Call) -> bool:
+    f = node.func
+    if isinstance(f, ast.Attribute) and f.attr in _SUBPROCESS_FUNCS:
+        return isinstance(f.value, ast.Name) and f.value.id == "subprocess"
+    return False
+
+
+# The evolve-DAEMON sudo wrapper: ``deploy._run_sudo(cmd, result, …)`` and the
+# same callable threaded in as the ``run_sudo`` parameter of
+# ``bot_doc_seeding.write_doc``. It prepends "sudo", resolves a bare binary to a
+# full path, and runs as root — building its argv (``["sudo"] + resolved``)
+# INSIDE the wrapper, so _argv_list never sees a literal. We recognise the call
+# site by name + the DeployResult it threads as a 2nd positional arg.
+#
+# The 2-arg shape is load-bearing: ``tools/audit_pod_acls`` has a same-named but
+# DISTINCT single-arg ``_run_sudo(argv)`` helper that runs under ``sudo
+# evolve-admin`` (operator root, NOPASSWD:ALL) — outside the evolve-grant
+# contract, the same reason out-of-contract binaries are skipped. Requiring the
+# result accumulator scopes the check to the daemon surface and leaves the
+# operator tool alone. (``_run_sudo_steps`` in oc_cli_device is also excluded:
+# different name, and it takes a tuple of already-"sudo"-prefixed lists.)
+_SUDO_WRAPPER_NAMES = {"_run_sudo", "run_sudo"}
+
+
+def _is_sudo_wrapper_call(node: ast.Call) -> bool:
+    f = node.func
+    return (
+        isinstance(f, ast.Name)
+        and f.id in _SUDO_WRAPPER_NAMES
+        and len(node.args) >= 2  # threads a DeployResult → the daemon wrapper
+    )
+
+
+def _argv_list(node: ast.Call, ctx: FileContext) -> list[ast.AST] | None:
+    """The argv list literal if this call's first arg is ``["sudo", …]``."""
+    if not node.args:
+        return None
+    first = node.args[0]
+    # Direct list/tuple literal.
+    if isinstance(first, (ast.List, ast.Tuple)):
+        elts = first.elts
+    elif isinstance(first, ast.Name):
+        # cmd = ["sudo", …]; subprocess.run(cmd) — resolve within the function.
+        elts = _resolve_list_name(first.id, node, ctx)
+        if elts is None:
+            return None
+    else:
+        return None
+    if not elts:
+        return None
+    head = elts[0]
+    if isinstance(head, ast.Constant) and head.value == "sudo":
+        return list(elts)
+    return None
+
+
+def _resolve_list_name(name: str, node: ast.AST, ctx: FileContext) -> list[ast.AST] | None:
+    func = ctx.enclosing_func(node)
+    scope = func if func is not None else ctx.tree
+    found: list[ast.AST] | None = None
+    for stmt in ast.walk(scope):
+        if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
+            tgt = stmt.targets[0]
+            if isinstance(tgt, ast.Name) and tgt.id == name and isinstance(stmt.value, (ast.List, ast.Tuple)):
+                found = list(stmt.value.elts)  # last assignment wins
+    return found
+
+
+def _parse_sudo_call(node: ast.Call, elts: list[ast.AST], ctx: FileContext) -> SudoCall:
+    runas = "root"
+    binary_base: str | None = None
+    binary_src = "?"
+    args: list[Token] = []
+
+    i = 1  # skip "sudo"
+    n = len(elts)
+    # Walk sudo options.
+    while i < n:
+        el = elts[i]
+        if isinstance(el, ast.Starred):
+            i += 1
+            continue
+        val = el.value if isinstance(el, ast.Constant) else None
+        if isinstance(val, str) and val.startswith("-"):
+            if val in ("-u", "--user"):
+                runas = _runas_from(elts[i + 1]) if i + 1 < n else "user"
+                i += 2
+                continue
+            if val.startswith("--user="):
+                runas = _runas_literal(val.split("=", 1)[1])
+                i += 1
+                continue
+            if val in _SUDO_OPT_TAKES_VALUE:
+                i += 2
+                continue
+            # flag without a value: -n, -H, -E, -k, -S, --preserve-env=…, -i, -s
+            i += 1
+            continue
+        # First non-option token → the binary.
+        binary_base, binary_src = _binary_of(el, ctx)
+        i += 1
+        break
+
+    # Remaining elements are the command's arguments.
+    for el in elts[i:]:
+        if isinstance(el, ast.Starred):
+            args.append(DYNAMIC)
+        else:
+            args.append(ctx.token(el))
+
+    return SudoCall(
+        lineno=node.lineno,
+        end_lineno=getattr(node, "end_lineno", node.lineno) or node.lineno,
+        runas=runas,
+        binary_base=binary_base,
+        binary_src=binary_src,
+        args=args,
+        snippet=ctx.lines[node.lineno - 1].strip()[:110] if node.lineno - 1 < len(ctx.lines) else "",
+    )
+
+
+def _wrapper_argv_list(node: ast.Call, ctx: FileContext) -> list[ast.AST] | None:
+    """The binary-first argv elts for a ``_run_sudo([...], …)`` wrapper call.
+
+    Unlike :func:`_argv_list` the list has NO leading ``"sudo"`` and no sudo
+    options — element 0 is the binary (a bare name the wrapper resolves to a
+    full path, or an explicit path). Returns the elts, or None if the first
+    positional arg isn't a list/tuple literal (or a Name bound to one)."""
+    if not node.args:
+        return None
+    first = node.args[0]
+    if isinstance(first, (ast.List, ast.Tuple)):
+        elts = list(first.elts)
+    elif isinstance(first, ast.Name):
+        resolved = _resolve_list_name(first.id, node, ctx)
+        if resolved is None:
+            return None
+        elts = resolved
+    else:
+        return None
+    return elts or None
+
+
+def _parse_wrapper_call(node: ast.Call, elts: list[ast.AST], ctx: FileContext) -> SudoCall:
+    """Model a ``_run_sudo([binary, *args], …)`` call. The wrapper always runs
+    as root and resolves a bare binary (``cp`` → ``/bin/cp``) via
+    deploy._SUDO_CMD_PATHS; grant lookup is by basename, so the bare name and
+    its full path are equivalent — ``_binary_of`` already returns the basename."""
+    binary_base, binary_src = _binary_of(elts[0], ctx)
+    args: list[Token] = []
+    for el in elts[1:]:
+        args.append(DYNAMIC if isinstance(el, ast.Starred) else ctx.token(el))
+    return SudoCall(
+        lineno=node.lineno,
+        end_lineno=getattr(node, "end_lineno", node.lineno) or node.lineno,
+        runas="root",
+        binary_base=binary_base,
+        binary_src=binary_src,
+        args=args,
+        snippet=ctx.lines[node.lineno - 1].strip()[:110] if node.lineno - 1 < len(ctx.lines) else "",
+    )
+
+
+def _runas_from(node: ast.AST) -> str:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return _runas_literal(node.value)
+    return "user"  # dynamic bot_user variable → some non-root user
+
+
+def _runas_literal(v: str) -> str:
+    if v == "root":
+        return "root"
+    if v == "evolve":
+        return "evolve"
+    return "user"
+
+
+# Command-table keys (platform_profile.commands) → basename, so a
+# `c["cp"]` / `commands["visudo"]` subscript resolves to a binary basename.
+_CMD_TABLE_BASENAMES = {
+    "cat": "cat", "chmod": "chmod", "chown": "chown", "mkdir": "mkdir",
+    "cp": "cp", "rm": "rm", "ls": "ls", "truncate": "truncate", "kill": "kill",
+    "visudo": "visudo", "python3": "python3", "venv_python": "python3",
+    "lsof": "lsof", "service_manager": None, "useradd": "useradd",
+    "userdel": "userdel", "getent": "getent", "groupadd": "groupadd",
+    "setfacl": "setfacl", "getfacl": "getfacl", "dscl": "dscl",
+    "createhomedir": "createhomedir",
+}
+
+
+def _binary_of(node: ast.AST, ctx: FileContext) -> tuple[str | None, str]:
+    """(basename | None, source-text) for the binary element."""
+    # Literal "/bin/cp" or bare "openclaw".
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return _basename(node.value), node.value
+    # Subscript: c["cp"], commands["visudo"], profile.commands["chown"].
+    if isinstance(node, ast.Subscript):
+        key = node.slice
+        if isinstance(key, ast.Constant) and isinstance(key.value, str):
+            base = _CMD_TABLE_BASENAMES.get(key.value)
+            if base is not None:
+                return base, f'…["{key.value}"]'
+    # Call: _openclaw_bin() and friends → infer from the name.
+    if isinstance(node, ast.Call):
+        callee = _callee_name(node) or ""
+        if "openclaw" in callee:
+            return "openclaw", f"{callee}()"
+        return None, f"{callee}()"
+    # Name → module/func constant (e.g. VENV_PIP, PLIST resolves elsewhere).
+    if isinstance(node, ast.Name):
+        consts, _ = ctx.scope_for(node)
+        tok = consts.get(node.id)
+        if tok is not None and tok.kind in ("literal", "glob") and "/" in tok.value:
+            return _basename(tok.value.split("*", 1)[0].rstrip("/")) or None, node.id
+        return None, node.id
+    return None, "?"
+
+
+# ───────────────────────── matching ─────────────────────────────────────
+
+
+def _runas_ok(call_runas: str, grant_runas: str) -> bool:
+    if grant_runas == "ALL":
+        return True
+    if grant_runas == "root":
+        return call_runas == "root"
+    return False  # grants only ever use (root) or (ALL)
+
+
+def _glob_to_re(pattern: str) -> re.Pattern[str]:
+    """sudoers glob → regex. ``*`` matches any run of NON-slash chars
+    (macOS visudo globs don't cross '/'; the goldens rely on this)."""
+    out = ["(?s)"]
+    for ch in pattern:
+        out.append("[^/]*" if ch == "*" else re.escape(ch))
+    return re.compile("".join(out) + r"\Z")
+
+
+def _token_covered_by(tok: Token, grant_tok: str) -> bool:
+    """Could *tok* (a single argv element) be the string *grant_tok* allows?"""
+    if tok.kind == "dynamic":
+        return True
+    if tok.kind == "tmp":
+        return any(grant_tok.startswith(r) for r in _TEMP_ROOTS)
+    # literal / glob — compare static text. Replace our own '*' holes with a
+    # placeholder that the grant regex's [^/]* can absorb.
+    probe = tok.value.replace("*", "\x00")
+    rx = _glob_to_re(grant_tok)
+    if rx.match(probe.replace("\x00", "")):
+        return True
+    # Glob-with-hole: accept if anchors are compatible (the hole could fill
+    # whatever the grant wants). Be conservative — only for non-literal toks.
+    if tok.kind == "glob":
+        return _globs_overlap(tok.value, grant_tok)
+    return False
+
+
+def _globs_overlap(a: str, b: str) -> bool:
+    """Cheap overlap test for two single-token globs (sudoers semantics)."""
+    # Compare segment-free: does some concrete string match both? Approximate
+    # by checking the literal prefixes/suffixes around the first/last '*'.
+    def prefix(s: str) -> str:
+        return s.split("*", 1)[0]
+
+    def suffix(s: str) -> str:
+        return s.rsplit("*", 1)[-1]
+
+    pa, pb = prefix(a), prefix(b)
+    if not (pa.startswith(pb) or pb.startswith(pa)):
+        return False
+    sa, sb = suffix(a), suffix(b)
+    if not (sa.endswith(sb) or sb.endswith(sa)):
+        return False
+    return True
+
+
+def _argv_matches_grant(call: SudoCall, grant: Grant) -> bool:
+    """Whole-argv match, sudoers style (a grant with no args allows any args;
+    a trailing bare ``*`` absorbs the rest)."""
+    g = list(grant.args)
+    if not g:
+        return True  # `cmd` with no args → any args permitted
+    ci, gi = 0, 0
+    cargs = call.args
+    while gi < len(g):
+        gt = g[gi]
+        if gt == "*" and gi == len(g) - 1:
+            return True  # trailing wildcard absorbs all remaining call args
+        if ci >= len(cargs):
+            return False
+        if not _token_covered_by(cargs[ci], gt):
+            return False
+        ci += 1
+        gi += 1
+    return ci == len(cargs)
+
+
+@dataclass
+class Verdict:
+    kind: str             # ok | block | warn
+    reason: str = ""
+    note: str = ""
+
+
+def evaluate(call: SudoCall, grants: list[Grant]) -> Verdict:
+    if call.binary_base is None:
+        return Verdict("block", "unresolved-binary",
+                       f"can't resolve sudo binary `{call.binary_src}`")
+
+    candidates = [g for g in grants if g.base == call.binary_base and _runas_ok(call.runas, g.runas)]
+    if not candidates:
+        runas = "root" if call.runas == "root" else f"user `{call.runas}`"
+        return Verdict("block", "no-grant-for-binary",
+                       f"no evolve NOPASSWD grant for `{call.binary_src}` as {runas}")
+
+    if any(_argv_matches_grant(call, g) for g in candidates):
+        return Verdict("ok")
+
+    # No grant matched the full argv. Pinpoint why, and pick a severity.
+    # High-confidence block: a fully-static absolute path that NO candidate
+    # grant covers at ANY position (the cp-to-/etc/sudoers.d bug shape).
+    for tok in call.args:
+        if tok.is_abs_literal:
+            if not any(_token_covered_by(tok, gt) for g in candidates for gt in g.args):
+                return Verdict("block", "path-not-granted",
+                               f"`{call.binary_src}` arg `{tok.value}` is covered by no grant")
+    # Fuzzy: a tempfile path that can only reach fixed-literal grants (the
+    # visudo-temp bug shape) — likely dead at runtime, but lower confidence.
+    if any(t.kind == "tmp" for t in call.args):
+        return Verdict("warn", "tempfile-vs-fixed-grant",
+                       f"`{call.binary_src}` stages a tempfile but no grant's "
+                       f"glob covers a temp dir")
+    return Verdict("warn", "args-uncovered",
+                   f"`{call.binary_src}` argv matches no grant's argument pattern")
+
+
+# ───────────────────────── annotation lookup ────────────────────────────
+
+
+@dataclass
+class Annotation:
+    kind: str        # root-only | ungranted-by-design | granted
+    detail: str = ""
+
+
+def _annotation_on(line: str) -> Annotation | None:
+    m = _ANNOTATION_RE.search(line)
+    if not m:
+        return None
+    detail = (m.group("detail") or "").strip()
+    if detail.endswith(")") and "(" not in detail:
+        detail = detail[:-1].strip()
+    return Annotation(m.group("kind"), detail)
+
+
+def _find_annotation(ctx: FileContext, call: SudoCall) -> Annotation | None:
+    # 1. Inline: anywhere within the call's own line span (trailing comments).
+    for ln in range(call.lineno, call.end_lineno + 1):
+        if ln - 1 < len(ctx.lines):
+            ann = _annotation_on(ctx.lines[ln - 1])
+            if ann:
+                return ann
+    # 2. Leading comment block: the contiguous run of comment lines directly
+    #    above the call (so a multi-line explanatory comment ending in the
+    #    marker still attaches to this call, but a marker on some unrelated
+    #    earlier statement does not).
+    ln = call.lineno - 1
+    while ln >= 1 and ln - 1 < len(ctx.lines):
+        stripped = ctx.lines[ln - 1].strip()
+        if not stripped.startswith("#"):
+            break
+        ann = _annotation_on(ctx.lines[ln - 1])
+        if ann:
+            return ann
+        ln -= 1
+    return None
+
+
+# ───────────────────────── driver ───────────────────────────────────────
+
+
+@dataclass
+class Finding:
+    path: str
+    lineno: int
+    tier: str        # block | warn
+    code: str
+    message: str
+    snippet: str
+
+
+def lint_file(path: Path, grants: list[Grant], in_contract: frozenset[str]) -> list[Finding]:
+    try:
+        text = path.read_text(encoding="utf-8")
+        tree = ast.parse(text)
+    except (OSError, SyntaxError, ValueError):
+        return []
+    ctx = FileContext(path, text, tree)
+    findings: list[Finding] = []
+    rel = _rel(path)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if _is_subprocess_call(node):
+            elts = _argv_list(node, ctx)
+            if elts is None:
+                continue
+            call = _parse_sudo_call(node, elts, ctx)
+        elif _is_sudo_wrapper_call(node):
+            elts = _wrapper_argv_list(node, ctx)
+            if elts is None:
+                continue
+            call = _parse_wrapper_call(node, elts, ctx)
+        else:
+            continue
+        # Out-of-contract binaries (git/sshd/env/…) and binaries we can't
+        # resolve are operator/CLI context, not evolve's sudo surface — skip.
+        if call.binary_base is None or call.binary_base not in in_contract:
+            continue
+        ann = _find_annotation(ctx, call)
+        verdict = _classify(call, grants, ann)
+        if verdict.kind == "ok":
+            continue
+        findings.append(Finding(rel, call.lineno, verdict.kind, verdict.reason,
+                                verdict.note, call.snippet))
+    return findings
+
+
+def _classify(call: SudoCall, grants: list[Grant], ann: Annotation | None) -> Verdict:
+    if ann is not None:
+        if ann.kind == "root-only":
+            return Verdict("ok")
+        if ann.kind == "ungranted-by-design":
+            if not ann.detail:
+                return Verdict("block", "ungranted-needs-reason",
+                               "`# sudo-grant: ungranted-by-design` requires a reason")
+            return Verdict("ok")
+        if ann.kind == "known-gap":
+            if not ann.detail:
+                return Verdict("block", "known-gap-needs-reason",
+                               "`# sudo-grant: known-gap` requires a reason / ticket")
+            return Verdict("warn", "known-gap", f"tracked gap: {ann.detail}")
+        if ann.kind == "granted":
+            # Human assertion — the binary must still genuinely be granted.
+            if call.binary_base is None:
+                return Verdict("block", "granted-unresolved-binary",
+                               f"`granted` but the binary `{call.binary_src}` can't be resolved")
+            candidates = [g for g in grants if g.base == call.binary_base
+                          and _runas_ok(call.runas, g.runas)]
+            if not candidates:
+                return Verdict("block", "granted-but-no-grant",
+                               f"`granted` but no NOPASSWD grant exists for `{call.binary_src}`")
+            return Verdict("ok")
+    return evaluate(call, grants)
+
+
+# -- file selection (mirrors the sibling ratchets) ------------------------
+
+
+def _is_test_path(rel: str) -> bool:
+    parts = rel.replace("\\", "/").split("/")
+    if any(p in ("tests", "test") for p in parts):
+        return True
+    base = parts[-1]
+    return base.startswith("test_") or base == "conftest.py"
+
+
+def _in_scope(rel: str) -> bool:
+    return any(rel.startswith(r + "/") for r in _LINT_ROOTS) and not _is_test_path(rel)
+
+
+def _iter_production_files() -> list[Path]:
+    out: list[Path] = []
+    for root in _LINT_ROOTS:
+        for dirpath, _dirs, files in os.walk(REPO_ROOT / root):
+            if "__pycache__" in dirpath:
+                continue
+            for f in files:
+                if f.endswith(".py"):
+                    p = Path(dirpath) / f
+                    if not _is_test_path(_rel(p)):
+                        out.append(p)
+    return out
+
+
+def _staged_py_files() -> list[Path]:
+    r = subprocess.run(
+        ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
+        cwd=REPO_ROOT, capture_output=True, text=True, check=False,
+    )
+    out: list[Path] = []
+    for name in r.stdout.splitlines():
+        if name.endswith(".py") and _in_scope(name):
+            p = REPO_ROOT / name
+            if p.exists():
+                out.append(p)
+    return out
+
+
+def _staged_added_lines() -> dict[str, set[int]]:
+    r = subprocess.run(
+        ["git", "diff", "--cached", "--unified=0", "--no-color"],
+        cwd=REPO_ROOT, capture_output=True, text=True, check=False,
+    )
+    out: dict[str, set[int]] = {}
+    current: str | None = None
+    for line in r.stdout.splitlines():
+        if line.startswith("+++ b/"):
+            current = line[len("+++ b/"):]
+            out.setdefault(current, set())
+        elif line.startswith("@@") and current is not None:
+            m = re.match(r"@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", line)
+            if m:
+                start = int(m.group(1))
+                count = int(m.group(2)) if m.group(2) else 1
+                if count:
+                    out[current].update(range(start, start + count))
+    return out
+
+
+def _rel(p: Path) -> str:
+    try:
+        return str(p.resolve().relative_to(REPO_ROOT))
+    except ValueError:
+        return str(p)
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(
+        prog="sudo-grant-lint", description=__doc__.splitlines()[0],
+    )
+    ap.add_argument("files", nargs="*", help="specific .py files to lint")
+    ap.add_argument("--all", action="store_true", help="lint all production .py")
+    ap.add_argument("--staged", action="store_true", help="lint git-staged .py (diff-aware)")
+    ap.add_argument("--full", action="store_true", help="whole file even under --staged")
+    ap.add_argument("--strict", action="store_true", help="treat warnings as blocking")
+    args = ap.parse_args(argv)
+
+    grants = _parse_goldens()
+    if not grants:
+        print("sudo-grant-lint: could not read sudoers goldens at "
+              f"{_GOLDEN_DIR} — is the repo intact?", file=sys.stderr)
+        return 2
+    in_contract = _in_contract_bases(grants)
+
+    added: dict[str, set[int]] = {}
+    if args.all:
+        targets = _iter_production_files()
+    elif args.staged:
+        targets = _staged_py_files()
+        if not args.full:
+            added = _staged_added_lines()
+    else:
+        targets = [Path(a) for a in args.files]
+        if not targets:
+            ap.print_usage()
+            return 2
+    # Explicit file args / --all still respect scope (skip tests, other trees).
+    targets = [p for p in targets if _in_scope(_rel(p))]
+
+    block_total = warn_total = 0
+    for p in targets:
+        if not p.exists():
+            continue
+        findings = lint_file(p, grants, in_contract)
+        if args.staged and not args.full:
+            allowed = added.get(_rel(p), set())
+            findings = [f for f in findings if f.lineno in allowed]
+        if not findings:
+            continue
+        print(f"\n{_rel(p)}:")
+        for f in findings:
+            tier = "block" if (f.tier == "block" or args.strict) else "warn "
+            print(f"  L{f.lineno}  [{tier}] [{f.code}]  {f.message}")
+            print(f"           {f.snippet}")
+            if f.tier == "block" or args.strict:
+                block_total += 1
+            else:
+                warn_total += 1
+
+    if block_total or warn_total:
+        print(f"\nsudo-grant-lint: {block_total} blocking, {warn_total} warning.")
+        print("Every sudo call needs a matching NOPASSWD grant in "
+              "setup_wizard._render_evolve_sudoers, OR an inline annotation:")
+        print("  # sudo-grant: root-only                      (runs only as root)")
+        print("  # sudo-grant: ungranted-by-design: <reason>  (intentional, e.g. Option B)")
+        print("  # sudo-grant: granted                        (assert; binary must be granted)")
+        print("  # sudo-grant: known-gap: <reason/ticket>     (real gap, tracked; warn not block)")
+        print("See tools/sudo-grant-lint docstring + CLAUDE.md 'sudoers Rules'.")
+        if block_total:
+            print("Bypass: commit with --no-verify (and explain why in the commit body).")
+            return 1
+        print("Warnings only — commit proceeds. Resolve when you can (or --strict to enforce).")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
