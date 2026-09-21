@@ -29,7 +29,7 @@ dev = [
     # run the exact same versions; lint/type diagnostics drift across
     # releases. Bumping either means re-freezing its baseline in the
     # same PR (tools/ruff-baseline-lint / tools/pyright-baseline-lint).
-    "ruff==0.16.7",
+    "ruff==0.16.8",
     "pyright==1.1.414",
     # `packages/evolve-zoom-mcp` is NOT a workspace member, so `uv sync` never
     # installed its own `httpx>=0.27` — its tests ran because mcp 1.x happened

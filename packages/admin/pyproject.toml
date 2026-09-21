@@ -27,7 +27,7 @@ dependencies = [
                      # and a lock refresh would have taken it silently (#4370 capped it
                      # at <2 until this migration landed).
     "starlette>=0.36",
-    "uvicorn>=0.27",
+    "uvicorn>=0.53.0",
     # Anthropic SDK — used by profile_inferrer (Haiku-backed) and the
     # spec-routes app-spec generator. Optional at runtime: profile_inferrer
     # falls back to its no-op stub if the SDK or API key is unavailable.
