@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+"""tools/required-check-gate — D-CS9: a required CI check whose failure rate
+crosses a threshold must be explicitly quarantined (owner + expiry) or
+demoted from required. Not silently tolerated.
+
+Spec: internal/assessment-silent-controls-2026-09-14.md §4. Core logic
+(fixture-tested, no network) lives in tools/required_check_health.py; this
+file is the CLI: the live Actions-API fetch, and the report/exit-code glue.
+
+Two subcommands, deliberately kept apart:
+
+  measure   Fetch the last N completed push-to-main runs of a workflow from
+            the GitHub Actions API (via `gh api`) and print a dated JSON
+            report: {measured_at, window: {n, event, branch},
+            checks: {check: Verdict.to_dict()}}. --check defaults to
+            required_check_health.REQUIRED_CHECK_NAMES so the check list
+            lives in exactly one place, not repeated in each caller. This
+            is a periodic measurement — run by hand, or by the weekly
+            .github/workflows/required-check-measure.yml — never by CI on
+            every PR; the live fetch is one API call per sampled run.
+
+  check     Read a measurement report (--input, default stdin) plus
+            tools/required-check-quarantine.txt, apply --threshold and
+            --max-age-days, and print a pass/needs_quarantine/expired/
+            unknown verdict per check plus the report's own freshness.
+            Exits non-zero if the report is older than --max-age-days
+            (stale — nobody has re-measured), or if any check needs a
+            fresh quarantine row or a row has expired (a Firing signal).
+            This half is cheap and network-free — it is what belongs in
+            the always-on CI gate, re-validating the CHECKED-IN report +
+            quarantine file on every PR the same way tools/quarantine-ratchet
+            re-validates ci-quarantine.txt without re-running the suite.
+
+Usage:
+  tools/required-check-gate measure --repo owner/repo -n 100 \\
+      > tools/required-check-health-report.json
+  tools/required-check-gate check --threshold 0.2 --max-age-days 14 \\
+      --input tools/required-check-health-report.json
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+from datetime import date, datetime, timezone
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_REPO_ROOT / "packages" / "analyzer"))
+sys.path.insert(0, str(_REPO_ROOT / "tools"))
+from verdict import Verdict  # noqa: E402
+from required_check_health import (  # noqa: E402
+    MEASURED_AT_FORMAT,
+    REQUIRED_CHECK_NAMES,
+    CheckRun,
+    ReportFormatError,
+    evaluate_gate,
+    evaluate_report_freshness,
+    load_quarantine,
+    measure_failure_rate,
+)
+
+DEFAULT_QUARANTINE = _REPO_ROOT / "tools" / "required-check-quarantine.txt"
+
+
+def _gh_api(path: str) -> tuple[object | None, str | None]:
+    try:
+        proc = subprocess.run(
+            ["gh", "api", path], capture_output=True, text=True, check=True, timeout=30,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as e:
+        return None, str(e)
+    try:
+        return json.loads(proc.stdout), None
+    except json.JSONDecodeError as e:
+        return None, f"unparseable response: {e}"
+
+
+def _fetch_check_runs(repo: str, check_name: str, n: int) -> tuple[list[CheckRun], str | None]:
+    """One call for the run list, then one call per run's jobs — bounded by
+    ``n``, not by how busy the repo is (see tools/ci_freshness.py's own
+    fetch-side docstring for the #4253 pagination shape this deliberately
+    avoids by filtering server-side: push events on main only)."""
+    runs_data, err = _gh_api(
+        f"repos/{repo}/actions/runs?status=completed&event=push&branch=main&per_page={n}"
+    )
+    if err is not None or runs_data is None:
+        return [], err or "empty response"
+    run_ids = [r["id"] for r in runs_data.get("workflow_runs", [])]
+
+    out: list[CheckRun] = []
+    for run_id in run_ids:
+        jobs_data, jerr = _gh_api(f"repos/{repo}/actions/runs/{run_id}/jobs?per_page=100")
+        if jerr is not None or jobs_data is None:
+            return [], f"run {run_id}: {jerr or 'empty response'}"
+        for job in jobs_data.get("jobs", []):
+            if job.get("name") == check_name:
+                out.append(CheckRun(run_id=str(run_id), conclusion=job.get("conclusion") or ""))
+    return out, None
+
+
+def _cmd_measure(args: argparse.Namespace) -> int:
+    check_names = args.check if args.check else list(REQUIRED_CHECK_NAMES)
+    checks: dict[str, dict] = {}
+    for check_name in check_names:
+        runs, err = _fetch_check_runs(args.repo, check_name, args.n)
+        verdict = measure_failure_rate(check_name, runs, error=err)
+        checks[check_name] = verdict.to_dict()
+    # Dated envelope, not a bare {check: verdict} map — `check` refuses to
+    # read a report with no `measured_at` as fresh (see ReportFormatError).
+    # Compact, single-line output: this is meant to be committed
+    # (tools/required-check-health-report.json) as the static snapshot the
+    # network-free `check` subcommand validates on every PR. Each check's
+    # evidence carries its full run-id list (D-CS7: name what was counted),
+    # so pretty-printing would spend ~10 lines per run id for no reason.
+    envelope = {
+        "measured_at": datetime.now(timezone.utc).strftime(MEASURED_AT_FORMAT),
+        "window": {"n": args.n, "event": "push", "branch": "main"},
+        "checks": checks,
+    }
+    json.dump(envelope, sys.stdout, sort_keys=True, separators=(",", ":"))
+    sys.stdout.write("\n")
+    return 0
+
+
+def _cmd_check(args: argparse.Namespace) -> int:
+    raw = sys.stdin.read() if args.input == "-" else Path(args.input).read_text(encoding="utf-8")
+    report: dict = json.loads(raw)
+    quarantine = load_quarantine(Path(args.quarantine))
+    today = date.fromisoformat(args.today) if args.today else date.today()
+
+    try:
+        freshness = evaluate_report_freshness(report, max_age_days=args.max_age_days, today=today)
+    except ReportFormatError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+    results = [
+        evaluate_gate(
+            check_name, Verdict.from_dict(verdict_dict),
+            threshold=args.threshold, quarantine=quarantine, today=today,
+        )
+        for check_name, verdict_dict in report["checks"].items()
+    ]
+
+    marker = {"pass": "✓", "needs_quarantine": "✗", "expired": "✗", "unknown": "?"}
+    print(
+        f"{'✓' if not freshness.blocking else '✗'} report freshness: "
+        f"{freshness.state} — {freshness.message}"
+    )
+    for r in results:
+        print(f"{marker[r.state]} {r.check}: {r.state} — {r.message}")
+
+    blocking = [r for r in results if r.blocking]
+    if freshness.blocking or blocking:
+        reasons = []
+        if freshness.blocking:
+            reasons.append(f"the report is stale ({freshness.message})")
+        if blocking:
+            reasons.append(
+                f"{len(blocking)} required check(s) failing the quarantine gate "
+                f"(threshold {args.threshold:.1%})"
+            )
+        print(f"\n{'; '.join(reasons)}.", file=sys.stderr)
+        return 1
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    m = sub.add_parser("measure", help="fetch failure rates from the live Actions API")
+    m.add_argument("--repo", required=True, help="owner/repo")
+    m.add_argument(
+        "--check", action="append", default=None,
+        help="required-check job name (repeatable); defaults to "
+        "required_check_health.REQUIRED_CHECK_NAMES, the one place this repo lists them",
+    )
+    m.add_argument("-n", type=int, default=100, help="number of completed push-to-main runs to sample")
+    m.set_defaults(func=_cmd_measure)
+
+    c = sub.add_parser("check", help="evaluate the quarantine gate against a measurement report")
+    c.add_argument("--input", default="-", help="measurement report JSON path, or '-' for stdin")
+    c.add_argument("--quarantine", default=str(DEFAULT_QUARANTINE))
+    c.add_argument("--threshold", type=float, required=True, help="failure-rate threshold, e.g. 0.2")
+    c.add_argument(
+        "--max-age-days", type=int, default=14,
+        help="a report measured more than this many days before --today is `stale` (blocking)",
+    )
+    c.add_argument("--today", default=None, help="ISO date override (testing)")
+    c.set_defaults(func=_cmd_check)
+
+    args = ap.parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

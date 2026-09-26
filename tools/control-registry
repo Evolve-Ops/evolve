@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+"""control-registry — enumerates every control in the repo (D-CS7).
+
+Spec: internal/assessment-silent-controls-2026-09-14.md §2.
+
+A "control" here is anything that emits a pass/fail-shaped verdict about
+some *other* part of the system without changing it: a HealthReport check,
+a CI freshness/dead-man's-switch job, a generator's proposal gate. Three
+sources, each already discoverable without inventing new per-control
+bookkeeping:
+
+  generator   packages/analyzer/generators/*/charter.yaml — one control per
+              generator id.
+  health      the ``_check_*`` functions in
+              packages/admin/evolve_admin/health.py that append CheckResults
+              to a HealthReport — the naming convention is already in place,
+              this just reads it.
+  workflow    .github/workflows/*.yml jobs whose steps mention
+              ``state=unknown`` or ``never-run`` — the freshness /
+              dead-man's-switch shape (PR #4253 is the reference instance).
+
+A control's known-good/known-bad fixture pair lives under
+tests/fixtures/controls/<id-with-slashes-and-colons-folded>/known_good.json
+and known_bad.json — see Control.fixture_dir. Controls not yet given
+fixtures are carried in tools/control-coverage-quarantine.txt, ratcheted by
+tools/control-coverage-ratchet exactly like ci-quarantine.txt; a control
+newly discovered here may never be added to that quarantine (enforced by
+packages/analyzer/tests/test_control_registry.py, not by this script).
+
+Usage:
+  tools/control-registry              # human-readable table + summary
+  tools/control-registry --json       # machine-readable rows
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+GENERATORS_DIR = REPO_ROOT / "packages" / "analyzer" / "generators"
+HEALTH_PY = REPO_ROOT / "packages" / "admin" / "evolve_admin" / "health.py"
+WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
+FIXTURES_ROOT = REPO_ROOT / "tests" / "fixtures" / "controls"
+QUARANTINE_PATH = REPO_ROOT / "tools" / "control-coverage-quarantine.txt"
+
+
+@dataclass(frozen=True)
+class Control:
+    id: str    # e.g. "generator:cache_ttl_tuner", "health:_check_users",
+               # "workflow:secret-history-scan.yml:freshness"
+    source: str  # "generator" | "health" | "workflow"
+
+    @property
+    def fixture_dir(self) -> Path:
+        return FIXTURES_ROOT / self.id.replace(":", "_")
+
+    def has_fixtures(self) -> bool:
+        d = self.fixture_dir
+        return (d / "known_good.json").exists() and (d / "known_bad.json").exists()
+
+
+def discover_generator_controls() -> list[Control]:
+    if not GENERATORS_DIR.is_dir():
+        return []
+    return [
+        Control(id=f"generator:{p.parent.name}", source="generator")
+        for p in sorted(GENERATORS_DIR.glob("*/charter.yaml"))
+    ]
+
+
+def discover_health_controls() -> list[Control]:
+    if not HEALTH_PY.exists():
+        return []
+    text = HEALTH_PY.read_text(encoding="utf-8")
+    names = re.findall(r"^def (_check_[a-zA-Z0-9_]+)\(", text, re.MULTILINE)
+    return [Control(id=f"health:{n}", source="health") for n in names]
+
+
+def discover_workflow_controls() -> list[Control]:
+    try:
+        import yaml
+    except ImportError:
+        return []
+    if not WORKFLOWS_DIR.is_dir():
+        return []
+    controls: list[Control] = []
+    for path in sorted(WORKFLOWS_DIR.glob("*.yml")):
+        try:
+            doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        for job_id, job in (doc.get("jobs") or {}).items():
+            blob = str(job)
+            if "state=unknown" in blob or "never-run" in blob:
+                controls.append(Control(id=f"workflow:{path.name}:{job_id}", source="workflow"))
+    return controls
+
+
+def discover_controls() -> list[Control]:
+    return sorted(
+        discover_generator_controls() + discover_health_controls() + discover_workflow_controls(),
+        key=lambda c: c.id,
+    )
+
+
+def load_quarantine() -> set[str]:
+    if not QUARANTINE_PATH.exists():
+        return set()
+    ids = set()
+    for line in QUARANTINE_PATH.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        ids.add(line)
+    return ids
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--json", action="store_true", help="machine-readable rows")
+    args = ap.parse_args()
+
+    controls = discover_controls()
+    quarantined = load_quarantine()
+    rows = [
+        {
+            "id": c.id,
+            "source": c.source,
+            "quarantined": c.id in quarantined,
+            "has_fixtures": c.has_fixtures(),
+        }
+        for c in controls
+    ]
+
+    if args.json:
+        print(json.dumps(rows, indent=2))
+        return 0
+
+    enforced = [r for r in rows if not r["quarantined"]]
+    print(
+        f"{len(controls)} controls discovered "
+        f"({len(quarantined)} quarantined, {len(enforced)} enforced)."
+    )
+    for r in rows:
+        flag = "quarantined" if r["quarantined"] else ("ok" if r["has_fixtures"] else "MISSING FIXTURES")
+        print(f"  [{r['source']:<9}] {r['id']:<55} {flag}")
+
+    missing = [r for r in enforced if not r["has_fixtures"]]
+    if missing:
+        print(f"\n{len(missing)} enforced control(s) missing known_good/known_bad fixtures:")
+        for r in missing:
+            print(f"  {r['id']}")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

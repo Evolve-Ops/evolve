@@ -1,0 +1,971 @@
+#!/usr/bin/env python3
+"""pm-mini-probe — a read-only, allowlisted stdio MCP server that runs one
+``ssh <pod> <cmd>`` per call so the PM session can take its own measurements
+on the pod instead of asking the operator to paste terminal output.
+
+Brief: internal/dispatch/done/pm-mini-probe-readonly-mcp.md
+Charter: internal/PM-CHARTER.md § Access.
+
+Why this exists
+---------------
+The PM's cloud sandbox is HTTPS-only and the device bridge's shell is an
+isolated VM with no network and no SSH keys, so every pod measurement — the
+turns-log forensics, ``context_census.py``, the interpreter check,
+``ensure-pod-perms --check-only`` after a merge — was a "run this and paste"
+round trip through the operator's terminal. The one door that exists is the
+desktop app's proxy for **locally installed MCP servers**: a stdio server on
+the operator's laptop that wraps ``ssh`` appears to the PM session as a
+callable tool.
+
+The scope the operator ratified 2026-09-05, and what this file implements:
+**read-only by construction, allowlisted command shapes, sudo only for the
+specific reads that need it, every call logged, unregisterable in one step.**
+
+The privileged half is one root-owned, fixed-argv reader
+(``/usr/local/libexec/pm-probe-cat``) plus a short list of exact
+``evolve-admin`` read forms. ``sudo cat <path>`` is REWRITTEN to that reader
+before it is sent — sudo's own wildcards cannot bound a path operand (they
+cross ``/`` and spaces), and ``cat`` follows symlinks out of the bot-writable
+trees this door reads. See ``packages/admin/evolve_admin/pm_probe_cat.py``.
+
+Shape of the guarantee
+----------------------
+* ONE tool, ``run(cmd, timeout_s=60)``. No file transfer, no interactive
+  session, no second host.
+* The allowlist is **deny-by-default**: a command runs only if it matches one
+  of the four named allow rules below. Everything else is refused, and the
+  refusal names the rule that caught it so the PM can see *why* rather than
+  guessing.
+* Named deny rules run FIRST, so the dangerous shapes (metacharacters, ``..``
+  traversal, an ``openclaw`` invocation, a mutating binary, a non-``print``
+  ``launchctl``, a mutating ``evolve-admin`` or ``git`` verb, a write flag)
+  are refused by name instead of by the generic "not allowlisted".
+* Shell metacharacters are refused outright — **one command per call**. There
+  is no chaining, no substitution, no redirection, therefore no way to
+  assemble a write out of read primitives.
+* Credential-shaped operands (``auth*``, ``credentials*``, ``.env*``,
+  ``*.pem``, ``*.key``, ``id_*``, anything under ``docs/private/``) are
+  refused by name — the reads the PM needs do not need the key bytes, so the
+  file is never opened rather than opened-then-masked.
+* Output is scanned for key-shaped strings and masked before it is returned:
+  a second net under the deny rule, not the only one.
+* Every call — allowed or refused — appends one line to the audit log on the
+  laptop, and ``run`` **refuses when that log is unwritable**: silence is not
+  an option.
+
+Deliberately NOT here: any write of any kind on the pod, ``launchctl``
+bootstrap/bootout/kickstart, gateway restarts, key rotation, and every
+mutating ``evolve-admin`` verb. Those stay the operator's.
+
+Configuration (environment)
+---------------------------
+``PM_PROBE_HOST``  SSH target. Default ``mini``. Resolved by the operator's
+                   own ``~/.ssh/config`` — this server never carries a
+                   username, hostname or key path.
+``PM_PROBE_LOG``   Audit log path. Default ``~/pm/mini-probe.log``.
+``PM_PROBE_SSH``   ssh binary name. Default ``ssh`` (tests override it).
+
+Register / revoke: see internal/meta-system-setup.md § "The PM's read-only pod
+probe". To revoke, remove the MCP block — the PM is back to asking.
+
+Stdlib only, on purpose: this runs on the operator's laptop from a checkout,
+with no install step and nothing to keep in sync.
+"""
+
+from __future__ import annotations
+
+import fnmatch
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+
+SERVER_NAME = "pm-mini-probe"
+SERVER_VERSION = "1.0.0"
+PROTOCOL_VERSION = "2025-06-18"
+
+# 64 KB per stream. Enough for a turns-log slice or a census table; small
+# enough that a runaway `cat` cannot flood the PM's context.
+MAX_OUTPUT_BYTES = 64 * 1024
+
+DEFAULT_HOST = "mini"
+DEFAULT_LOG = "~/pm/mini-probe.log"
+
+# Timeout bounds. The floor keeps a typo from making every call instant; the
+# ceiling keeps a wedged ssh from parking the PM session for an hour.
+MIN_TIMEOUT_S = 1
+MAX_TIMEOUT_S = 600
+DEFAULT_TIMEOUT_S = 60
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Path set — the only trees an operand may name.
+#
+# These are anchored regexes matched against a whole absolute-path token. A
+# token that starts with "/" and matches none of them is refused by the
+# `path-outside-allowlist` rule.
+#
+# The `/Users/Shared/evolve` entry deliberately covers the sibling trees the
+# pod keeps beside it (`-repo`, `-venv`, `-plugin`, `-staging`, `-backup`,
+# `-investigation`): the brief's own acceptance line is
+# `readlink -f /Users/Shared/evolve-venv/bin/python3`, which is in none of the
+# others. The `-<word>` suffix is required, so `/Users/Shared/evolveX` does
+# not match.
+# ─────────────────────────────────────────────────────────────────────────────
+PATH_ROOTS: tuple[str, ...] = (
+    r"/Users/Shared/evolve(?:-[A-Za-z0-9._]+)?(?:/.*)?",
+    r"/Users/[^/]+/\.openclaw(?:/.*)?",
+    r"/tmp/pm(?:/.*)?",
+    r"/private/tmp/pm(?:/.*)?",
+    r"/var/log(?:/.*)?",
+    r"/Library/LaunchDaemons/ai\.evolve\.[A-Za-z0-9._-]+",
+)
+_PATH_ROOT_RES = tuple(re.compile(rf"^{p}$") for p in PATH_ROOTS)
+
+# The root-owned, fixed-argv reader on the pod. `sudo cat <path>` is rewritten
+# to `sudo <this> <path>` before the command is sent: /etc/sudoers.d/pm-probe
+# grants root for THIS program and nothing else that reads files, because sudo
+# cannot bound a path operand (its `*` crosses `/` and spaces) and `cat`
+# follows symlinks out of the bot-writable trees below. The reader realpaths
+# its operand, re-checks the root set after resolution, refuses a symlink at
+# every component and caps output at MAX_OUTPUT_BYTES.
+# Source: packages/admin/evolve_admin/pm_probe_cat.py.
+PM_PROBE_CAT = "/usr/local/libexec/pm-probe-cat"
+
+# Credential-shaped path segments, refused before the command is sent. Masking
+# stays as the second net; these keep the file from being opened at all. Keep
+# in step with `SECRET_SEGMENT_GLOBS` in pm_probe_cat.py — a test pins them equal.
+SECRET_SEGMENT_GLOBS: tuple[str, ...] = (
+    "auth*", "credentials*", ".env*", "*.pem", "*.key", "id_*",
+)
+SECRET_DIR_PAIR: tuple[str, str] = ("docs", "private")
+
+# Shell metacharacters. Any of these means the remote shell would do more than
+# run one command, so the call is refused before anything else is considered.
+# Quotes are NOT here: `grep "a b" <path>` is a legitimate single command and
+# shlex parses it without giving the remote shell a second verb.
+METACHARS: tuple[str, ...] = (";", "&", "|", "`", "$", ">", "<", "\n", "\r", "\\")
+
+# Binaries that change state. None of them is on an allow rule either, so this
+# table exists purely to make the refusal legible: "mutating-binary: rm" beats
+# "not-allowlisted".
+MUTATING_BINARIES = frozenset({
+    "rm", "rmdir", "mv", "cp", "tee", "chown", "chmod", "chgrp", "chflags",
+    "mkdir", "ln", "touch", "dd", "truncate", "install", "sed", "awk", "perl",
+    "ruby", "sh", "bash", "zsh", "kill", "killall", "pkill", "curl", "wget",
+    "scp", "rsync", "sqlite3", "defaults", "diskutil", "softwareupdate",
+    "pip", "pip3", "npm", "npx", "node", "brew", "crontab", "sudoedit",
+    "visudo", "dscl", "sysctl", "nvram", "shutdown", "reboot", "open",
+})
+
+# `git` read verbs are not allowlisted either (git is not on an allow rule),
+# but a mutating git verb gets its own named refusal — it is the one a PM is
+# most likely to reach for by reflex.
+GIT_MUTATING_VERBS = frozenset({
+    "add", "am", "apply", "checkout", "cherry-pick", "clean", "clone",
+    "commit", "fetch", "gc", "init", "merge", "mv", "pull", "push", "rebase",
+    "reset", "restore", "rm", "stash", "switch", "tag", "worktree", "config",
+    "remote", "submodule", "filter-branch", "reflog",
+})
+
+# `evolve-admin` verbs this door may run. Enumerated, never pattern-matched:
+# the group has ~70 verbs and the mutating majority includes deploy, rollback,
+# retire-bot, delete-bot and refresh-sudoers. `board token` is NOT a read (it
+# mints a bearer token), so the whole `board` group is absent.
+#
+# Value = flags that MUST be present for the verb to count as a read.
+EVOLVE_ADMIN_READS: dict[tuple[str, ...], tuple[str, ...]] = {
+    ("health",): (),
+    ("audit-acls",): (),
+    ("recovery-status",): (),
+    ("list-rollback-points",): (),
+    ("list-rollbacks",): (),
+    ("ensure-pod-perms",): ("--check-only",),
+    ("release", "status"): (),
+    ("breaker", "status"): (),
+    ("features", "list"): (),
+    ("lifecycle", "inventory"): (),
+}
+
+# The flags each of those verbs actually ACCEPTS, read off their click parsers
+# on 2026-09-07 rather than inferred from a word list. A word list was the only
+# guard before, and it is porous by construction — `--report`, `--cache-dir`
+# and `--log-file` all name writes it does not know. Anything not listed here
+# is refused by name, so a flag added to a verb later cannot arrive through
+# this door before someone updates this table.
+#
+# The write flags each parser also accepts are deliberately absent:
+# `health --fix`, `audit-acls --apply`, and `ensure-pod-perms` without
+# `--check-only` (which APPLIES).
+EVOLVE_ADMIN_FLAGS: dict[tuple[str, ...], frozenset[str]] = {
+    ("health",): frozenset({"--json", "--verbose", "-v"}),
+    ("audit-acls",): frozenset({"--json"}),
+    ("recovery-status",): frozenset({"--json"}),
+    ("list-rollback-points",): frozenset({"--json", "--limit", "--all"}),
+    ("list-rollbacks",): frozenset({"--json", "--limit", "--bot"}),
+    ("ensure-pod-perms",): frozenset({"--check-only", "--bot"}),
+    ("release", "status"): frozenset({"--json"}),
+    ("breaker", "status"): frozenset({"--json", "--all", "--audit-days"}),
+    ("features", "list"): frozenset(),
+    ("lifecycle", "inventory"): frozenset({"--json", "--action"}),
+}
+
+# Flags above that consume the NEXT token as their value.
+EVOLVE_ADMIN_VALUE_FLAGS = frozenset({"--limit", "--bot", "--audit-days", "--action"})
+
+# The EXACT `evolve-admin` argument tuples /etc/sudoers.d/pm-probe grants root.
+# sudo matches an argument list exactly (a trailing `*` would match any tail —
+# which is how `audit-acls --apply` used to be a passwordless root repair), so
+# the granted forms are written out one by one. Pinned equal to the renderer's
+# PM_PROBE_EVOLVE_ADMIN_READS by a test.
+#
+# `list-rollback-points` and `lifecycle inventory` are absent: both REQUIRE a
+# positional bot id, which cannot be written out without a wildcard. The probe
+# still runs them unprivileged.
+SUDO_EVOLVE_ADMIN_FORMS: frozenset[tuple[str, ...]] = frozenset({
+    ("health",),
+    ("health", "--json"),
+    ("audit-acls",),
+    ("audit-acls", "--json"),
+    ("recovery-status",),
+    ("recovery-status", "--json"),
+    ("list-rollbacks",),
+    ("list-rollbacks", "--json"),
+    ("ensure-pod-perms", "--check-only"),
+    ("release", "status"),
+    ("release", "status", "--json"),
+    ("breaker", "status"),
+    ("breaker", "status", "--json"),
+    ("features", "list"),
+})
+
+# No interpreter is granted root. `context_census.py` REQUIRES `--bot <id>`,
+# a free value, so no exact argument form can be written into sudoers, and the
+# `context_census.py *` grant that used to stand in for it handed root an
+# arbitrary argument string — `--json-out /etc/anything` included. The census
+# runs UNPRIVILEGED here, as the admin account, which reads every bot's
+# `.openclaw/` through the ACL `ensure-pod-perms` maintains.
+#
+# Flags read off the script's own argparse on 2026-09-07 and pinned, for the
+# scripts whose parser has been read. `--json-out` is absent: it writes.
+ANALYZER_SCRIPT_FLAGS: dict[str, frozenset[str]] = {
+    "context_census.py": frozenset({
+        "--bot", "--days", "--shared-dir", "--sessions-dir", "--min-doc-tokens",
+        "--prefix-floor", "--cache-ttl-minutes", "--power-model", "--session",
+        "--json",
+    }),
+}
+
+ANALYZER_DIR = "/Users/Shared/evolve-repo/packages/analyzer"
+# Operator-placed only: `ensure-pod-perms` creates /tmp/pm owned by the admin
+# account, 0755. /tmp is world-writable and sticky, so an UNOWNED /tmp/pm is a
+# bot's to create — and a script staged there runs as a full (unprivileged)
+# interpreter. The ownership is what makes "the operator put it there" true.
+STAGED_SCRIPT_DIR = "/tmp/pm"
+SYSTEM_PYTHON = "/usr/bin/python3"
+VENV_PYTHON = "/Users/Shared/evolve-venv/bin/python3"
+PYTHON_INTERPRETERS = frozenset({"python3", SYSTEM_PYTHON, VENV_PYTHON})
+
+EVOLVE_ADMIN_NAMES = frozenset({"evolve-admin", "/Users/Shared/evolve-venv/bin/evolve-admin"})
+
+SOCKETFILTERFW = "/usr/libexec/ApplicationFirewall/socketfilterfw"
+SOCKETFILTERFW_FLAGS = frozenset({"--getglobalstate", "--listapps"})
+
+# Read tools. `sudo` may precede only `cat` (rewritten to PM_PROBE_CAT, the
+# one program the sudoers file grants for reading) and an exact `evolve-admin`
+# read form — nothing else.
+#
+# `file` is deliberately absent: `file -C` compiles and WRITES `magic.mgc`
+# into the remote cwd, which makes the tool a writer one flag away from a read.
+READ_TOOLS = frozenset({
+    "ls", "cat", "head", "tail", "grep", "wc", "stat", "readlink",
+    "ps", "pgrep", "launchctl", "du", "df", "uname", "sw_vers", "id",
+})
+# Read tools whose operands are paths and which hang on stdin with none, so at
+# least one allowed path operand is required.
+READ_TOOLS_NEEDING_PATH = frozenset({
+    "ls", "cat", "head", "tail", "grep", "wc", "stat", "readlink", "du",
+})
+# Read tools that take no path operands at all.
+READ_TOOLS_NO_PATH = frozenset({"ps", "pgrep", "uname", "sw_vers", "id", "df"})
+
+# Flag-name words that mean "this writes something". Matched on the flag's
+# hyphen-separated parts, so `--timeout` (one part, "timeout") is untouched
+# while `--json-out` (parts "json", "out") is refused.
+WRITE_FLAG_WORDS = frozenset({
+    "out", "output", "write", "save", "apply", "fix", "install", "delete",
+    "remove", "prune", "set", "update", "dest", "outfile",
+})
+
+# Short flags that consume the NEXT token as their value. Without this table a
+# read tool's own arguments (`tail -n 40`, `head -c 400`, `stat -f %Sm`) look
+# like bare operands and get refused. Per-tool, because the same letter means
+# different things: `stat -f` takes a format string, `readlink -f` takes none.
+VALUE_FLAGS: dict[str, frozenset[str]] = {
+    "head": frozenset({"-c", "-n"}),
+    "tail": frozenset({"-c", "-n"}),
+    "grep": frozenset({"-e", "-m", "-A", "-B", "-C", "--include", "--exclude", "--max-count"}),
+    "stat": frozenset({"-f", "-t"}),
+    "du": frozenset({"-d", "-I", "-t"}),
+    "wc": frozenset(),
+    "ls": frozenset(),
+    "readlink": frozenset(),
+    "cat": frozenset(),
+}
+
+_LAUNCHCTL_TARGET_RE = re.compile(r"^(?:system|gui/\d+|user/\d+|pid/\d+)(?:/[A-Za-z0-9._-]+)?$")
+
+
+class Refused(Exception):
+    """A command did not survive the allowlist. ``rule`` names what caught it."""
+
+    def __init__(self, rule: str, detail: str) -> None:
+        super().__init__(f"{rule}: {detail}")
+        self.rule = rule
+        self.detail = detail
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Allowlist
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _is_flag(tok: str) -> bool:
+    return tok.startswith("-") and tok != "-"
+
+
+def _path_allowed(tok: str) -> bool:
+    """True when an absolute-path token names something inside the path set."""
+    return any(rx.match(tok) for rx in _PATH_ROOT_RES)
+
+
+def _check_write_flag(tok: str) -> None:
+    if not _is_flag(tok):
+        return
+    name = tok.split("=", 1)[0].lstrip("-")
+    parts = [p for p in name.split("-") if p]
+    hit = next((p for p in parts if p in WRITE_FLAG_WORDS), None)
+    if hit is not None:
+        raise Refused("write-flag", f"{tok!r} names an output/mutation flag ({hit!r})")
+
+
+def _check_secret_path(tok: str) -> None:
+    """Refuse a credential-shaped operand — the deny rule ahead of masking.
+
+    Masking is a heuristic over the OUTPUT (it misses a value with a `.` in
+    it, a short one, an unlabelled one in `ps aux` argv). This is a property
+    of the OPERAND, so it holds regardless of what the file turns out to
+    contain. Mirrored in pm_probe_cat.py so the pod refuses too.
+    """
+    segs = [s for s in tok.split("/") if s]
+    for seg in segs:
+        low = seg.lower()
+        for glob in SECRET_SEGMENT_GLOBS:
+            if fnmatch.fnmatchcase(low, glob):
+                raise Refused(
+                    "secret-path",
+                    f"{seg!r} matches {glob!r} — the reads the PM needs do not need "
+                    f"the key bytes, so this door does not open credential files at all",
+                )
+    for a, b in zip(segs, segs[1:]):
+        if (a.lower(), b.lower()) == SECRET_DIR_PAIR:
+            raise Refused(
+                "secret-path", f"{'/'.join(SECRET_DIR_PAIR)}/ is private by construction",
+            )
+
+
+def _check_operand(tok: str, *, allow_bare: bool) -> None:
+    """Vet one non-leading token of an otherwise-allowed command.
+
+    ``allow_bare`` permits a value that is not a path (a bot id, a date, a
+    grep pattern). A token that starts with "/" is always held to the path set;
+    a token that merely contains "/" is a relative path — refused, because the
+    remote cwd is the operator's home and a relative path escapes the set.
+
+    The secret-path deny runs AFTER the root check, so a credential file
+    outside the allowlist still reads as `path-outside-allowlist` (the wider
+    fact about it) and one inside reads as `secret-path`.
+    """
+    _check_write_flag(tok)
+    if _is_flag(tok):
+        # `--shared-dir=/Users/Shared/evolve` carries its operand inline.
+        if "=" in tok:
+            _check_operand(tok.split("=", 1)[1], allow_bare=True)
+        return
+    if tok.startswith("/"):
+        if not _path_allowed(tok):
+            raise Refused("path-outside-allowlist", f"{tok!r} is not under an allowed root")
+        _check_secret_path(tok)
+        return
+    if not allow_bare:
+        raise Refused(
+            "relative-path",
+            f"{tok!r} is not an absolute path — the remote cwd is the admin account's "
+            f"home, which is outside the path set; give a full path under an allowed root",
+        )
+    _check_secret_path(tok)
+
+
+def _rule_analyzer_script(toks: list[str]) -> str | None:
+    """`python3 <analyzer or staged script> [args]` — rule `analyzer-script`."""
+    sudo = toks[0] == "sudo"
+    rest = toks[1:] if sudo else toks
+    if len(rest) < 2 or rest[0] not in PYTHON_INTERPRETERS:
+        return None
+    if sudo:
+        raise Refused(
+            "analyzer-script",
+            "no interpreter is granted root: context_census.py requires a free "
+            "--bot value, so no exact form can be written into sudoers, and the "
+            "wildcard that stood in for one handed root any argument string "
+            "(--json-out included). Run it without sudo — the admin account "
+            "reads every bot's .openclaw/ through the ensure-pod-perms ACL",
+        )
+    script = rest[1]
+    in_analyzer = script.startswith(ANALYZER_DIR + "/")
+    in_staged = script.startswith(STAGED_SCRIPT_DIR + "/")
+    if not (in_analyzer or in_staged):
+        raise Refused(
+            "analyzer-script",
+            f"{script!r} is not under {ANALYZER_DIR} or {STAGED_SCRIPT_DIR}",
+        )
+    name = script.rsplit("/", 1)[1]
+    if not re.fullmatch(r"[A-Za-z0-9_]+\.py", name):
+        raise Refused("analyzer-script", f"{name!r} is not a plain <name>.py script")
+    if script != f"{ANALYZER_DIR}/{name}" and script != f"{STAGED_SCRIPT_DIR}/{name}":
+        raise Refused("analyzer-script", f"{script!r} is nested below the script directory")
+    pinned = ANALYZER_SCRIPT_FLAGS.get(name)
+    for tok in rest[2:]:
+        _check_operand(tok, allow_bare=True)
+        if pinned is not None and _is_flag(tok):
+            flag = tok.split("=", 1)[0]
+            if flag not in pinned:
+                raise Refused(
+                    "analyzer-unknown-flag",
+                    f"{flag!r} is not one of the flags {name} accepts ({sorted(pinned)}) — "
+                    f"this table is read off the script's own parser, not guessed from the name",
+                )
+    return "analyzer-script"
+
+
+def _rule_evolve_admin_read(toks: list[str]) -> str | None:
+    """`[sudo] evolve-admin <read verb> [args]` — rule `evolve-admin-read`.
+
+    Under sudo the WHOLE form must be one /etc/sudoers.d/pm-probe writes out
+    (SUDO_EVOLVE_ADMIN_FORMS). Refusing here rather than letting the pod
+    refuse matters: an ungranted form prompts for a password, and over a
+    BatchMode ssh that comes back as silence, not as an error the PM can read.
+    """
+    sudo = toks[0] == "sudo"
+    rest = toks[1:] if sudo else toks
+    if not rest or rest[0] not in EVOLVE_ADMIN_NAMES:
+        return None
+    tail = rest[1:]
+    verb: tuple[str, ...] | None = None
+    for n in (2, 1):
+        cand = tuple(tail[:n])
+        if cand in EVOLVE_ADMIN_READS:
+            verb = cand
+            break
+    if verb is None:
+        words = [t for t in tail if not _is_flag(t)]
+        raise Refused(
+            "evolve-admin-mutating",
+            f"{' '.join(words[:2]) or '<no verb>'!r} is not one of the enumerated read verbs "
+            f"{sorted(' '.join(v) for v in EVOLVE_ADMIN_READS)}",
+        )
+    args = tail[len(verb):]
+    for required in EVOLVE_ADMIN_READS[verb]:
+        if required not in args:
+            raise Refused(
+                "evolve-admin-mutating",
+                f"{' '.join(verb)!r} is a read only with {required!r}; without it, it applies changes",
+            )
+    accepted = EVOLVE_ADMIN_FLAGS[verb]
+    expect_value = False
+    for tok in args:
+        if expect_value:
+            expect_value = False
+            _check_operand(tok, allow_bare=True)
+            continue
+        # `--check-only` is a read flag whose name contains none of the write
+        # words; the generic operand check still vets everything else.
+        _check_operand(tok, allow_bare=True)
+        if not _is_flag(tok):
+            continue
+        flag = tok.split("=", 1)[0]
+        if flag not in accepted:
+            raise Refused(
+                "evolve-admin-unknown-flag",
+                f"{flag!r} is not one of the flags '{' '.join(verb)}' accepts "
+                f"({sorted(accepted)}) — the table is read off its click parser",
+            )
+        if "=" not in tok and flag in EVOLVE_ADMIN_VALUE_FLAGS:
+            expect_value = True
+    if sudo and tuple(tail) not in SUDO_EVOLVE_ADMIN_FORMS:
+        raise Refused(
+            "evolve-admin-sudo-ungranted",
+            f"'{' '.join(tail)}' is not one of the exact forms /etc/sudoers.d/pm-probe "
+            f"grants root ({sorted(' '.join(f) for f in SUDO_EVOLVE_ADMIN_FORMS)}); "
+            f"run it without sudo, or widen the grant deliberately",
+        )
+    return "evolve-admin-read"
+
+
+def _rule_read_tool(toks: list[str]) -> str | None:
+    """`[sudo] <read tool> [args] <path>...` — rule `read-tool`."""
+    sudo = toks[0] == "sudo"
+    rest = toks[1:] if sudo else toks
+    if not rest:
+        return None
+    tool = rest[0]
+    if tool not in READ_TOOLS:
+        return None
+    if sudo and tool != "cat":
+        raise Refused(
+            "read-tool",
+            f"sudo is granted for 'cat' only; {tool!r} under sudo would prompt for a password",
+        )
+    args = rest[1:]
+
+    if sudo and tool == "cat":
+        # Rewritten to `sudo PM_PROBE_CAT <path>` before it is sent, and that
+        # reader takes exactly one operand and no flags. Mirror its contract
+        # here so the refusal is legible on the laptop instead of arriving as
+        # a non-zero exit from the pod.
+        if len(args) != 1 or _is_flag(args[0]):
+            raise Refused(
+                "read-tool",
+                f"'sudo cat' reads exactly one path through {PM_PROBE_CAT} — "
+                f"no flags, no second operand (got {args!r})",
+            )
+        _check_operand(args[0], allow_bare=False)
+        return "read-tool"
+
+    if tool == "readlink":
+        if "-f" not in args:
+            raise Refused("read-tool", "readlink is allowed only as 'readlink -f <path>'")
+    if tool == "launchctl":
+        if not args or args[0] != "print":
+            raise Refused(
+                "launchctl-nonprint",
+                f"launchctl {args[0] if args else '<no verb>'!r} — only 'launchctl print' is a read",
+            )
+        for tok in args[1:]:
+            if _is_flag(tok):
+                _check_write_flag(tok)
+                continue
+            if not _LAUNCHCTL_TARGET_RE.match(tok):
+                raise Refused("read-tool", f"{tok!r} is not a launchctl domain target")
+        return "read-tool"
+
+    if tool in READ_TOOLS_NO_PATH:
+        for tok in args:
+            _check_write_flag(tok)
+            if tok.startswith("/"):
+                raise Refused("path-outside-allowlist", f"{tool} takes no path operands ({tok!r})")
+        return "read-tool"
+
+    # grep's first non-flag operand is the pattern, not a path.
+    pattern_slots = 1 if tool == "grep" else 0
+    value_flags = VALUE_FLAGS.get(tool, frozenset())
+    seen_paths = 0
+    expect_value = False
+    for tok in args:
+        if expect_value:
+            expect_value = False
+            _check_operand(tok, allow_bare=True)
+            continue
+        if _is_flag(tok):
+            _check_write_flag(tok)
+            if "=" in tok:
+                _check_operand(tok.split("=", 1)[1], allow_bare=True)
+            elif tok in value_flags:
+                expect_value = True
+            continue
+        if pattern_slots:
+            pattern_slots -= 1
+            continue
+        _check_operand(tok, allow_bare=False)
+        seen_paths += 1
+    if tool in READ_TOOLS_NEEDING_PATH and seen_paths == 0:
+        raise Refused(
+            "read-tool",
+            f"{tool} needs at least one allowed path operand — with none it reads stdin and hangs",
+        )
+    return "read-tool"
+
+
+def _rule_firewall_state(toks: list[str]) -> str | None:
+    """`socketfilterfw --getglobalstate|--listapps` — rule `firewall-state`."""
+    if toks[0] != SOCKETFILTERFW:
+        return None
+    if len(toks) != 2 or toks[1] not in SOCKETFILTERFW_FLAGS:
+        raise Refused(
+            "firewall-state",
+            f"socketfilterfw is allowed only with exactly one of {sorted(SOCKETFILTERFW_FLAGS)}",
+        )
+    return "firewall-state"
+
+
+ALLOW_RULES = (
+    _rule_analyzer_script,
+    _rule_evolve_admin_read,
+    _rule_read_tool,
+    _rule_firewall_state,
+)
+
+
+def _deny_pass(cmd: str, toks: list[str]) -> None:
+    """Named refusals, evaluated before any allow rule so the message is precise."""
+    for ch in METACHARS:
+        if ch in cmd:
+            raise Refused(
+                "metachar",
+                f"{ch!r} would let the remote shell run more than one command — one command per call",
+            )
+    for tok in toks:
+        for seg in tok.split("/"):
+            if seg == "..":
+                raise Refused("path-traversal", f"{tok!r} contains a '..' segment")
+    for tok in toks:
+        base = tok.rsplit("/", 1)[-1]
+        if base == "openclaw":
+            raise Refused("openclaw-forbidden", "the openclaw CLI is out of scope for this door")
+
+    head = toks[1] if toks[0] == "sudo" and len(toks) > 1 else toks[0]
+    base = head.rsplit("/", 1)[-1]
+    if base in MUTATING_BINARIES:
+        raise Refused("mutating-binary", f"{base!r} can change state on the pod")
+    if base == "git":
+        verb = next((t for t in toks[toks.index(head) + 1:] if not _is_flag(t)), None)
+        if verb in GIT_MUTATING_VERBS:
+            raise Refused("git-mutating", f"'git {verb}' mutates the checkout")
+
+
+def classify(cmd: str) -> str:
+    """Return the name of the allow rule that admits ``cmd``.
+
+    Raises :class:`Refused` — whose ``rule`` names the matching deny rule, or
+    ``not-allowlisted`` when nothing admitted it — otherwise.
+    """
+    if not cmd or not cmd.strip():
+        raise Refused("empty-command", "no command given")
+    try:
+        toks = shlex.split(cmd)
+    except ValueError as exc:
+        raise Refused("unparseable", f"could not parse the command: {exc}") from exc
+    if not toks:
+        raise Refused("empty-command", "no command given")
+
+    _deny_pass(cmd, toks)
+
+    for rule in ALLOW_RULES:
+        matched = rule(toks)
+        if matched:
+            return matched
+    raise Refused(
+        "not-allowlisted",
+        f"{toks[0]!r} is not one of the allowed command shapes "
+        f"(analyzer-script, evolve-admin-read, read-tool, firewall-state)",
+    )
+
+
+def remote_command(cmd: str) -> str:
+    """The command actually sent to the pod — ``cmd``, with `sudo cat` rewritten.
+
+    ``sudo cat <path>`` becomes ``sudo <PM_PROBE_CAT> <path>``: the sudoers
+    file grants root for that reader and for no ``cat``, because sudo cannot
+    bound a path operand and ``cat`` follows symlinks. Call AFTER
+    :func:`classify`, which is what guarantees the three-token shape.
+    """
+    try:
+        toks = shlex.split(cmd)
+    except ValueError:  # pragma: no cover — classify() already refused it
+        return cmd
+    if len(toks) == 3 and toks[0] == "sudo" and toks[1] == "cat":
+        return f"sudo {PM_PROBE_CAT} {shlex.quote(toks[2])}"
+    return cmd
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Secret masking — no key bytes leave the pod through this door.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Each is anchored with a "not preceded by a word character" lookbehind so an
+# ordinary word ending in `sk-` (a branch name, a slug) is not mistaken for a
+# key and mangled into unreadable output.
+_NW = r"(?<![A-Za-z0-9])"
+_SECRET_RES: tuple[re.Pattern[str], ...] = (
+    re.compile(_NW + r"sk-ant-[A-Za-z0-9_\-]{8,}"),
+    re.compile(_NW + r"github_pat_[A-Za-z0-9_]{20,}"),
+    re.compile(_NW + r"gh[pousr]_[A-Za-z0-9]{20,}"),
+    re.compile(_NW + r"xai-[A-Za-z0-9_\-]{16,}"),
+    re.compile(_NW + r"AIza[A-Za-z0-9_\-]{20,}"),
+    re.compile(_NW + r"sk-[A-Za-z0-9_\-]{16,}"),
+    # A long opaque run introduced by a token/key/secret label — the shape of
+    # a value in openclaw.json, auth-profiles.json or an env dump.
+    re.compile(
+        r"(?i)(?:token|key|secret|password|passwd|bearer)[\"']?\s*[:=]\s*[\"']?"
+        r"(?P<v>[A-Za-z0-9+/_\-]{40,}={0,2})"
+    ),
+)
+
+
+def _mask_value(s: str) -> str:
+    """first 8 + last 4, per the brief — enough to identify, not to use."""
+    if len(s) <= 12:
+        return "***MASKED***"
+    return f"{s[:8]}***MASKED***{s[-4:]}"
+
+
+def mask_secrets(text: str) -> str:
+    """Replace key-shaped runs with a first-8 / last-4 stub."""
+    if not text:
+        return text
+    for rx in _SECRET_RES:
+        def _sub(m: re.Match[str]) -> str:
+            if "v" in (m.groupdict() or {}) and m.group("v") is not None:
+                whole, val = m.group(0), m.group("v")
+                return whole[: m.start("v") - m.start(0)] + _mask_value(val)
+            return _mask_value(m.group(0))
+        text = rx.sub(_sub, text)
+    return text
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Audit — every call, allowed or refused. Never the output.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class AuditUnwritable(Exception):
+    """The audit log could not be opened for append."""
+
+
+def audit_path() -> str:
+    return os.path.expanduser(os.environ.get("PM_PROBE_LOG") or DEFAULT_LOG)
+
+
+def ensure_audit_writable() -> str:
+    """Open-and-close the audit log for append; raise if that cannot be done.
+
+    Called BEFORE the allowlist and before ssh: a call that cannot be recorded
+    does not happen. Silence is not an option.
+    """
+    path = audit_path()
+    try:
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(path, "a", encoding="utf-8"):
+            pass
+    except OSError as exc:
+        raise AuditUnwritable(f"audit log {path!r} is not writable: {exc}") from exc
+    return path
+
+
+def audit(entry: dict) -> None:
+    path = audit_path()
+    line = json.dumps(entry, sort_keys=True, ensure_ascii=False)
+    try:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except OSError as exc:
+        raise AuditUnwritable(f"audit log {path!r} is not writable: {exc}") from exc
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The one tool
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _truncate(text: str) -> tuple[str, bool]:
+    raw = text.encode("utf-8")
+    if len(raw) <= MAX_OUTPUT_BYTES:
+        return text, False
+    return raw[:MAX_OUTPUT_BYTES].decode("utf-8", "replace"), True
+
+
+def run(cmd: str, timeout_s: int = DEFAULT_TIMEOUT_S) -> dict:
+    """Run one allowlisted command on the pod and return its masked output.
+
+    Returns ``{stdout, stderr, exit, truncated}`` on success, or
+    ``{error, rule}`` when the allowlist refused it. Never raises for a
+    refusal — a refusal is a result the PM should read, not a crash.
+    """
+    ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    try:
+        ensure_audit_writable()
+    except AuditUnwritable as exc:
+        # Deliberately NOT a refusal record: there is nowhere to record it.
+        return {"error": str(exc), "rule": "audit-unwritable"}
+
+    try:
+        rule = classify(cmd)
+    except Refused as exc:
+        audit({"ts": ts, "cmd": cmd, "exit": None, "bytes": 0, "refused_by": exc.rule})
+        return {"error": str(exc), "rule": exc.rule}
+
+    try:
+        timeout = int(timeout_s)
+    except (TypeError, ValueError):
+        timeout = DEFAULT_TIMEOUT_S
+    timeout = max(MIN_TIMEOUT_S, min(MAX_TIMEOUT_S, timeout))
+
+    host = os.environ.get("PM_PROBE_HOST") or DEFAULT_HOST
+    ssh = os.environ.get("PM_PROBE_SSH") or "ssh"
+    remote = remote_command(cmd)
+    argv = [ssh, "-o", "BatchMode=yes", host, remote]
+
+    started = time.time()
+    try:
+        proc = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            stdin=subprocess.DEVNULL,
+        )
+        out_raw, err_raw, code = proc.stdout or "", proc.stderr or "", proc.returncode
+    except subprocess.TimeoutExpired:
+        out_raw, err_raw, code = "", f"pm-mini-probe: timed out after {timeout}s", None
+    except OSError as exc:
+        out_raw, err_raw, code = "", f"pm-mini-probe: could not run {ssh!r}: {exc}", None
+
+    stdout, t1 = _truncate(mask_secrets(out_raw))
+    stderr, t2 = _truncate(mask_secrets(err_raw))
+    result = {
+        "stdout": stdout,
+        "stderr": stderr,
+        "exit": code,
+        "truncated": t1 or t2,
+        "rule": rule,
+        "host": host,
+        "elapsed_s": round(time.time() - started, 3),
+    }
+    entry = {
+        "ts": ts,
+        "cmd": cmd,
+        "exit": code,
+        "bytes": len(stdout.encode("utf-8")) + len(stderr.encode("utf-8")),
+    }
+    if remote != cmd:
+        # What the PM asked for and what the pod ran are both facts; the log
+        # (and the result) carry both rather than quietly substituting one.
+        result["remote"] = remote
+        entry["remote"] = remote
+    audit(entry)
+    return result
+
+
+TOOL_SCHEMA = {
+    "name": "run",
+    "description": (
+        "Run ONE read-only, allowlisted command on the Evolve pod over ssh and return "
+        "its output. Deny-by-default: only `python3 <analyzer or /tmp/pm script>` (never "
+        "under sudo), `evolve-admin <enumerated read verb>` (under sudo only in the exact "
+        "forms the sudoers file grants), the read tools "
+        "(ls/cat/head/tail/grep/wc/stat/readlink -f/ps/pgrep/launchctl print, and `sudo cat "
+        "<one path>`, which is rewritten to the pod's fixed-argv root reader) "
+        "on paths under /Users/Shared/evolve*, /Users/*/.openclaw, /tmp/pm, /var/log and "
+        "/Library/LaunchDaemons/ai.evolve.*, and socketfilterfw --getglobalstate|--listapps. "
+        "Shell metacharacters, '..' traversal, credential-shaped paths (auth*, *.key, "
+        "id_*, docs/private/), writes, restarts, openclaw and every mutating "
+        "verb are refused with the name of the rule that caught them. Key-shaped strings in "
+        "the output are masked. Every call is logged on the operator's laptop."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "cmd": {
+                "type": "string",
+                "description": "One shell command, no metacharacters, no chaining.",
+            },
+            "timeout_s": {
+                "type": "integer",
+                "description": f"Seconds to wait (default {DEFAULT_TIMEOUT_S}, max {MAX_TIMEOUT_S}).",
+                "default": DEFAULT_TIMEOUT_S,
+            },
+        },
+        "required": ["cmd"],
+        "additionalProperties": False,
+    },
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MCP stdio transport — newline-delimited JSON-RPC 2.0.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def handle(msg: dict) -> dict | None:
+    """Return the JSON-RPC response for ``msg``, or None for a notification."""
+    method = msg.get("method")
+    mid = msg.get("id")
+    is_notification = "id" not in msg
+
+    if method == "initialize":
+        params = msg.get("params") or {}
+        requested = params.get("protocolVersion")
+        result = {
+            "protocolVersion": requested if isinstance(requested, str) else PROTOCOL_VERSION,
+            "capabilities": {"tools": {}},
+            "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
+        }
+    elif method in ("notifications/initialized", "initialized"):
+        return None
+    elif method == "ping":
+        result = {}
+    elif method == "tools/list":
+        result = {"tools": [TOOL_SCHEMA]}
+    elif method == "tools/call":
+        params = msg.get("params") or {}
+        if params.get("name") != "run":
+            return _error(mid, -32602, f"unknown tool: {params.get('name')!r}")
+        args = params.get("arguments") or {}
+        cmd = args.get("cmd")
+        if not isinstance(cmd, str):
+            return _error(mid, -32602, "'cmd' must be a string")
+        out = run(cmd, args.get("timeout_s", DEFAULT_TIMEOUT_S))
+        result = {
+            "content": [{"type": "text", "text": json.dumps(out, indent=2, ensure_ascii=False)}],
+            "isError": "error" in out,
+        }
+    else:
+        if is_notification:
+            return None
+        return _error(mid, -32601, f"method not found: {method!r}")
+
+    if is_notification:
+        return None
+    return {"jsonrpc": "2.0", "id": mid, "result": result}
+
+
+def _error(mid, code: int, message: str) -> dict:
+    return {"jsonrpc": "2.0", "id": mid, "error": {"code": code, "message": message}}
+
+
+def serve(stdin=None, stdout=None) -> None:
+    stdin = stdin or sys.stdin
+    stdout = stdout or sys.stdout
+    for line in stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            msg = json.loads(line)
+        except json.JSONDecodeError:
+            resp = _error(None, -32700, "parse error")
+        else:
+            try:
+                resp = handle(msg)
+            except Exception as exc:  # pragma: no cover — never wedge the transport
+                resp = _error(msg.get("id"), -32603, f"internal error: {exc}")
+        if resp is None:
+            continue
+        stdout.write(json.dumps(resp, ensure_ascii=False) + "\n")
+        stdout.flush()
+
+
+if __name__ == "__main__":
+    serve()

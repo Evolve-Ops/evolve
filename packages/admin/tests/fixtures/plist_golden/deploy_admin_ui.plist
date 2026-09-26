@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>ai.evolve.evolve.admin-ui</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/Shared/evolve-venv/bin/evolve-admin</string>
+		<string>serve</string>
+		<string>--host</string>
+		<string>127.0.0.1</string>
+		<string>--port</string>
+		<string>5050</string>
+	</array>
+	<key>UserName</key>
+	<string>evolve</string>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>/Users/evolve/.openclaw/logs/evolve-admin-ui.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/Shared/evolve/logs/evolve-admin-ui.err.log</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+		<key>EVOLVE_NETWORK</key>
+		<string>/Users/Shared/evolve/network.json</string>
+	</dict>
+	<key>SoftResourceLimits</key>
+	<dict>
+		<key>NumberOfFiles</key>
+		<integer>4096</integer>
+	</dict>
+</dict>
+</plist>

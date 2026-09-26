@@ -1,0 +1,8 @@
+{
+  "_comment": "AXIS: whether a per-bot OpenClaw preflight cache entry exists for the installed version, matching the current bot set. A fresh entry (age_hours well under the 24h freshness window, hold-fix-4392) whose bot_set_hash matches the live registry passes. Replayed by packages/admin/tests/test_oc_runtime_controls.py::test_preflight_gate_known_good_passes.",
+  "_axis": "cached_entry",
+  "installed_version": "2026.9.2",
+  "network": {"bots": {"team-bot-a": {}}},
+  "cached_entry": {"age_hours": 1},
+  "expect": {"status": "PASS", "name": "oc_preflight_gate_fresh"}
+}

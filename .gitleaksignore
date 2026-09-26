@@ -1,0 +1,14 @@
+# .gitleaksignore — findings that are fixtures, not secrets.
+#
+# One line per finding, as gitleaks' own fingerprint:
+#   <commit>:<path>:<rule-id>:<line>
+# Adding one is an explicit, reviewable act. It is the right move ONLY when the
+# match is a value that exists to be matched — a test fixture written to prove a
+# masker works — and never for a value that was ever live anywhere.
+
+# PR #4079, the PM probe's masking fixture. The value is base64 of the ASCII
+# string "mysupersecretsessionkeythatisverylongindeed": it is there so
+# test_masking_removes_every_key_shape_the_pod_stores can prove the probe's
+# generic `secret:`-labelled rule catches a 40+ char opaque run before any
+# output is returned. A shorter or less key-shaped fixture would test nothing.
+345f8ba3690d167e82c1bd14fa5505572694b64d:packages/admin/tests/test_pm_mini_probe.py:generic-api-key:222

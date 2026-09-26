@@ -1,0 +1,27 @@
+
+── OpenClaw Upgrade ──────────────────────────────────
+  Installed:  2026.7.0
+  Checking npm registry…  Latest:     2026.7.1      
+
+  Upgrading 2026.7.0 → 2026.7.1
+
+  Running safe-upgrade preflight…
+  ✅ preflight: all gates passed
+  Running: install -g --prefix=/opt/homebrew openclaw@2026.7.1
+  ❌ npm reported success but /opt/homebrew/lib/node_modules/openclaw/package.json still reads 
+2026.7.0 (expected 2026.7.1).
+
+  npm stdout:
+added 1 package
+
+  npm root -g: /opt/homebrew/lib/node_modules
+  Expected:    /opt/homebrew/lib/node_modules/openclaw
+
+  → Likely cause: a stale install at /opt/homebrew/lib/node_modules/openclaw is shadowing the new 
+one, or your
+     npm prefix has drifted from /opt/homebrew. Fix:
+       1. Inspect the path: ls -la /opt/homebrew/lib/node_modules/openclaw
+          If it's a regular directory (not a symlink), it's a leftover
+          from a previous brew node version.
+       2. Remove it: sudo rm -rf /opt/homebrew/lib/node_modules/openclaw
+       3. Re-run: sudo evolve-admin menu upgrade

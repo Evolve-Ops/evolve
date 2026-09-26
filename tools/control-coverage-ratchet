@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""control-coverage-ratchet — no-growth cap on control-coverage-quarantine.txt (D-CS7).
+
+Modelled line-for-line on tools/quarantine-ratchet. Every line in
+tools/control-coverage-quarantine.txt is a real control (generator charter,
+HealthReport check, or CI freshness job) that does not yet have a
+known_good/known_bad fixture pair — grandfathered from before the D-CS7
+registry existed. New controls must ship fixtures from birth; this only
+protects against the existing backlog growing.
+
+The count is `wc -l` of control-coverage-quarantine.txt (comments and blank
+lines included, same convention as ci-quarantine-baseline.txt — the ceiling
+tracks the whole file, so even comment churn is visible rather than a
+loophole).
+
+Usage:
+  tools/control-coverage-ratchet                   # check the count vs baseline
+  tools/control-coverage-ratchet --all             # alias for the above
+  tools/control-coverage-ratchet --update-baseline # re-freeze after a reduction
+
+Exit status: 0 if the count is at or below baseline; 1 if it grew.
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+QUARANTINE_PATH = REPO_ROOT / "tools" / "control-coverage-quarantine.txt"
+BASELINE_PATH = REPO_ROOT / "tools" / "control-coverage-baseline.txt"
+
+
+def _line_count(path: Path) -> int:
+    """Newline count, matching `wc -l`."""
+    try:
+        return path.read_bytes().count(b"\n")
+    except OSError:
+        return 0
+
+
+def _load_baseline() -> int | None:
+    if not BASELINE_PATH.exists():
+        return None
+    for line in BASELINE_PATH.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            return int(line)
+        except ValueError:
+            continue
+    return None
+
+
+def _write_baseline(count: int) -> None:
+    text = (
+        "# control-coverage-baseline — frozen `wc -l` ceiling for\n"
+        "# control-coverage-quarantine.txt (D-CS7). The ratchet\n"
+        "# (tools/control-coverage-ratchet) blocks any growth past this number,\n"
+        "# so it may only ratchet DOWN — a control leaving quarantine (fixtures\n"
+        "# added) should be followed by --update-baseline in the same PR.\n"
+        f"{count}\n"
+    )
+    BASELINE_PATH.write_text(text, encoding="utf-8")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description="No-growth cap on control-coverage-quarantine.txt (D-CS7)."
+    )
+    ap.add_argument(
+        "--all", action="store_true",
+        help="check the quarantine count (the default; accepted for symmetry)",
+    )
+    ap.add_argument(
+        "--update-baseline", action="store_true",
+        help="re-freeze the count from control-coverage-quarantine.txt (after a reduction)",
+    )
+    args = ap.parse_args()
+
+    current = _line_count(QUARANTINE_PATH)
+
+    if args.update_baseline:
+        _write_baseline(current)
+        print(f"baseline written: control-coverage-quarantine.txt frozen at {current} lines")
+        return 0
+
+    baseline = _load_baseline()
+    if baseline is None:
+        print(
+            f"✗ no baseline found at {BASELINE_PATH.relative_to(REPO_ROOT)}",
+            file=sys.stderr,
+        )
+        return 2
+
+    if current > baseline:
+        print(
+            f"✗ control-coverage-quarantine.txt grew: {current} lines, baseline allows "
+            f"{baseline} (+{current - baseline}).\n\n"
+            "Each line is a real control missing its known_good/known_bad fixture\n"
+            "pair. Don't add quarantine entries — a newly discovered control must\n"
+            "ship fixtures from birth. After a genuine reduction, re-freeze:\n"
+            "  tools/control-coverage-ratchet --update-baseline"
+        )
+        return 1
+
+    if current < baseline:
+        print(
+            f"✓ control-coverage-quarantine.txt at {current} lines, BELOW baseline "
+            f"{baseline} (-{baseline - current}) — run `tools/control-coverage-ratchet "
+            "--update-baseline` to ratchet down."
+        )
+    else:
+        print(f"✓ control-coverage-quarantine.txt at {current} lines, at baseline.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

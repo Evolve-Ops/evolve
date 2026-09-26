@@ -1,0 +1,8 @@
+{
+  "_comment": "Both event queries reachable, but the newest matching run is 30 days old (limit 16) — a genuinely stale scan. tests/test_ci_freshness.py::test_known_bad_fixture_must_produce_broken",
+  "sched_reachable": true,
+  "disp_reachable": true,
+  "any_runs_found": true,
+  "latest_run": {"id": "1002", "url": "https://example.invalid/actions/runs/1002"},
+  "latest_run_age_days": 30
+}

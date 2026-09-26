@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>ai.evolve.evolve.imessage-poller.team_bot_a</string>
+    <key>Comment</key>
+    <string>Evolve iMessage poller for team_bot_a (reads chat.db, forwards to gateway)</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+    <key>UserName</key>
+    <string>evolve</string>
+    <key>GroupName</key>
+    <string>staff</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>/Users/Shared/evolve-venv/bin/python3</string>
+      <string>-m</string>
+      <string>imessage_plugin.poller</string>
+      <string>--bot-id</string>
+      <string>team_bot_a</string>
+      <string>--port</string>
+      <string>18790</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/Shared/evolve-repo/packages/analyzer</string>
+    <key>StandardOutPath</key>
+    <string>/Users/Shared/evolve/logs/imessage-poller-team_bot_a.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/Shared/evolve/logs/imessage-poller-team_bot_a.err.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>HOME</key>
+      <string>/Users/evolve</string>
+      <key>TMPDIR</key>
+      <string>/tmp</string>
+      <key>PATH</key>
+      <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+  </dict>
+</plist>

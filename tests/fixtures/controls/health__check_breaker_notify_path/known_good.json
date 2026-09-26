@@ -1,0 +1,6 @@
+{
+  "_comment": "AXIS: the openclaw CLI start probe's `state`, and nothing else. The probe ran and answered 'ok' — the CLI accepts its own config, so a breaker notice has a path to the operator. Replayed by packages/admin/tests/test_oc_runtime_controls.py::test_breaker_notify_path_known_good_passes.",
+  "_axis": "cli_probe.state",
+  "cli_probe": {"state": "ok", "detail": "config validates"},
+  "expect": {"status": "PASS", "name": "breaker_notify_path_can_start"}
+}

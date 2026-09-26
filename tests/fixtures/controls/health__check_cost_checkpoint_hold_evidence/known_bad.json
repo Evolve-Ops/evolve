@@ -1,0 +1,10 @@
+{
+  "_comment": "AXIS: the same marker, absent. Identical trip, identical interactive turn, identical bot — only the holds.jsonl marker is missing. This is the 2026-09-17 shape on disk: $4.15 spent on the operator's DM after the trip with checkpoint: null and nothing saying whether the plugin live at that minute carried the hold. The control reads it as WARN unknown — never a silent PASS, never a FAIL nobody can act on. Replayed by packages/admin/tests/test_checkpoint_hold_evidence.py::test_known_bad_fixture_warns_unknown.",
+  "_axis": "hold_marker_present",
+  "bot_id": "team_bot_a",
+  "tripped_at": "2026-09-17T19:52:47Z",
+  "now": "2026-09-17T20:00:00Z",
+  "interactive_turns_minutes_after_trip": [7],
+  "hold_marker": false,
+  "expect": {"status": "WARN", "category": "cost_checkpoint_hold", "detail_contains": "unknown"}
+}

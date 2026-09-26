@@ -1,0 +1,318 @@
+{
+  "pkg_id": "p-aed7721c",
+  "pkg_version": "2026.09.14-1.0",
+  "gallery_version": "2026.09.14-1.0",
+  "schema_version": 5,
+  "manifest_type": "evolve_application",
+  "display_name": "Morning Board",
+  "author": "evolve",
+  "description": "Stocks the shared Board from the bot's connected sources (calendar by default; email once granted), composes one numbered morning message grouped by life cluster, and delivers it via the bot's primary channel AND the board page's briefing panel — the same composition, delivered twice. Replaces the PA prototype's hand-planted morning cron with a delivery-monitor-registered scheduled action.",
+  "objective": "Turn 'today's board' into a message the operator can triage by numbered reply, every morning, without a second source of truth living outside the store the phone and chat already share.",
+  "id": "app_morning_board",
+  "name": "Morning Board",
+  "status": "active",
+  "dependencies": [],
+  "app_dependencies": [
+    {
+      "pkg_id": "p-fe9acef3",
+      "display_name": "Calendar Sync",
+      "required": true,
+      "reason": "Morning Board reads memory/calendar-today.json produced by Calendar Sync to stock today's calendar cards (D-BI6b: calendar stocking is on by default). Install Calendar Sync first."
+    },
+    {
+      "pkg_id": "p-341576fa",
+      "display_name": "Email Integration",
+      "required": false,
+      "reason": "If installed AND the operator sets sources.email=true in morning_board/config.json, Morning Board also stocks from memory/email-digest.json. Off by default (D-BI6b) — absence changes nothing."
+    }
+  ],
+  "requirements": {
+    "integrations": [],
+    "secrets": [],
+    "system": [],
+    "python_packages": [],
+    "messaging_channel": [
+      {
+        "id": "messaging_channel",
+        "display_name": "Connected messaging channel",
+        "required": true,
+        "reason": "Delivers the daily board message to the operator's primary channel via `openclaw message send`."
+      }
+    ]
+  },
+  "interface_contract": {
+    "populated_by_forge": false,
+    "extracted_at": null,
+    "data_files": [
+      {
+        "path": "memory/board-runs/YYYY-MM-DD.json",
+        "description": "Per-day run metadata — the delivery monitor's evidence.delivered for this app's scheduled action. Written ONLY after an accepted `openclaw message send`. One file per day.",
+        "schema": {
+          "storage_format": "JSON object",
+          "fields": {
+            "date": "ISO date YYYY-MM-DD (also the filename stem)",
+            "sent_at": "ISO 8601 datetime with timezone offset",
+            "cards_shown": "integer — cards numbered onto the message",
+            "cards_stocked": "object — {calendar: int, email: int} cards newly added this run (server-deduped)",
+            "sources_available": "object — {calendar: bool, email: bool} which cache files were readable",
+            "sources_enabled": "object — the config's sources block at run time",
+            "composer": "string — 'llm' or 'template'",
+            "model": "string — the model used, or '' when the template composer ran",
+            "input_tokens": "integer",
+            "output_tokens": "integer",
+            "cost_usd": "number or null — estimated cost of the one bounded model call",
+            "message": "string — the exact text delivered"
+          }
+        }
+      },
+      {
+        "path": "morning_board/config.json",
+        "description": "Per-bot configuration. Created on first run if absent; the operator edits it freely afterward.",
+        "schema": {
+          "storage_format": "JSON object",
+          "fields": {
+            "user_name": "string — default ''",
+            "time_zone": "IANA timezone string",
+            "delivery_time": "HH:MM 24-hour, default '07:00'",
+            "model": "string, default 'claude-haiku-4-5'; empty forces the template composer",
+            "sources": "object — {calendar: bool (default true), email: bool (default false)}"
+          }
+        }
+      }
+    ],
+    "cli": [
+      {
+        "command": "python3 scripts/morning_board.py run",
+        "key_flags": [
+          "--force (ignore today's idempotency record and re-send)"
+        ],
+        "output_signals": [
+          "BOARD_SENT:",
+          "BOARD_FAILED:",
+          "BOARD_SKIPPED:"
+        ]
+      },
+      {
+        "command": "python3 scripts/morning_board.py preview",
+        "key_flags": [],
+        "output_signals": [
+          "BOARD_PREVIEW_FAILED:"
+        ]
+      },
+      {
+        "command": "python3 scripts/morning_board.py status",
+        "key_flags": [],
+        "output_signals": []
+      }
+    ],
+    "key_paths": []
+  },
+  "files": [],
+  "install_job": null,
+  "improvement_history": [],
+  "identity": {
+    "purpose": "Stock, compose, and deliver the daily Morning Board message — the registered replacement for the PA prototype's hand-planted morning cron (D-MB5). A thin client over the admin daemon's Board store: it never writes the store directly, only through the daemon's bot-facing API.",
+    "scope_includes": [
+      "Read memory/calendar-today.json (Calendar Sync) and stock each event as a board card via POST /api/board-bot/cards",
+      "When sources.email is granted, also read memory/email-digest.json and stock email-derived cards (source: email, never auto-actionable)",
+      "Read the current board via GET /api/board-bot/cards and group/number the open lanes (inbox/today/later) by cluster",
+      "Compose ONE short greeting line via a single bounded LLM call (claude-haiku-4-5 by default), with a deterministic template fallback",
+      "Deliver via `openclaw message send`, then POST the same text to /api/board-bot/briefing so the board page's panel matches",
+      "Write memory/board-runs/YYYY-MM-DD.json with run metadata, tokens, and an estimated cost",
+      "Enforce one-board-per-day idempotency by checking for today's run file"
+    ],
+    "scope_excludes": [
+      "Never writes boards/<bot_id>/board.json directly — D-MB1, the admin daemon is the one writer",
+      "Never calls Google/email APIs directly — reads sibling apps' cache files only",
+      "Never auto-executes an action from an email-derived card",
+      "Does not implement chat-reply triage — that is BoardTool.ts (already shipped), not this app"
+    ]
+  },
+  "success_criteria": {
+    "observable_outcomes": [
+      "Operator receives one numbered board message on their configured channel within 30 minutes of 07:00 every day",
+      "memory/board-runs/YYYY-MM-DD.json exists after every accepted send",
+      "The board page's briefing panel (GET /board/<bot_id>/briefing) shows the identical text the chat message carried",
+      "A day with zero open cards says 'Nothing waiting this morning.' — never an empty list, never a skipped send",
+      "If the LLM call fails, the template greeting still ships (composer field flips to 'template')",
+      "BOARD_SENT: signal on success; delivery monitor ledgers the window on_time"
+    ],
+    "failure_signals": [
+      "BOARD_FAILED: — admin daemon unreachable, or the chat send failed; no run file is written",
+      "DELIVERY_SKIPPED: — no delivery route configured; no run file",
+      "The delivery monitor ledgers the window missed or ran_undelivered"
+    ]
+  },
+  "build_spec": "# Morning Board — Build Specification\n\n## Overview\n\nMorning Board is the D-MB5/D-MB6 slice that turns the PA prototype's\nhand-planted morning message into a registered gallery app. It does three\nthings every morning: (1) **stocks** the shared Board store from the bot's\nalready-connected sources (calendar on by default; email only when the\noperator has granted it), (2) **composes** one numbered morning message\nfrom the store, and (3) **delivers** it — as the daily chat message AND as\nthe board page's collapsible briefing panel, the SAME composition\ndelivered twice (D-BI6d).\n\nMorning Board does NOT own the board store. The store lives on the admin\ndaemon (`{shared_dir}/boards/<bot_id>/board.json`) and is written ONLY by\nthe daemon (D-MB1) — this app's script is a **client**, not a second\nwriter. Every read/write of a card goes through the admin daemon's\nbot-facing API, `/api/board-bot/...`, over its unix socket\n(`{shared_dir}/admin-daemon.sock`); the kernel's peer-uid check on that\nsocket IS the auth, so the script sends no credential of its own — the\nsame trust model `packages/plugin/src/tools/BoardTool.ts` uses for chat\ntriage.\n\nThis app REPLACES the hand-planted `morning-board` OC cron the PoC bot ran\nduring WoZ-1 (`internal/design-pa-board-2026-08-31.md` §7) — install\nmigrates that prototype's state into the real store and retires its cron\n(D-MB6; see \"Install-time migration\" below). Without this app, the\nprototype's morning message was invisible to the delivery monitor for\n~10 weeks (`internal/baseline-pa-bot-2026-08-31.md`, \"zero registered\nproducers\"); this app's `scheduled_actions[]` + `delivery_contract` fix\nthat by construction.\n\n**Cost discipline (D-BI6a, `internal/finding-cost-forensics-power-bot-2026-09-04.md`):**\nthe whole run — stocking, composing, delivering — is a deterministic tool\npath. It makes **exactly one bounded model call**, for the short greeting\nline only, never an agentic loop. A loop over this same task was measured\nat ~$2/turn in the forensics finding; this run's one Haiku call is\n~$0.0002.\n\n---\n\n## File Layout\n\n```\nscripts/\n  morning_board.py           ← main CLI: run | preview | status\n  morning-board-cron.sh      ← cron trigger (calls morning_board.py run)\nmorning_board/\n  config.json                ← per-bot configuration (created on first run)\nmemory/\n  board-runs/\n    YYYY-MM-DD.json          ← one file per day: composed message + counts + cost\n```\n\nAll paths are relative to the bot's workspace root\n(`/Users/{bot_id}/.openclaw/workspace/`). The script never writes to the\nboard store directly — only through the admin daemon's socket API — and\nnever reads or writes outside the workspace except (a) the bot's\n`openclaw.json` (read-only, to discover the Anthropic API key), (b) the\npod's `network.json` (read-only, to resolve the delivery route and this\nbot's id), (c) `{shared_dir}/admin-daemon.sock` (the board API transport),\nand (d) the launchd plist at `/Library/LaunchDaemons/` (installed once at\ndeploy time).\n\n---\n\n## morning_board/config.json — per-bot configuration\n\nCreate on first run if absent:\n\n```json\n{\n  \"user_name\": \"{user_name}\",\n  \"time_zone\": \"{time_zone}\",\n  \"delivery_time\": \"{delivery_time}\",\n  \"model\": \"claude-haiku-4-5\",\n  \"sources\": {\n    \"calendar\": true,\n    \"email\": false\n  }\n}\n```\n\nThe operator edits this file freely. `sources.email` stays `false` until\nthe operator explicitly grants email stocking through the access model\n(D-BI6b) — an email-derived card is untrusted input and can never\nauto-execute an action, only ever surface as something to look at. An\nempty string for `model` forces the template composer.\n\n---\n\n## Stocking (calendar on by default, email opt-in — D-BI6b)\n\nReads the SAME cache files the hand-planted prototype read — no new\nintegrations:\n\n- **Calendar Sync (`p-fe9acef3`)** — `memory/calendar-today.json`:\n  `{id, title, start_iso, end_iso, attendees, description, is_external,\n  location}` per event. Enabled by default.\n- **Email Integration (`p-341576fa`, optional)** — `memory/email-digest.json`.\n  Only consulted when `sources.email` is `true`.\n\nEach candidate is POSTed to the daemon's `/api/board-bot/cards` — the\ndaemon does the stocking dedup server-side (D-BI2: a card matching an\nalready-`done`/`dropped` card's `source_id` or normalised title+day is\nskipped, never re-added). The script never re-implements that check; it\nalways posts and trusts the `skipped` field in the response.\n\n```python\ndef stock_from_calendar(events: list) -> int:\n    added = 0\n    for ev in events:\n        if not isinstance(ev, dict):\n            continue\n        title = str(ev.get(\"title\") or \"\").strip()\n        if not title:\n            continue\n        enrichment = {}\n        if ev.get(\"start_iso\"):\n            enrichment[\"when\"] = {\"value\": ev[\"start_iso\"], \"source\": \"calendar\"}\n        if ev.get(\"location\"):\n            enrichment[\"location\"] = {\"text\": str(ev[\"location\"]), \"source\": \"calendar\"}\n        result = board_add(\n            title=title, cluster=guess_cluster(title, \"work\"),\n            source=\"calendar\", source_id=str(ev.get(\"id\") or \"\"),\n            enrichment=enrichment or None,\n        )\n        if not result.get(\"skipped\"):\n            added += 1\n    return added\n```\n\nEmail-derived cards carry `source: \"email\"` and a note saying so; they are\nnever treated as actionable on their own (D-BI6b — the lethal-trifecta edge\nmeans an email-derived card can prompt \"draft a reply\", never an auto-send).\n\n---\n\n## The board client (unix socket, no credential of its own)\n\n```python\nclass _UnixSocketHTTPConnection(http.client.HTTPConnection):\n    def __init__(self, socket_path, timeout=None):\n        super().__init__(\"localhost\", timeout=timeout)\n        self._socket_path = socket_path\n\n    def connect(self):\n        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)\n        sock.connect(self._socket_path)\n        self.sock = sock\n\n\ndef _board_request(method, path, body=None, timeout=10.0):\n    conn = _UnixSocketHTTPConnection(str(_ADMIN_SOCKET), timeout=timeout)\n    payload = json.dumps(body).encode() if body is not None else None\n    headers = {\"Content-Type\": \"application/json\"} if payload else {}\n    conn.request(method, path, body=payload, headers=headers)\n    resp = conn.getresponse()\n    return resp.status, json.loads(resp.read() or b\"null\")\n```\n\n`_ADMIN_SOCKET = Path(\"/Users/Shared/evolve/admin-daemon.sock\")` (Linux:\n`/var/lib/evolve/admin-daemon.sock`). A connection failure (socket\nmissing, `ECONNREFUSED`) means the daemon is down — the run FAILS loudly\n(`BOARD_FAILED:` to stderr, exit 1) rather than silently skipping: the\nboard is the one source of truth (D-MB1), so a run that cannot reach it\nhas nothing to stock or compose from.\n\n`board_list_active()` calls `GET /api/board-bot/cards?limit=200` and keeps\nonly `inbox`/`today`/`later` lanes — `done`/`dropped` are settled and\nbelong to the weekly receipt, not the morning message.\n\n---\n\n## Composing the message (one bounded model call)\n\nCards are grouped by the canonical cluster order (health, fitness, travel,\nwork, social, hobbies, family, home, admin — any custom cluster sorts\nafter, alphabetically) and numbered **once, sequentially, across the whole\nboard** — not restarted per cluster, because the reply-triage names one\nglobal number:\n\n```python\ndef number_and_group(cards):\n    by_cluster = {}\n    for c in cards:\n        by_cluster.setdefault(str(c.get(\"cluster\") or \"admin\"), []).append(c)\n    order = list(_CLUSTER_ORDER) + sorted(k for k in by_cluster if k not in _CLUSTER_ORDER)\n    lines, n = [], 0\n    for cluster in order:\n        rows = by_cluster.get(cluster)\n        if not rows:\n            continue\n        lines.append(cluster.capitalize())\n        for card in rows:\n            n += 1\n            lines.append(f\"{n}. {card.get('title')}\")\n        lines.append(\"\")\n    while lines and lines[-1] == \"\":\n        lines.pop()\n    return lines, n\n```\n\nZero cards renders as **\"Nothing waiting this morning.\"** — never an empty\nlist or a skipped send. A day with cards ends with the reply-triage\nlegend: `Reply with a number and today / bot / later — e.g. \"2 bot\" hands\nit to me.`\n\nThe ONE model call composes only the greeting line above the numbered\nboard — system prompt:\n\n```\nYou write ONE short, warm morning-greeting sentence introducing a\nperson's task board for the day. You will be given the person's first\nname (may be empty), today's local date, and a one-line summary of what\nis on the board. Return ONLY that one sentence — no markdown, no quotes,\nno signature, no board contents (those are appended separately). Use the\nname once if it is non-empty. Do not invent anything not in the summary.\n```\n\nCall pattern is the same `urllib`-only, no-SDK call the Morning Briefing\napp uses (`internal/spec-gallery-delivery-convention-2026-06-11.md`'s\ncanonical helper covers delivery; this is the same style applied to a\nsingle Messages API call): `POST https://api.anthropic.com/v1/messages`,\n`model: claude-haiku-4-5`, `max_tokens: 120`. If the call raises, times\nout, or returns a markdown-fenced response, the run falls straight\nthrough to the deterministic template greeting (`\"Good morning\" [, name]\n+ \".\"`) — never crashes, never blocks delivery.\n\n**Cost recording (build item 4).** Because this is a raw API call outside\nthe turn/annotation cost pipeline (it is not an OpenClaw agent turn), the\nrun records its own usage: `input_tokens`, `output_tokens`, and a\n`cost_usd` estimate from a small embedded per-model rate table (USD per 1M\ntokens): `claude-haiku-4-5: (1.00, 5.00)`, `claude-sonnet-5: (2.00,\n10.00)`. This lands in the run file below — the weekly receipt (D-PA2′)\nsums `memory/board-runs/*.json`'s `cost_usd` for \"your morning board cost\n$X this week\" with no new plumbing.\n\n---\n\n## Delivery (D-BI6d: composed once, delivered twice)\n\n1. `openclaw message send` — the standard convention\n   (`spec-gallery-delivery-convention-2026-06-11.md`): resolve the route\n   from the canonical shared `network.json`\n   (`/Users/Shared/evolve/network.json`, `_NETWORK_JSON` — NOT a bot-home\n   or workspace guess) `bots.<id>.primary_user.external_ids`, deliver via\n   the CLI,\n   `True` only on an accepted send. `False` (no route) skips gracefully\n   with `DELIVERY_SKIPPED:` and writes no run file — never a silent no-op\n   dressed as success.\n2. Only after the chat send is accepted: `POST /api/board-bot/briefing\n   {text}` with the EXACT same composed text, so the board page's\n   collapsible panel (`GET /board/<bot_id>/briefing`) shows the identical\n   composition. This is best-effort — a failure here logs a warning but\n   never turns an accepted chat delivery into a failed run; the chat\n   message is the load-bearing evidence the delivery monitor reads.\n\n## Idempotency + the run file\n\nOne run per day, enforced by `memory/board-runs/{date}.json`'s existence —\n`run --force` is required to re-send. The run file is written ONLY after\n`openclaw message send` accepts the delivery:\n\n```json\n{\n  \"date\": \"2026-09-14\",\n  \"sent_at\": \"2026-09-14T14:00:03Z\",\n  \"cards_shown\": 3,\n  \"cards_stocked\": {\"calendar\": 2, \"email\": 0},\n  \"sources_available\": {\"calendar\": true, \"email\": false},\n  \"sources_enabled\": {\"calendar\": true, \"email\": false},\n  \"composer\": \"llm\",\n  \"model\": \"claude-haiku-4-5\",\n  \"input_tokens\": 140,\n  \"output_tokens\": 18,\n  \"cost_usd\": 0.00023,\n  \"message\": \"Good morning.\\n\\nHealth\\n1. Dentist checkup\\n\\nWork\\n2. Client call\\n3. Review PR from Sam\\n\\nReply with a number and today / bot / later — e.g. \\\"2 bot\\\" hands it to me.\\n\"\n}\n```\n\n**Load-bearing contract, do not change:** the run file is the delivery\nmonitor's `evidence.delivered` for this app's `scheduled_actions[0]` —\nwritten ONLY after an accepted `openclaw message send`, never before,\nnever on a skip or a failure.\n\n---\n\n## Reply triage (guardrail — no new code here)\n\n`packages/plugin/src/tools/BoardTool.ts` (D-MB4, shipped in\n`board-tool-chat-parity-and-enrichment`, PR #4191) already implements\n`board.list` / `board.add` / `board.move` / `board.assign` /\n`board.progress` as thin daemon calls. This app does not add a chat tool —\nit only relies on the bot's existing guidance to route a numbered reply\ncorrectly: a reply naming a card number and `today` or `later` is a\n`board.move` to that lane; a reply naming a card number and `bot` is a\n`board.assign {owner: \"bot\"}` (D-BI7 — there is no \"bot\" lane to move\ninto). State this mapping in the bot's own guidance/system-prompt\nmaterial (`AGENTS.md`/`SOUL.md` or the app's own `usage.how_to_use`,\nalready carried below) — never invent a second tool for it.\n\n---\n\n## Install-time migration (D-MB6)\n\nRetiring the WoZ-1 hand-planted prototype is an **operator-run recipe**,\nnot a hidden hook — the same shape `board_store.py`'s `import-tasks`\ncommand already used, extended with a `migrate` subcommand\n(`packages/admin/evolve_admin/board_store.py`):\n\n```\npython3 -m evolve_admin.board_store migrate \\\n    --bot <bot_id> \\\n    --tasks-file /Users/<bot_id>/.openclaw/workspace/memory/tasks.md \\\n    --events-file /Users/<bot_id>/.openclaw/workspace/state/board-events.jsonl\n```\n\nThis imports every open row of the hand-planted `tasks.md` into the real\nstore (idempotent by title — `import_tasks_into_board`, unchanged), then\nfolds the hand-planted `state/board-events.jsonl`'s settle decisions (if\nthat file exists) onto the imported cards (`import_legacy_board_events` —\nbest-effort JSONL, `{\"title\": ..., \"lane\": \"done\"|\"dropped\"}` or\n`{\"title\": ..., \"done\": true}` / `{\"title\": ..., \"dropped\": true}` rows;\nanything else is skipped, never raised; idempotent — re-running settles\nnothing a second time), then disables the hand-planted cron\n(`launchctl bootout system/<label>`, default label\n`ai.evolve.<bot_id>.morning-board` — the SAME label this app's own\n`scheduled_actions[0]` installs under, so migrate-then-install lays the\nnew managed plist down cleanly where the hand-planted one used to run).\nEvery step prints its own outcome line — \"says so in the install log\" is\nthis command's stdout, which the operator captures however they capture\ninstall output. `--skip-cron-disable` leaves the hand-planted cron running\nfor a dry run; `--legacy-cron-label` overrides the default when the\nprototype used a different label.\n\nThe board store OUTLIVES this app: uninstalling Morning Board does not\ndelete `{shared_dir}/boards/<bot_id>/`.\n\n---\n\n## Test sequence\n\n1. `python3 scripts/morning_board.py status` with no run file yet →\n   \"No board sent today yet.\" (exit 0).\n2. `python3 scripts/morning_board.py preview` against a fixture board (no\n   admin daemon reachable) → `BOARD_PREVIEW_FAILED:` to stderr, exit 1\n   (there is nothing to preview without the store).\n3. Against a running daemon with a stocked, empty board → preview prints\n   the day-one \"Nothing waiting this morning.\" message, honestly.\n4. `run` twice in the same day → the second call prints `BOARD_SKIPPED:`\n   and does not re-send or rewrite the run file.\n5. `run --force` → re-sends and overwrites today's run file.\n6. Cluster grouping + numbering match the fixture board exactly, including\n   custom-cluster ordering after the canonical nine.\n\nLaunchDaemon plist path: `/Library/LaunchDaemons/ai.evolve.{bot_id}.morning-board.plist`.\n",
+  "example_triggers": [
+    "Preview today's morning board",
+    "Did the board send this morning?",
+    "What's on my board today?",
+    "Show me this morning's board message",
+    "Force-send today's board again"
+  ],
+  "test_cases": [
+    {
+      "trigger": "Preview today's board",
+      "expected": "Call scripts/morning_board.py preview, return the composed message read live from the store — the honest 'Nothing waiting this morning.' line when no cards are open."
+    },
+    {
+      "trigger": "Did the board send this morning?",
+      "expected": "Call scripts/morning_board.py status, return the one-line summary from memory/board-runs/{today}.json, or 'No board sent today yet.' if no run file exists."
+    },
+    {
+      "trigger": "Force-send today's board again",
+      "expected": "Call scripts/morning_board.py run --force, which overwrites today's run file and re-delivers; confirm BOARD_SENT:."
+    }
+  ],
+  "constraints": {
+    "safety": [
+      "No direct Google/email API calls — calendar and email data is read from sibling apps' cache files only",
+      "Never writes the board store directly — every card read/write goes through the admin daemon's /api/board-bot/... over its unix socket (D-MB1)",
+      "Email-derived cards are marked source: email and never auto-execute an action",
+      "LLM composer is haiku-tier, capped at ONE call per run, with a deterministic template fallback so the board always ships",
+      "Single delivery surface — the bot's own messaging channel via `openclaw message send`",
+      "Idempotent: one run file per day; --force is required to re-send"
+    ],
+    "dependencies": [
+      "Calendar Sync (p-fe9acef3, required) — produces memory/calendar-today.json",
+      "Email Integration (p-341576fa, optional) — produces memory/email-digest.json; consulted only when granted",
+      "The admin daemon's Board store + bot-facing API (board_bot_routes.py) — reachable over {shared_dir}/admin-daemon.sock",
+      "openclaw CLI + a configured messaging channel",
+      "Anthropic API key from the bot's existing credentials (optional) — falls back to the template composer when absent"
+    ],
+    "boundaries": [
+      "One board message per day — idempotency enforced by memory/board-runs/{date}.json",
+      "Does not implement board.move/board.assign — that is BoardTool.ts, already shipped",
+      "Does not delete the board store on uninstall — the board outlives the app"
+    ]
+  },
+  "application_tags": [
+    "personal-productivity",
+    "morning-routine",
+    "task-management",
+    "board",
+    "daily-brief-suite",
+    "calendar",
+    "productivity",
+    "delegation",
+    "email"
+  ],
+  "scheduled_actions": [
+    {
+      "id": "morning-board",
+      "mechanism": "launchd",
+      "trigger": {
+        "kind": "launchd",
+        "schedule": "07:00 daily"
+      },
+      "install": {
+        "plist_label": "ai.evolve.${bot_id}.morning-board",
+        "command": "/bin/bash ${workspace}/scripts/morning-board-cron.sh",
+        "cwd": "${workspace}",
+        "schedule": {
+          "cron": {
+            "Hour": 7,
+            "Minute": 0
+          }
+        },
+        "exec_policy": "inherit"
+      },
+      "outputs": [
+        {
+          "kind": "session_message",
+          "channel": "primary"
+        }
+      ],
+      "delivery_contract": {
+        "user_facing": true,
+        "window_minutes": 30,
+        "evidence": {
+          "ran": {
+            "kind": "scheduler_state"
+          },
+          "delivered": {
+            "kind": "run_file",
+            "path": "memory/board-runs/{date}.json"
+          }
+        },
+        "heal": "rerun"
+      },
+      "summary": "Daily morning board — edit install.schedule.cron to change the time. Stocks from Calendar Sync (and, if granted, Email Integration), composes one numbered message, delivers via the bot's channel AND the board page's briefing panel. heal:rerun is safe: the run file enforces one delivery per day, so a forced re-run after a successful send is a no-op."
+    }
+  ],
+  "usage": {
+    "model": "scheduled",
+    "trigger_recognition": {
+      "pattern": "Morning Board fires once daily at 7am. If the user asks for a preview off-cycle, use `preview`; if they want to know whether it ran, use `status`. A reply that names a card NUMBER and today/later is a board.move to that lane; a reply naming a number and 'bot' is a board.assign(owner=bot) — use the existing board tool, never a new one.",
+      "hint_words": [
+        "morning board",
+        "today's board",
+        "my board",
+        "what's on my board",
+        "did the board run"
+      ],
+      "requires_keyword": false
+    },
+    "auto_capture": {
+      "enabled": false,
+      "sources": []
+    },
+    "how_to_use": "Background launchd fires `run` at 7am. For an off-cycle preview without stocking or sending, use `preview`. Use `status` to confirm the scheduled run delivered. A numeric reply to the morning message is board triage: '<n> today' or '<n> later' moves that card; '<n> bot' hands it to the bot.",
+    "bot_voice_examples": [
+      "Board already sent at 7:02am — 3 items, 1 in health, 2 in work.",
+      "Nothing waiting this morning — board's clear.",
+      "Board won't include email cards this morning — email stocking isn't granted yet."
+    ]
+  },
+  "verification": [
+    {
+      "kind": "artifact",
+      "name": "main_script_compiles",
+      "path": "scripts/morning_board.py",
+      "checks": [
+        "exists",
+        "py_compiles"
+      ]
+    },
+    {
+      "kind": "artifact",
+      "name": "cron_wrapper",
+      "path": "scripts/morning-board-cron.sh",
+      "checks": [
+        "exists",
+        "owner_exec"
+      ]
+    },
+    {
+      "kind": "command",
+      "name": "cli_status",
+      "argv": [
+        "python3",
+        "scripts/morning_board.py",
+        "status"
+      ],
+      "expected_exit": 0,
+      "timeout_s": 30
+    },
+    {
+      "kind": "artifact",
+      "name": "config_valid_if_present",
+      "path": "morning_board/config.json",
+      "checks": [
+        "json_valid"
+      ]
+    },
+    {
+      "kind": "artifact",
+      "name": "run_log_valid_if_present",
+      "path": "memory/board-runs/*.json",
+      "checks": [
+        "json_valid"
+      ],
+      "modes": [
+        "dry-run"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "_comment": "AXIS: whether the checkpoint ever evaluated a run, and nothing else. Same bot, same threshold, same 14 runs that recorded spend, 9 of them with more than one model call (so a tool call sat between calls). The gate evaluated 9 runs: armed and live. Replayed by packages/admin/tests/test_in_turn_checkpoint_health.py::test_known_good_fixture_passes.",
+  "_axis": "evaluated_runs",
+  "bot_id": "team_bot_a",
+  "status": {"armed": true, "threshold_usd": 5, "price_source": "catalog", "spend_runs": 14, "multi_call_runs": 9, "evaluated_runs": 9, "unknown_evaluations": 0, "trips": 1, "zero_cost_calls": 0},
+  "expect": {"status": "PASS", "category": "in_turn_checkpoint", "detail_contains": "$5.00 of recorded spend (catalog-priced)"}
+}

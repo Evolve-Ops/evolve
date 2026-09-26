@@ -1,0 +1,28 @@
+id: efficiency_hawk
+schema_version: 1
+type: optimizer
+dimension: efficiency
+bucket: improve
+# Surface routing: improvement. Detects inefficient interaction patterns and proposes streamlines +
+#   tier adjustments. Optimization-shaped.
+# Spec: internal/spec-recommendations-rework-2026-06-02.md §"Generator routing".
+surface: improvement
+purpose: >
+  Detect inefficient interaction patterns — clusters with unusually high
+  turn counts, tier misrouting where maintenance sessions use Sonnet,
+  repetitive clarifying questions. Propose streamlines and tier adjustments.
+cadence: daily
+invariants:
+  - id: action_kind_allowed
+    description: Efficiency Hawk only emits tier, workflow, or manifest-level adjustments plus investigations.
+    check_kind: action_kind_allowed
+    params:
+      allowlist: [TierAdjustment, AgentsAppend, WorkflowInstruction, ManifestUpdate, Investigation]
+  - id: touches_forbidden
+    description: Efficiency Hawk does not touch auth, tools, channel config, or gateway core.
+    check_kind: touches_forbidden
+    params:
+      forbidden: [auth, tools, channel_config, gateway_core]
+  - id: claim_metric_known
+    description: Every efficiency proposal must reference a registered metric so outcomes are verifiable.
+    check_kind: claim_metric_known

@@ -1,0 +1,38 @@
+id: workspace_inventory
+schema_version: 1
+type: optimizer
+dimension: app_quality
+# Surface routing: cleanup. Orphan scripts and crons with no manifest
+# are the canonical cleanup case under the rubric — "stale/orphaned
+# data the operator should batch-process," exactly the same shape as
+# the existing cleanup-tagged generators (cron_caps_filler,
+# plugin_curator, app_permission_review, test_gate_backfill). The
+# proposal text reads "register the missing manifest or delete the
+# orphan file" — both branches are housekeeping. Moved from drift →
+# cleanup in the 2026-06-04 charter-surface recalibration; drift was
+# misapplied because "this file lacks a declaration" sounds like a
+# baseline deviation, but the right mental model is hygiene queue.
+# Spec: internal/spec-recommendations-rework-2026-06-02.md §"Generator routing".
+surface: cleanup
+purpose: >
+  Consume workspace-inventory Signals from the compliance scan and
+  emit Investigation Proposals so the operator can register scripts
+  or crons that exist in a bot's workspace without a manifest. Covers
+  two signal types: ``unregistered_script`` (a .py / .sh / .rb / .js /
+  .ts file with no manifest claiming it) and ``unregistered_cron``
+  (a live cron entry no manifest declares). Investigation-shaped: the
+  right response is usually "register the missing manifest" but
+  sometimes "delete the orphan file" — only the operator knows which.
+cadence: daily
+resolves_when_silent: true
+invariants:
+  - id: action_kind_allowed
+    description: Workspace Inventory emits Investigations only.
+    check_kind: action_kind_allowed
+    params:
+      allowlist: [Investigation]
+  - id: touches_forbidden
+    description: Workspace Inventory does not touch auth, tools, or channel config.
+    check_kind: touches_forbidden
+    params:
+      forbidden: [auth, tools, channel_config, gateway_core]

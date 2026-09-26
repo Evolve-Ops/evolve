@@ -1,0 +1,6 @@
+# control-coverage-baseline — frozen `wc -l` ceiling for
+# control-coverage-quarantine.txt (D-CS7). The ratchet
+# (tools/control-coverage-ratchet) blocks any growth past this number,
+# so it may only ratchet DOWN — a control leaving quarantine (fixtures
+# added) should be followed by --update-baseline in the same PR.
+59

@@ -1,0 +1,16 @@
+{
+  "_comment": "Atlas operator + approved-groups config. Install at workspace/atlas/operator.json. Without this, all DMs are treated as 'stranger' (silent ignore) and ALL group messages are treated as 'foreign_group' (silent ignore). Required for atlas to function at all.",
+
+  "operator_telegram_user_id": 0,
+  "_operator_help": "Your numeric Telegram user_id. Resolve by DMing @userinfobot or @getidsbot, or check via getUpdates after you DM atlas once.",
+
+  "approved_group_chat_ids": [],
+  "_approved_groups_help": "List of Telegram group chat_ids where atlas is allowed to operate. Supergroups are negative numbers like -1001234567890. Atlas refuses to act in any group not on this list, and uses group membership to gate DM access.",
+
+  "_security_notes": [
+    "Operator gets full access (research + admin commands) in both DMs and groups.",
+    "Group members get research access in groups + DMs (verified via Telegram's getChatMember API).",
+    "Strangers (non-members in DM) are silently ignored.",
+    "Membership checks are cached for 5 minutes to limit Telegram API calls."
+  ]
+}

@@ -1,0 +1,53 @@
+id: app_permission_drift
+schema_version: 1
+type: guardian
+dimension: safety
+bucket: improve
+# Surface routing: drift. Permission-config drift is the canonical slow-drift class — the
+#   operator should review the diff, but no fire is burning.
+# Spec: internal/spec-recommendations-rework-2026-06-02.md §"Generator routing".
+surface: drift
+purpose: >
+  Consume app_permission_drift Signals from app_manifest_monitor and
+  emit per-finding proposals: UpdateExecApproval (add/revoke) for
+  exec-approvals reconciliation, Investigation for workspace orphans
+  and stale manifest declarations.
+
+  Mirrors the auth_drift_filler shape but inverts intent — pushes toward
+  correctness as declared by app manifests, not toward a security
+  baseline. See internal/spec-app-derived-permissions-2026-05-24.md §4 and
+  the implementation sub-spec at
+  internal/spec-app-permission-drift-2026-05-25.md.
+
+  Per-finding proposals (one Signal → one Proposal) so the operator can
+  selectively accept fixes. Severity is mode-aware:
+  declared-not-allowed is critical when the bot is in allowlist mode
+  (the script literally cannot run), info in full mode (preview/seed
+  for future hardening). Allowed-not-declared fires only in allowlist
+  mode (irrelevant in full/deny). Workspace-orphan and missing-file
+  fire in any mode at info severity.
+cadence: daily
+resolves_when_silent: true
+invariants:
+  - id: action_kind_allowed
+    description: >
+      Emits typed UpdateExecApproval (exec-approvals mutation) and
+      Investigation (operator-driven) only. No raw ConfigPatch — the
+      apply path for exec-approvals must route through
+      UpdateExecApprovalApplier (which handles the /tmp + sudo write
+      + gateway kickstart). Never UpsertCronJob, never
+      UpdatePermissionConfig — those have their own filler generators.
+    check_kind: action_kind_allowed
+    params:
+      allowlist: [UpdateExecApproval, Investigation]
+  - id: touches_forbidden
+    description: >
+      Filler only touches exec-approvals.json (via UpdateExecApproval)
+      and emits Investigations. Never reaches openclaw.json fields,
+      plugin config, channel config, cron, gateway core, or manifest
+      files directly. Investigations target the manifest's permissions
+      block conceptually but B.1 doesn't auto-apply them — that's B.2's
+      job.
+    check_kind: touches_forbidden
+    params:
+      forbidden: [plugins, channel_config, gateway_core, cron_config, manifest]

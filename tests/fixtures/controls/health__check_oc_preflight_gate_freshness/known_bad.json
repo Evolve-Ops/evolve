@@ -1,0 +1,12 @@
+{
+  "_comment": "AXIS: the same field, set to absent — no per-bot preflight has ever been run for the installed version. This is hold-fix-4392's reason to exist alongside the freshness/bot-set checks: a missing cache entry must WARN, not silently pass. Replayed by packages/admin/tests/test_oc_runtime_controls.py::test_preflight_gate_known_bad_warns.",
+  "_axis": "cached_entry",
+  "installed_version": "2026.9.2",
+  "network": {"bots": {"team-bot-a": {}}},
+  "cached_entry": null,
+  "expect": {
+    "status": "WARN",
+    "name": "oc_preflight_gate_fresh",
+    "message_contains": "No per-bot OpenClaw preflight has been run"
+  }
+}

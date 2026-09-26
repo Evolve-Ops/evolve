@@ -1,0 +1,8 @@
+{
+  "_comment": "AXIS: the list channel_packages_stale() returns, and nothing else. Same installed runtime, same bot. Empty list = every per-bot @openclaw/* package is on the installed release line. Replayed by packages/admin/tests/test_oc_runtime_controls.py::test_channel_packages_known_good_passes.",
+  "_axis": "stale_packages",
+  "members": ["botalpha"],
+  "installed_version": "2026.9.2",
+  "stale_packages": [],
+  "expect": {"status": "PASS", "name": "botalpha:channel_packages"}
+}

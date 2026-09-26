@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "chrome-capability",
+  "description": "Grants IPC + core permissions ONLY to the local 'chrome' webview (the tab bar / settings / error surfaces). This is the entire native-API surface of the app. The remote pod webviews (labels 'pod-*') are intentionally listed in NO capability and NO remote URL appears anywhere, so the Tauri ACL denies every command invocation originating from a pod page. `local: true` further restricts this grant to local (tauri://) content, so even the chrome webview would lose access if it were ever navigated to a remote origin.",
+  "local": true,
+  "webviews": ["chrome"],
+  "permissions": ["core:default"]
+}

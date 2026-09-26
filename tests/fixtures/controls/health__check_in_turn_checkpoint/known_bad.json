@@ -1,0 +1,7 @@
+{
+  "_comment": "AXIS: the same record with evaluated_runs at zero. Nine runs recorded spend across several model calls — each one had a tool call between its calls — and the checkpoint never evaluated any of them. That is armed-but-not-live: the $65.98 turn would run straight through it. The control reads it as WARN unknown, never a silent PASS. Replayed by packages/admin/tests/test_in_turn_checkpoint_health.py::test_known_bad_fixture_warns_unknown.",
+  "_axis": "evaluated_runs",
+  "bot_id": "team_bot_a",
+  "status": {"armed": true, "threshold_usd": 5, "price_source": "catalog", "spend_runs": 14, "multi_call_runs": 9, "evaluated_runs": 0, "unknown_evaluations": 0, "trips": 1, "zero_cost_calls": 0},
+  "expect": {"status": "WARN", "category": "in_turn_checkpoint", "detail_contains": "armed but not live"}
+}
