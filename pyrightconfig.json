@@ -1,0 +1,28 @@
+{
+    "include": [
+        "packages/admin/evolve_admin",
+        "packages/analyzer"
+    ],
+    "exclude": [
+        "**/tests/**",
+        "**/test_*.py",
+        "**/conftest.py",
+        "**/__pycache__",
+        "packages/analyzer/evolve_apps",
+        "packages/analyzer/evolve_bot"
+    ],
+    "executionEnvironments": [
+        {
+            "root": "packages/admin",
+            "extraPaths": ["packages/analyzer"]
+        },
+        {
+            "root": "packages/analyzer",
+            "extraPaths": ["packages/analyzer"]
+        }
+    ],
+    "typeCheckingMode": "basic",
+    "pythonVersion": "3.9",
+    "reportMissingImports": "error",
+    "reportMissingModuleSource": "none"
+}

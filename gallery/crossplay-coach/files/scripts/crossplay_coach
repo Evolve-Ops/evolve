@@ -1,0 +1,3 @@
+#!/bin/sh
+# Stable direct-entry wrapper for OpenClaw's guarded exec surface.
+exec python3 "$(dirname "$0")/crossplay_coach.py" "$@"

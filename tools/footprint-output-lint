@@ -1,0 +1,549 @@
+#!/usr/bin/env python3
+"""footprint-output-lint — forbid undeclared auto-generated disk output.
+
+Spec: internal/spec-footprint-2026-06-18.md (§ "Auto-generated output declaration
+contract"). Motivating audit: internal/footprint-disk-output-audit-2026-06-28.md.
+
+Evolve writes to two **auto-generated surfaces**:
+
+  (A) ``{shared_dir}/**``                  — the pod-wide arbiter/signals/watchdog
+                                             /incidents/alerts store
+  (B) ``~/.openclaw/workspace/evolve/**``  — per-bot workspace telemetry
+
+The 2026-06-28 audit found 537 MB of audit records under those surfaces that
+nothing reads and nothing prunes, because no mechanism required a producer to
+declare a consumer or a retention policy. This lint closes that gap: every file
+that writes to an auto-generated surface must be claimed by an
+:class:`~footprint.components.OutputDeclaration` in
+``packages/analyzer/footprint/components.py`` carrying BOTH a retention policy
+AND a named consumer (or a justified ``consumer: none`` + finite retention).
+
+What it checks
+--------------
+1. **Registry consistency (BLOCK).** ``footprint.components.consistency_errors()``
+   — a declared ``consumer: none`` with no retention is forbidden, retention is
+   mandatory, unbounded windows need a justification, etc.
+2. **File coverage (BLOCK).** Statically finds every *high-confidence* surface
+   write-site (a write whose target path is rooted in — or tainted from — a
+   recognized auto-gen-surface token) and asserts the writing file is claimed by
+   some declaration's ``writer``. A NEW surface write in an unclaimed file →
+   FAIL, pointing at the registry.
+3. **Heuristic-ambiguous coverage (WARN; BLOCK under --strict).** A file that
+   demonstrably touches a surface (references a surface-root token) and writes a
+   file via an *un-traceable* path (a bare parameter / attribute) is warned —
+   the write *might* target the surface. Warning-only by default (the heuristic
+   can misfire); ``--strict`` (CI) promotes it.
+
+Scope — record/telemetry output, not bounded state
+---------------------------------------------------
+The contract governs *auto-generated, accumulating* output — the per-record
+files, append-only JSONL logs, and dated archive dirs that turn into sediment
+(the audit's 537 MB). It deliberately does NOT police every write under
+``{shared_dir}/**``: the tree also holds bounded **state stores** (breaker
+state, autonomy limits, config-sandbox overrides, user directories, baselines)
+that are overwritten in place, not accumulated, and are out of scope here. The
+discriminator is **record-shape**: a write is in scope when its target path is a
+``.jsonl`` file, lands in a catalogued record subdir
+(``signals/`` / ``proposals/`` / ``watchdog/`` / ``observations/`` /
+``incidents`` / ``alerts/`` / ``audit_outbox`` / …), or is built by a known
+record-path helper. A brand-new ``.json`` record store under a *new* subdir can
+still slip past static detection — the runtime cardinality-budget monitor
+(F-5-F4b) is the reactive backstop for that residual.
+
+Detection model
+---------------
+AST-based, intra-function taint-lite. A local name is "tainted" once assigned
+from an expression that mentions a surface-root token (``shared_dir``,
+``signals_root(...)``, ``audit_outbox``, a ``"workspace/evolve"`` literal, …). A
+write-mechanism call (``Path.write_text/write_bytes``, ``open(...,'w'|'a'|'x')``,
+``Path.open(...,'w'|'a')``, ``atomic_write_json/_text``, ``os.replace/rename``,
+``shutil.move/copy``, a ``sudo cp|mv`` subprocess) whose target-path expression
+contains a root token or a tainted name is a surface write. It is HIGH confidence
+(BLOCK) when the evidence is also **record-shaped**; a record-context write whose
+path is too opaque to confirm record-shape is AMBIGUOUS (WARN / --strict BLOCK).
+Non-record-shaped state writes are out of scope and silent.
+
+Usage
+-----
+  tools/footprint-output-lint <file.py> [...]   # lint specific files
+  tools/footprint-output-lint --all             # lint all production .py
+  tools/footprint-output-lint --staged          # lint git-staged .py
+  tools/footprint-output-lint --all --strict    # ambiguous sites BLOCK (CI)
+  tools/footprint-output-lint --list            # dump the declared outputs
+
+Exit status: 0 clean; 1 a violation (or, under --strict, an ambiguous miss);
+2 usage error.
+"""
+from __future__ import annotations
+
+import argparse
+import ast
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# Make the analyzer package importable so we can read the declaration registry.
+_ANALYZER = REPO_ROOT / "packages" / "analyzer"
+if str(_ANALYZER) not in sys.path:
+    sys.path.insert(0, str(_ANALYZER))
+
+from footprint import components as reg  # noqa: E402
+
+_LINT_ROOTS = ("packages",)
+_EXEMPT_PARTS = {"tests", "testing", "__pycache__", "tools", "scripts", "migrations"}
+
+# Files that legitimately reference surface roots but are not producers:
+#   - components.py IS the registry (every declaration mentions a surface root).
+#   - retention.py / observations retention PRUNE the surfaces (unlink/rmtree),
+#     they do not produce sediment; their writes are log-rolls of their own
+#     making, not new auto-gen output.
+_ALLOWLIST = {
+    "packages/analyzer/footprint/components.py",
+}
+
+# ── Surface-root tokens ──────────────────────────────────────────────────────
+# A Name.id / Attribute.attr is "rooty" if it is one of these helpers or contains
+# one of the substrings; a str Constant is rooty if it contains a path fragment.
+# Tuned against the live write sites (signals/proposals/watchdog/observations/
+# profiles/calibration/audit pipeline/incidents/alerts/manifests/admin queues).
+_ROOT_HELPERS = frozenset({
+    "signals_root", "signal_path", "state_change_log_path", "feedback_log_path",
+    "proposals_root", "proposal_path",
+    "profile_path", "_daily_path",
+    "incidents_dir", "recovery_dir", "pause_log_path",
+    "bot_home", "_acct_home", "_audit_outbox_dir", "_audit_outbox_ingested",
+    "infra_audit_outbox_dir", "_resolve_log_path",
+})
+_ROOT_SUBSTRS = (
+    "shared_dir", "shareddir", "audit_outbox", "audit_inbox", "infra_audit",
+)
+_SURFACE_FRAGMENTS = (
+    "workspace/evolve", "workspace/manifests", ".openclaw/workspace",
+    "audit_outbox", "audit_inbox",
+)
+
+# ── Record-shape tokens ──────────────────────────────────────────────────────
+# A surface write is IN SCOPE (record/telemetry that accumulates) — vs a bounded
+# state store that is overwritten in place — when its path evidence is built by a
+# record-path helper, lands in a catalogued record subdir, or is a ``.jsonl``.
+_RECORD_HELPERS = frozenset({
+    "signals_root", "signal_path", "state_change_log_path", "feedback_log_path",
+    "proposals_root", "proposal_path", "_daily_path", "profile_path",
+    "incidents_dir", "recovery_dir", "pause_log_path", "_resolve_log_path",
+    "_audit_outbox_dir", "_audit_outbox_ingested", "infra_audit_outbox_dir",
+})
+# Exact path COMPONENTS (split on '/') that are unambiguously accumulating
+# record/telemetry dirs — never a bounded state store. Matched against bare
+# components so ``shared_dir / "signals" / ...`` is caught, not only the
+# helper-built ``signals_root(...)`` form.
+_RECORD_SUBDIR_NAMES = frozenset({
+    "signals", "proposals", "watchdog", "observations", "incidents",
+    "audit_outbox", "audit_inbox", "infra_audit_outbox", "infra_audit_inbox",
+    "candidates", "synthesis_log",
+})
+# Substring fragments for dual-use trees (which also hold bounded state) and
+# helper-built paths — kept specific (slash-anchored) so they don't re-flag the
+# state stores that share a parent dir.
+_RECORD_SUBDIR_FRAGMENTS = (
+    "profiles/", "calibration/", "/alerts/", "alerts/dispatcher",
+    "/audits/", "investigations", "anthropic_api", "audit_logs",
+    "recovery/", "repo-puller", "manifests/", "digest-pending",
+    "rosters/log", "directory/log", "feedback/", "recommendations",
+)
+
+# write-mechanism function names whose FIRST positional arg is the target path.
+_WRITE_FUNCS_ARG0 = frozenset({
+    "open", "atomic_write_json", "atomic_write_text",
+    "_atomic_write_json", "_atomic_write_text", "_atomic_write",
+})
+# write-mechanism method names called on a Path-like (path is the .value).
+_WRITE_METHODS_ON_PATH = frozenset({"write_text", "write_bytes"})
+# os.replace/os.rename/shutil.move/copy* — target path is the LAST positional.
+_WRITE_FUNCS_ARGLAST = frozenset({"replace", "rename", "move", "copy", "copy2", "copyfile"})
+# subprocess command tokens that copy/move INTO a destination path.
+_SUDO_COPY_TOKENS = frozenset({"cp", "mv", "/bin/cp", "/bin/mv"})
+# write modes that mean "this opens for writing/appending".
+_WRITE_MODE_CHARS = ("w", "a", "x")
+
+
+def _rel(p: Path) -> str:
+    try:
+        return str(p.resolve().relative_to(REPO_ROOT))
+    except ValueError:
+        return str(p)
+
+
+def _name_is_rooty(ident: str) -> bool:
+    low = ident.lower()
+    if ident in _ROOT_HELPERS or low in _ROOT_HELPERS:
+        return True
+    return any(s in low for s in _ROOT_SUBSTRS)
+
+
+def _expr_mentions_root(node: ast.AST | None) -> bool:
+    """True if the expression subtree references a surface-root token."""
+    if node is None:
+        return False
+    for n in ast.walk(node):
+        if isinstance(n, ast.Name) and _name_is_rooty(n.id):
+            return True
+        if isinstance(n, ast.Attribute) and _name_is_rooty(n.attr):
+            return True
+        if isinstance(n, ast.Constant) and isinstance(n.value, str):
+            v = n.value.lower()
+            if any(frag in v for frag in _SURFACE_FRAGMENTS):
+                return True
+    return False
+
+
+def _expr_is_record_shaped(node: ast.AST | None) -> bool:
+    """True if the expression references a record-path helper / subdir / .jsonl.
+
+    This is the discriminator between accumulating telemetry (in scope) and a
+    bounded state store (out of scope).
+    """
+    if node is None:
+        return False
+    for n in ast.walk(node):
+        if isinstance(n, ast.Name) and n.id in _RECORD_HELPERS:
+            return True
+        if isinstance(n, ast.Attribute) and n.attr in _RECORD_HELPERS:
+            return True
+        if isinstance(n, ast.Constant) and isinstance(n.value, str):
+            v = n.value.lower()
+            if ".jsonl" in v:
+                return True
+            if any(frag in v for frag in _RECORD_SUBDIR_FRAGMENTS):
+                return True
+            # bare path-component match (handles ``shared_dir / "signals"``)
+            if any(part in _RECORD_SUBDIR_NAMES for part in v.split("/")):
+                return True
+    return False
+
+
+def _names_in(node: ast.AST | None) -> set[str]:
+    out: set[str] = set()
+    if node is None:
+        return out
+    for n in ast.walk(node):
+        if isinstance(n, ast.Name):
+            out.add(n.id)
+    return out
+
+
+def _open_mode(call: ast.Call) -> str | None:
+    """The string mode of an open()/Path.open() call (None if not a literal)."""
+    mode = None
+    if len(call.args) >= 2 and isinstance(call.args[1], ast.Constant):
+        mode = call.args[1].value
+    for kw in call.keywords:
+        if kw.arg == "mode" and isinstance(kw.value, ast.Constant):
+            mode = kw.value.value
+    return mode if isinstance(mode, str) else None
+
+
+def _mode_is_write(call: ast.Call) -> bool:
+    """For an open()/Path.open() call, is the mode a write/append mode?
+
+    Default (no mode arg) is read-only — NOT a write.
+    """
+    mode = _open_mode(call)
+    return bool(mode) and any(ch in mode for ch in _WRITE_MODE_CHARS)
+
+
+def _write_is_append(call: ast.Call) -> bool:
+    """True for an ``open(..., 'a')`` / ``Path.open('a')`` append."""
+    mode = _open_mode(call)
+    return bool(mode) and "a" in mode
+
+
+def _path_arg_of_write(call: ast.Call) -> ast.AST | None | str:
+    """The target-path expression for a write-mechanism call.
+
+    Returns the AST node of the path expression, ``None`` if the call is not a
+    write, or the sentinel ``"SUDO_LIST"`` for a sudo cp/mv subprocess (whose
+    "path" is the whole argument list, scanned wholesale).
+    """
+    func = call.func
+
+    # open(path, mode) / atomic_write_*(path, ...)
+    if isinstance(func, ast.Name) and func.id in _WRITE_FUNCS_ARG0:
+        if func.id == "open" and not _mode_is_write(call):
+            return None
+        return call.args[0] if call.args else None
+
+    if isinstance(func, ast.Attribute):
+        attr = func.attr
+        # Path.write_text / write_bytes — path is func.value
+        if attr in _WRITE_METHODS_ON_PATH:
+            return func.value
+        # Path.open("a"/"w") — path is func.value, but only for write modes
+        if attr == "open":
+            return func.value if _mode_is_write(call) else None
+        # os.replace / os.rename / shutil.move / shutil.copy* — last positional
+        if attr in _WRITE_FUNCS_ARGLAST:
+            return call.args[-1] if call.args else None
+        # bare atomic_write_* attr access (e.g. _util.atomic_write_json)
+        if attr in _WRITE_FUNCS_ARG0:
+            return call.args[0] if call.args else None
+        # subprocess.run([... "cp"/"mv" ..., dest]) / Popen
+        if attr in ("run", "Popen", "call", "check_call", "check_output"):
+            if call.args and isinstance(call.args[0], (ast.List, ast.Tuple)):
+                toks = {
+                    e.value for e in call.args[0].elts
+                    if isinstance(e, ast.Constant) and isinstance(e.value, str)
+                }
+                if toks & _SUDO_COPY_TOKENS:
+                    return "SUDO_LIST"
+    return None
+
+
+class _Visitor(ast.NodeVisitor):
+    """Walk a module, classifying surface write-sites per enclosing function."""
+
+    def __init__(self) -> None:
+        self.high: list[int] = []        # record-shaped surface write linenos (BLOCK)
+        self.append: list[int] = []      # surface append outside a record subdir (WARN)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: N802
+        self._scan_function(node)
+        self.generic_visit(node)
+
+    def visit_AsyncFunctionDef(self, node) -> None:  # noqa: N802
+        self._scan_function(node)
+        self.generic_visit(node)
+
+    def _scan_function(self, fn: ast.AST) -> None:
+        # First pass: collect tainted local names + the RHS node(s) that tainted
+        # them (the "evidence" for record-shape — e.g. ``path = signals_root(sd) /
+        # "log" / f"{day}.jsonl"`` taints ``path`` and the RHS proves it's a log).
+        tainted: dict[str, list[ast.AST]] = {}
+
+        def _maybe_taint(target: ast.AST, value: ast.AST | None) -> None:
+            if isinstance(target, ast.Name) and _expr_mentions_root(value):
+                tainted.setdefault(target.id, []).append(value)
+
+        for n in ast.walk(fn):
+            if isinstance(n, ast.Assign):
+                for t in n.targets:
+                    _maybe_taint(t, n.value)
+            elif isinstance(n, ast.AnnAssign):
+                _maybe_taint(n.target, n.value)
+            elif isinstance(n, ast.NamedExpr):
+                _maybe_taint(n.target, n.value)
+
+        def _evidence(path_expr: ast.AST) -> list[ast.AST]:
+            ev: list[ast.AST] = [path_expr]
+            for name in _names_in(path_expr):
+                ev.extend(tainted.get(name, []))
+            return ev
+
+        # Second pass: classify each write call.
+        for n in ast.walk(fn):
+            if not isinstance(n, ast.Call):
+                continue
+            parg = _path_arg_of_write(n)
+            if parg is None:
+                continue
+            if parg == "SUDO_LIST":
+                lst = n.args[0]
+                if _expr_mentions_root(lst) or (_names_in(lst) & set(tainted)):
+                    if any(_expr_is_record_shaped(e) for e in _evidence(lst)):
+                        self.high.append(n.lineno)
+                continue
+            assert isinstance(parg, ast.AST)
+            is_surface = _expr_mentions_root(parg) or bool(_names_in(parg) & set(tainted))
+            if not is_surface:
+                continue
+            if any(_expr_is_record_shaped(e) for e in _evidence(parg)):
+                self.high.append(n.lineno)
+            elif _write_is_append(n):
+                # A surface APPEND outside a catalogued record subdir: append-only
+                # is the accumulation shape, so an un-catalogued one is a likely
+                # new log the static record-shape check missed. Heuristic → WARN.
+                self.append.append(n.lineno)
+            # else: a non-append surface write that is not record-shaped → a
+            # bounded state store overwritten in place, out of scope. Silent.
+
+
+def scan_file(path: Path) -> tuple[list[int], list[int]]:
+    """Return ``(record_write_linenos, append_warn_linenos)`` for surface writes."""
+    try:
+        src = path.read_text(encoding="utf-8")
+    except OSError:
+        return [], []
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return [], []
+    v = _Visitor()
+    v.visit(tree)
+    high = sorted(set(v.high))
+    ambiguous = sorted(set(v.append) - set(high))
+    return high, ambiguous
+
+
+def _is_exempt(p: Path) -> bool:
+    rel = _rel(p)
+    if rel in _ALLOWLIST:
+        return True
+    return bool(_EXEMPT_PARTS & set(p.parts))
+
+
+def _iter_production_py() -> list[Path]:
+    out: list[Path] = []
+    for root in _LINT_ROOTS:
+        base = REPO_ROOT / root
+        if not base.exists():
+            continue
+        for p in base.rglob("*.py"):
+            if not _is_exempt(p):
+                out.append(p)
+    return out
+
+
+def _staged_files() -> list[Path]:
+    r = subprocess.run(
+        ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+    )
+    out: list[Path] = []
+    for name in r.stdout.splitlines():
+        if not name.endswith(".py"):
+            continue
+        p = REPO_ROOT / name
+        if p.exists() and not _is_exempt(p):
+            out.append(p)
+    return out
+
+
+def stale_declaration_errors() -> list[str]:
+    """Declared ``writer`` files that no longer exist (a refactor left a stale
+    declaration). File-level (not function-level): qualified method names and
+    helper renames make function-existence brittle, but a moved/deleted file is
+    an unambiguous bug the registry must not carry."""
+    errors: list[str] = []
+    for cid, od in reg.iter_outputs():
+        wf = od.writer_file
+        if not wf.endswith(".py"):
+            continue
+        if not (REPO_ROOT / wf).exists():
+            errors.append(f"{cid} [{od.path_glob}]: writer file {wf!r} does not "
+                          f"exist (stale declaration after a refactor?)")
+    return errors
+
+
+def _print_block(rel: str, lines: list[int]) -> None:
+    loc = ", ".join(f"L{n}" for n in lines)
+    print(f"  {rel}: writes an auto-generated surface at {loc}")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description="Forbid undeclared auto-generated disk output under "
+        "{shared_dir}/** and ~/.openclaw/workspace/evolve/**.",
+    )
+    ap.add_argument("files", nargs="*", help="specific files to lint")
+    ap.add_argument("--all", action="store_true", help="lint all production .py")
+    ap.add_argument("--staged", action="store_true", help="lint git-staged .py")
+    ap.add_argument("--strict", action="store_true",
+                    help="heuristic-ambiguous misses BLOCK (used in CI)")
+    ap.add_argument("--list", action="store_true",
+                    help="dump the declared outputs and exit 0")
+    args = ap.parse_args()
+
+    if args.list:
+        for cid, od in reg.iter_outputs():
+            print(f"[{cid}] {od.surface}:{od.path_glob}")
+            print(f"    writer:   {od.writer}")
+            print(f"    cadence:  {od.cadence}")
+            print(f"    volume:   {od.volume_files} / {od.volume_bytes}")
+            print(f"    retain:   {od.retention.window} "
+                  f"(pruner: {od.retention.pruner})")
+            if od.consumer.none:
+                print(f"    consumer: NONE — {od.consumer.justification}")
+            else:
+                print(f"    consumer: {od.consumer.reader} "
+                      f"({od.consumer.read_site})")
+        return 0
+
+    # (1) Registry consistency + stale-declaration guard — always checked.
+    consistency = reg.consistency_errors() + stale_declaration_errors()
+
+    if args.all:
+        targets = _iter_production_py()
+    elif args.staged:
+        targets = _staged_files()
+    else:
+        targets = [Path(f) for f in args.files]
+
+    claimed = reg.claimed_writer_files()
+    block: list[tuple[str, list[int]]] = []
+    warn: list[tuple[str, list[int]]] = []
+    for p in targets:
+        if _is_exempt(p):
+            continue
+        rel = _rel(p)
+        if rel in claimed:
+            continue
+        high, ambiguous = scan_file(p)
+        if high:
+            block.append((rel, high))
+        elif ambiguous:
+            warn.append((rel, ambiguous))
+
+    failed = False
+
+    if consistency:
+        failed = True
+        print("✗ footprint.components registry is internally inconsistent:\n")
+        for err in consistency:
+            print(f"  {err}")
+        print("\nFix packages/analyzer/footprint/components.py. Every output needs "
+              "a retention policy AND a consumer; a consumer: none with no "
+              "retention is forbidden.\n")
+
+    if block:
+        failed = True
+        print("✗ file(s) write to an auto-generated surface with no output "
+              "declaration:\n")
+        for rel, lines in block:
+            _print_block(rel, lines)
+        print(
+            "\nEvolve writes a lot of disk; an undeclared write-only output becomes "
+            "sediment nobody reads or prunes (the 537 MB the 2026-06-28 audit "
+            "found). Add an OutputDeclaration to packages/analyzer/footprint/"
+            "components.py for each output this file writes, declaring:\n"
+            "  • the path/glob + surface + writer (relpath.py:func)\n"
+            "  • a RETENTION policy (who prunes it + the window)\n"
+            "  • a CONSUMER (who reads it + the read site) — or an explicit\n"
+            "    consumer: none WITH a justification AND a finite retention window.\n"
+            "See the module docstring + internal/spec-footprint-2026-06-18.md."
+        )
+        print("")
+
+    if warn:
+        header = "✗" if args.strict else "⚠"
+        print(f"{header} file(s) in a surface-touching module write via an "
+              f"untraceable path (heuristic-ambiguous):\n")
+        for rel, lines in warn:
+            _print_block(rel, lines)
+        print(
+            "\nIf any of these targets an auto-generated surface, add an "
+            "OutputDeclaration (see above). If it does not, the write is fine — "
+            "this is a heuristic warning."
+            + ("" if args.strict else "\n(warning only without --strict)")
+        )
+        if args.strict:
+            failed = True
+        print("")
+
+    if failed:
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,25 @@
+{
+  "format_version": "1.0",
+  "snapshot_source": {
+    "pkg_id": "p-38da680b",
+    "pkg_version": "2026.09.01-1.0",
+    "snapshot_at": "2026-09-01T00:00:00Z",
+    "snapshot_by": "artifact-by-reference-pattern chip (first-party files-pack; no bot snapshot)"
+  },
+  "files": [
+    {
+      "path": "scripts/documents.py",
+      "mode": "0755",
+      "sha256": "42d049701bb8635c88374942619be507d88ba9f6231e9529ef59e0730d1dca3c",
+      "size_bytes": 39393,
+      "placeholders": []
+    },
+    {
+      "path": "docs/README.md",
+      "mode": "0644",
+      "sha256": "13acb0bb8457001827302837c82663516b026136900766ebe660dcd2aecb115f",
+      "size_bytes": 2867,
+      "placeholders": []
+    }
+  ]
+}

@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Uninstalling Evolve · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">uninstall</span></div><div class="reviewed">Last reviewed 2026-07-28</div></div><h1 id="uninstalling-evolve">Uninstalling Evolve</h1>
+<p>Two different jobs live on this page: removing Evolve from the whole machine,
+and removing a single bot (or just detaching Evolve from it while the bot
+keeps running). Both are CLI operations — start with a dry run either way.</p>
+<hr>
+<h2 id="removing-evolve-from-the-machine">Removing Evolve from the machine</h2>
+<p>Preview first — this prints everything the real run would touch and changes
+nothing:</p>
+<pre><code class="language-bash">sudo evolve-admin uninstall --dry-run
+</code></pre>
+<p>Then the real thing (it asks for confirmation before acting):</p>
+<pre><code class="language-bash">sudo evolve-admin uninstall              # removes shared data too
+sudo evolve-admin uninstall --keep-data  # preserves /Users/Shared/evolve
+</code></pre>
+<p>What it removes:</p>
+<ul>
+<li>the per-bot Evolve launchd jobs (<code>ai.openclaw.evolve.*</code> — apply,
+  cost-converter, audit runners, doctor-pass, and friends)</li>
+<li>each bot's <code>workspace/evolve/</code> scripts directory</li>
+<li>the pod configuration file (<code>network.json</code>)</li>
+<li>the shared data directory (<code>/Users/Shared/evolve</code> — metrics, proposals,
+  signals, everything) — <strong>unless</strong> you pass <code>--keep-data</code></li>
+</ul>
+<p><code>--keep-data</code> exists so you can uninstall the machinery but keep the pod's
+history, for example before a reinstall or a host migration.</p>
+<h3 id="what-it-does-not-remove">What it does NOT remove</h3>
+<p>Be explicit-eyes-open here — after <code>uninstall</code> completes, all of the following
+are still on the machine:</p>
+<ul>
+<li><strong>Bot user accounts and their home directories</strong>, including each bot's
+  <code>~/.openclaw/</code> (configuration, memory, transcripts). Use <code>delete-bot</code>
+  per bot (below) if you want those gone.</li>
+<li><strong>OpenClaw itself</strong> — the npm-installed runtime, and the per-bot gateway
+  launchd jobs (<code>ai.evolve.&lt;bot&gt;.*</code>), which are outside the removal sweep.</li>
+<li><strong>The pod-wide infrastructure daemons</strong> (<code>ai.evolve.evolve.*</code> — admin UI,
+  repo-puller, heal, verify, and the rest). List what remains with
+  <code>ls /Library/LaunchDaemons/ | grep evolve</code> and remove each with
+  <code>sudo launchctl bootout system/&lt;label&gt;</code> plus deleting its plist.</li>
+<li><strong>The install itself</strong> — the command prints this reminder on completion:</li>
+</ul>
+<p><code>bash
+  sudo rm -rf /Users/Shared/evolve-venv /Users/Shared/evolve-repo /usr/local/bin/evolve-admin</code></p>
+<ul>
+<li>The <code>evolve</code> service user account, and any sudoers files under
+  <code>/etc/sudoers.d/</code> (<code>evolve</code>, <code>evolve-admin</code>).</li>
+</ul>
+<hr>
+<h2 id="removing-a-single-bot">Removing a single bot</h2>
+<p>Three commands, in increasing severity. All require <code>sudo</code>, all support
+<code>--dry-run</code> (preview without root) and <code>--yes</code> (skip the confirmation).</p>
+<pre><code class="language-bash">sudo evolve-admin detach-bot &lt;bot-id&gt;
+sudo evolve-admin retire-bot &lt;bot-id&gt;
+sudo evolve-admin delete-bot &lt;bot-id&gt;
+</code></pre>
+<ul>
+<li><strong><code>detach-bot</code></strong> — stop Evolve on the bot, keep the bot. Stops the bot's
+  Evolve daemons and strips the Evolve plugin from its <code>openclaw.json</code>; the
+  OpenClaw gateway keeps running and the bot is marked <code>evolve_disabled</code>.
+  (Alias of <code>remove-evolve</code>; the old <code>evolve-admin remove</code> is a deprecated
+  alias for this.)</li>
+<li><strong><code>retire-bot</code></strong> — graceful, reversible removal. Writes a closure summary,
+  archives the bot's data under <code>{shared_dir}/retired/</code>, stops its services,
+  and removes it from the pod. The bot's user account stays in place, so the
+  bot can be revived later from the archive.</li>
+<li><strong><code>delete-bot</code></strong> — irreversible. Runs the full retire flow and then deletes
+  the bot's user account and home directory. The archive remains for
+  forensics, but the bot cannot be revived. Safety valve: if the bot runs
+  under an existing operator account (a name that doesn't match the bot id),
+  that account is preserved even with <code>--yes</code>.</li>
+</ul>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/uninstall.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>

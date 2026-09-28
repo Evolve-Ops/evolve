@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "evolve-zoom-mcp"
+version = "0.1.0"
+description = "Evolve-owned MCP shim for Zoom — proxies Zoom's hosted MCP for reads and implements meeting create/update/delete for writes."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "BUSL-1.1" }
+
+dependencies = [
+    "mcp>=2.2.0,<3",   # upper bound so the next major fails closed into a PR, the way
+                     # >=1.0 with no bound did not: 2.x removed the handler decorators
+                     # and a lock refresh would have taken it silently (#4370 capped it
+                     # at <2 until this migration landed).
+    "httpx>=0.27",
+    "click>=8.1",
+]
+
+[project.scripts]
+evolve-zoom-mcp = "evolve_zoom_mcp.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["evolve_zoom_mcp*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

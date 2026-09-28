@@ -1,0 +1,43 @@
+#!/bin/bash
+# pre-push hook — run the local CI mirror (tools/preflight) and block the push
+# if any reproducible gate is red.
+#
+# This is BELT-AND-SUSPENDERS. The primary contract is that chips invoke
+# `tools/preflight` explicitly before pushing; this hook just makes the gate
+# hard to forget once installed. Git's stock hooks dir (.git/hooks/) is NOT
+# version-controlled, so this hook ships under tools/hooks/ and must be wired
+# up per-clone — see CLAUDE.md "Preflight" for the one-line install.
+#
+# Bypass for a genuine emergency (e.g. a docs hotfix while a gate is flaky):
+#   git push --no-verify
+# `--no-verify` tells git to skip this hook entirely. Prefer fixing the gate.
+#
+# Honors PREFLIGHT_SKIP=1 as an explicit, greppable opt-out for automation that
+# has already run preflight in the same job (so it isn't run twice).
+
+set -euo pipefail
+
+if [ "${PREFLIGHT_SKIP:-}" = "1" ]; then
+    echo "pre-push: PREFLIGHT_SKIP=1 — skipping (preflight already run upstream)." >&2
+    exit 0
+fi
+
+# Resolve the repo root from the hook's own location (works whether invoked from
+# core.hooksPath = tools/hooks or a copy in .git/hooks).
+hook_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(git -C "$hook_dir" rev-parse --show-toplevel 2>/dev/null || echo "$hook_dir/../..")"
+
+preflight="$repo_root/tools/preflight"
+if [ ! -x "$preflight" ]; then
+    echo "pre-push: $preflight not found or not executable — skipping (nothing to enforce)." >&2
+    exit 0
+fi
+
+echo "pre-push: running tools/preflight (local CI mirror) — bypass with 'git push --no-verify'…" >&2
+if ! "$preflight"; then
+    echo "" >&2
+    echo "pre-push: preflight FAILED — push blocked. Fix the red gate(s) above," >&2
+    echo "          or bypass with 'git push --no-verify' if you know what you're doing." >&2
+    exit 1
+fi
+exit 0

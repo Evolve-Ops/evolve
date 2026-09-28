@@ -1,0 +1,37 @@
+id: manifest_quality
+schema_version: 1
+type: optimizer
+dimension: app_quality
+# Surface routing: drift. Stale/failing/malformed manifests. Review-required hygiene with
+#   operator decision; not a fire.
+# Spec: internal/spec-recommendations-rework-2026-06-02.md §"Generator routing".
+surface: drift
+purpose: >
+  Consume manifest-lifecycle Signals from the compliance scan and emit
+  Investigation Proposals so the operator can review stale, failing,
+  or malformed application manifests. Covers three issue types:
+  ``stale`` (>90 days since last review), ``test_failing`` (last test
+  exited non-zero), and ``validation_error`` (schema validation
+  failed). All Investigation-shaped — the right response depends on
+  whether the app is still in use, which the operator knows and the
+  system doesn't. ``missing_required_field`` Signals are emitted by
+  the compliance scan but intentionally NOT promoted to Proposals —
+  see scanner's auto-backfill for ``description`` and the audit/alerts
+  surface for the residual structural defects.
+cadence: daily
+# Sensor-style: when the underlying issue clears (operator updates
+# last_reviewed, tests pass, missing field added, schema fixed) the
+# upstream compliance_scan stops emitting that Signal and our
+# proposal auto-archives via the resolves_when_silent path.
+resolves_when_silent: true
+invariants:
+  - id: action_kind_allowed
+    description: Manifest Quality emits Investigations only — no autonomous manifest edits.
+    check_kind: action_kind_allowed
+    params:
+      allowlist: [Investigation]
+  - id: touches_forbidden
+    description: Manifest Quality does not touch auth, tools, or channel config.
+    check_kind: touches_forbidden
+    params:
+      forbidden: [auth, tools, channel_config, gateway_core]

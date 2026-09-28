@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""required-check-quarantine-ratchet — no-growth cap on
+tools/required-check-quarantine.txt (D-CS9).
+
+Same shape as tools/quarantine-ratchet, applied to the required-check
+quarantine list instead of the per-test one: the baseline is the integer in
+tools/required-check-quarantine-baseline.txt, the count is `wc -l` of
+tools/required-check-quarantine.txt (comments and blank lines included, so
+even header churn is visible rather than a loophole), and the baseline may
+only ratchet DOWN. A row here is a required CI check that has stopped
+discriminating between a real break and ambient noise — growth is not
+"tolerance", it's a second merge gate going meaningless, so it is capped and
+counted exactly like the first one.
+
+Usage:
+  tools/required-check-quarantine-ratchet                   # check the count vs baseline
+  tools/required-check-quarantine-ratchet --all             # alias for the above
+  tools/required-check-quarantine-ratchet --update-baseline # re-freeze after a reduction
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+QUARANTINE_PATH = REPO_ROOT / "tools" / "required-check-quarantine.txt"
+BASELINE_PATH = REPO_ROOT / "tools" / "required-check-quarantine-baseline.txt"
+
+
+def _line_count(path: Path) -> int:
+    """Newline count, matching `wc -l`."""
+    try:
+        return path.read_bytes().count(b"\n")
+    except OSError:
+        return 0
+
+
+def _load_baseline() -> int | None:
+    if not BASELINE_PATH.exists():
+        return None
+    for line in BASELINE_PATH.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            return int(line)
+        except ValueError:
+            continue
+    return None
+
+
+def _write_baseline(count: int) -> None:
+    text = (
+        "# required-check-quarantine-baseline — frozen `wc -l` ceiling for\n"
+        "# tools/required-check-quarantine.txt (D-CS9). The ratchet\n"
+        "# (tools/required-check-quarantine-ratchet) blocks any growth past this\n"
+        "# number, so it may only ratchet DOWN.\n"
+        f"{count}\n"
+    )
+    BASELINE_PATH.write_text(text, encoding="utf-8")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description="No-growth cap on tools/required-check-quarantine.txt (D-CS9)."
+    )
+    ap.add_argument(
+        "--all", action="store_true",
+        help="check the quarantine count (the default; accepted for symmetry)",
+    )
+    ap.add_argument(
+        "--update-baseline", action="store_true",
+        help="re-freeze the count from tools/required-check-quarantine.txt (after a reduction)",
+    )
+    args = ap.parse_args()
+
+    current = _line_count(QUARANTINE_PATH)
+
+    if args.update_baseline:
+        _write_baseline(current)
+        print(f"baseline written: required-check-quarantine.txt frozen at {current} lines")
+        return 0
+
+    baseline = _load_baseline()
+    if baseline is None:
+        print(
+            f"✗ no baseline found at {BASELINE_PATH.relative_to(REPO_ROOT)}",
+            file=sys.stderr,
+        )
+        return 2
+
+    if current > baseline:
+        print(
+            f"✗ required-check-quarantine.txt grew: {current} lines, baseline allows "
+            f"{baseline} (+{current - baseline}).\n\n"
+            "Each row is a required CI check that has stopped discriminating between a\n"
+            "real break and ambient noise. Don't add quarantine rows for convenience —\n"
+            "fix the check (or demote it from required) and delete its row, or pay for a\n"
+            "new row by removing an old one. After a net reduction, re-freeze:\n"
+            "  tools/required-check-quarantine-ratchet --update-baseline"
+        )
+        return 1
+
+    if current < baseline:
+        print(
+            f"✓ required-check-quarantine.txt at {current} lines, BELOW baseline {baseline} "
+            f"(-{baseline - current}) — run `tools/required-check-quarantine-ratchet "
+            "--update-baseline` to ratchet down."
+        )
+    else:
+        print(f"✓ required-check-quarantine.txt at {current} lines, at baseline.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,8 @@
+{
+  "_comment": "The #4244/#4253 shape one field down: the `schedule` query failed while `workflow_dispatch` succeeded and returned a recent run. Must be `unknown`, not `ok`/`broken` off the side that happened to answer. tests/test_ci_freshness.py::test_paginated_away_subject_is_unknown_not_never_run",
+  "sched_reachable": false,
+  "disp_reachable": true,
+  "any_runs_found": true,
+  "latest_run": {"id": "1003", "url": "https://example.invalid/actions/runs/1003"},
+  "latest_run_age_days": 1
+}

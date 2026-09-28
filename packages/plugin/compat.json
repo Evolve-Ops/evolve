@@ -1,0 +1,7 @@
+{
+  "$comment": "Which OpenClaw versions this Evolve release was validated against. `openclaw.tested` lists the versions the compatibility contract (packages/plugin/src/contract/) passed on IN FULL — every check, no skips. The Update card offers only these through the guarded upgrade flow; anything else reads as 'not yet validated by Evolve' and carries no button, which the operator can override with a typed confirmation naming the failing checks. Absence is never validation: the list starts empty and a version is added only when a contract run against a real installed OpenClaw goes green. See internal/design-oc-upgrade-safety-2026-09-08.md and internal/oc-compatibility.md.",
+  "evolveVersion": "0.1.0",
+  "openclaw": {
+    "tested": []
+  }
+}

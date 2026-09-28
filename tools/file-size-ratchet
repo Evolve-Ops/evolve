@@ -1,0 +1,273 @@
+#!/usr/bin/env python3
+"""file-size-ratchet — no-growth cap on the hot hazard files.
+
+The 80->100 roadmap (item 4.1a, under the agent-legibility doctrine) calls
+out a handful of files as the worst edit-safety hazards in the repo:
+``routes_admin.py`` (hundreds of route handlers as nested closures sharing
+one function scope), plus ``server.py`` / ``cli.py`` / ``deploy.py`` by
+churn. Decomposing them is the real fix (4.1b) — that work is NOT done here.
+This gate does the durable thing in the meantime: it freezes each capped
+file's current line count as a baseline, BLOCKS any change that grows a
+capped file past its baseline, and lets the baseline ratchet DOWN as lines
+are removed (or as the file is split).
+
+**Diff-relative (the per-PR contract).** The check is measured against the
+change *this branch introduces*, not the absolute repo state. With a base
+ref (``--base <ref>``, or auto-detected from ``origin/main``), the effective
+ceiling for each capped file is ``max(baseline_cap, count_on_base)``: a PR
+fails ONLY if it grows a capped file above that ceiling. So a file that is
+already over its cap on ``main`` (from a prior merge) does NOT fail a PR that
+leaves it alone or shrinks it — only the PR that actually grows it pays. This
+is what stops one over-cap merge from reddening every subsequent PR (and the
+re-freeze thrash that followed). The cap still ratchets DOWN only: a PR that
+drops a file below its frozen baseline can re-freeze lower (``--update-baseline``).
+When no base ref is resolvable (a bare local run with no ``origin/main``), the
+check falls back to the stricter absolute cap — fail-closed, never a hole.
+
+Same shape as tools/except-pass-lint (silent swallows) and
+tools/platform-path-lint (/Users/ literals): a checked-in baseline that can
+only shrink. The baseline file is tools/file-size-baseline.txt, format
+``<count>\t<path>`` per line, matching the other per-file baselines.
+
+This ratchet does NOT discover files — only the explicit cap list in the
+baseline is checked. Adding a new hot file to the cap is a deliberate edit
+to the baseline (run ``--update-baseline`` after adding the path with any
+placeholder count, or just append ``<wc-l>\t<path>``).
+
+Usage:
+  tools/file-size-ratchet                     # check every capped file
+  tools/file-size-ratchet --all               # alias for the above
+  tools/file-size-ratchet --base <ref>        # diff-relative vs <ref> (CI
+                                              # passes the PR base sha here)
+  tools/file-size-ratchet --update-baseline   # re-freeze counts after a
+                                              # legit shrink (or a split)
+
+The base ref is resolved from, in order: the ``--base`` flag, the
+``RATCHET_BASE_SHA`` env var, then ``git merge-base HEAD origin/main``. An
+empty/unresolvable base disables diff-relative mode for that run (absolute
+cap). CI sets ``--base`` to the PR base sha (or, on a push to main, the
+pre-push tip) so a PR is judged only on the growth it introduces.
+
+Re-freeze after a legitimate shrink: once a capped file loses lines (a real
+deletion or a 4.1b decomposition), rerun ``tools/file-size-ratchet
+--update-baseline`` so the new, lower count becomes the ceiling. The diff is
+reviewable — the number only ever drops.
+
+Exit status: 0 if no capped file exceeds its baseline; 1 if one grew.
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+BASELINE_PATH = REPO_ROOT / "tools" / "file-size-baseline.txt"
+# CI exports the comparison base here (PR base sha, or pre-push tip on a main
+# push). Read as a fallback when --base is not passed; see _resolve_base.
+BASE_ENV_VAR = "RATCHET_BASE_SHA"
+
+
+def _line_count(path: Path) -> int:
+    """Newline count, matching `wc -l` (which counts trailing newlines)."""
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return 0
+    return data.count(b"\n")
+
+
+def _git(*args: str) -> subprocess.CompletedProcess:
+    """Run git in REPO_ROOT, never raising (missing binary -> rc 127-ish)."""
+    try:
+        return subprocess.run(
+            ["git", *args], cwd=REPO_ROOT, capture_output=True
+        )
+    except OSError:
+        # git absent / not executable — treat as "could not resolve".
+        return subprocess.CompletedProcess(args, returncode=1, stdout=b"", stderr=b"")
+
+
+def _resolve_base(base_ref: str | None) -> str | None:
+    """Resolve the diff-relative comparison base to a commit sha, or None.
+
+    Priority: explicit ``base_ref`` -> ``$RATCHET_BASE_SHA`` -> ``git
+    merge-base HEAD origin/main``. None means "no usable base" — the caller
+    falls back to the absolute cap (fail-closed). A non-empty ref that does
+    not resolve also yields None rather than silently mis-comparing.
+    """
+    ref = (base_ref or os.environ.get(BASE_ENV_VAR) or "").strip()
+    if ref:
+        r = _git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+        sha = r.stdout.decode("utf-8", "replace").strip()
+        return sha or None
+    # Auto-detect for bare local runs: the merge-base with origin/main is the
+    # branch point, so the delta measured is exactly this branch's.
+    r = _git("merge-base", "HEAD", "origin/main")
+    sha = r.stdout.decode("utf-8", "replace").strip()
+    return sha if r.returncode == 0 and sha else None
+
+
+def _base_line_count(base_sha: str, rel: str) -> int:
+    """Line count of ``rel`` at ``base_sha``; 0 if the file was absent there.
+
+    Precondition: ``base_sha`` already resolved (see _resolve_base), so a
+    non-zero rc here means the *path* did not exist at the base (a file newly
+    added — and capped — in this branch), which correctly leaves its ceiling
+    at the frozen cap.
+    """
+    r = _git("show", f"{base_sha}:{rel}")
+    if r.returncode != 0:
+        return 0
+    return r.stdout.count(b"\n")
+
+
+def _load_baseline() -> dict[str, int]:
+    if not BASELINE_PATH.exists():
+        return {}
+    baseline: dict[str, int] = {}
+    for line in BASELINE_PATH.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split("\t", 1)  # "<count>\t<path>"
+        if len(parts) != 2:
+            continue
+        try:
+            baseline[parts[1]] = int(parts[0])
+        except ValueError:
+            continue
+    return baseline
+
+
+def _write_baseline(counts: dict[str, int]) -> None:
+    lines = [
+        "# file-size-baseline — line-count cap for the hot hazard files (4.1a).",
+        "# Generated by `tools/file-size-ratchet --update-baseline`. The ratchet",
+        "# blocks any capped file that EXCEEDS its count, so this file may only",
+        "# ratchet DOWN: delete lines or split the file (4.1b) -> rerun",
+        "# --update-baseline -> the number drops. Counts match `wc -l`.",
+        "# Format: <count>\\t<path>. Add a hot file by appending `<wc-l>\\t<path>`.",
+        "",
+    ]
+    for path in sorted(counts):
+        lines.append(f"{counts[path]}\t{path}")
+    BASELINE_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description="No-growth line-count cap on the hot hazard files (4.1a)."
+    )
+    ap.add_argument(
+        "--all", action="store_true",
+        help="check every capped file (the default; accepted for symmetry)",
+    )
+    ap.add_argument(
+        "--base", default=None, metavar="REF",
+        help=(
+            "diff-relative comparison base (a PR fails only if it grows a "
+            "capped file past max(cap, count-on-base)). Defaults to "
+            "$%s, then merge-base with origin/main." % BASE_ENV_VAR
+        ),
+    )
+    ap.add_argument(
+        "--update-baseline", action="store_true",
+        help="re-freeze counts from the current files (after a legit shrink)",
+    )
+    args = ap.parse_args()
+
+    baseline = _load_baseline()
+    if not baseline:
+        print(
+            f"✗ no cap list found at {BASELINE_PATH.relative_to(REPO_ROOT)}",
+            file=sys.stderr,
+        )
+        return 2
+
+    if args.update_baseline:
+        counts = {rel: _line_count(REPO_ROOT / rel) for rel in baseline}
+        _write_baseline(counts)
+        total = sum(counts.values())
+        print(
+            f"baseline written: {len(counts)} capped file(s), {total} lines total"
+        )
+        return 0
+
+    base_sha = _resolve_base(args.base)
+    if base_sha:
+        print(
+            f"diff-relative mode: comparing against base {base_sha[:12]} "
+            "(a file fails only if THIS branch grew it past its cap)."
+        )
+    else:
+        print(
+            "absolute-cap mode: no base ref resolved "
+            f"(pass --base <ref> or set ${BASE_ENV_VAR} for diff-relative)."
+        )
+
+    violations = []   # (rel, n, allowed, base_n) — this branch grew it past cap
+    below = 0         # below the frozen cap → eligible to ratchet down
+    inherited = 0     # over cap on the base too, but this branch didn't grow it
+    for rel, allowed in baseline.items():
+        n = _line_count(REPO_ROOT / rel)
+        base_n = _base_line_count(base_sha, rel) if base_sha else None
+        # Effective ceiling: the file may not exceed its frozen cap, EXCEPT a
+        # file already over cap on the base is allowed to stay at (or below)
+        # its base size — only further growth is this branch's fault.
+        ceiling = allowed if base_n is None else max(allowed, base_n)
+        if n > ceiling:
+            violations.append((rel, n, allowed, base_n))
+        elif n < allowed:
+            below += 1
+        elif base_n is not None and base_n > allowed:
+            # n <= ceiling == base_n and n is not below the cap: the file is
+            # over cap but this branch left it alone (or shrank it toward cap).
+            inherited += 1
+
+    if violations:
+        print("\n✗ hot hazard file(s) grew past their no-growth cap (4.1a):\n")
+        for rel, n, allowed, base_n in violations:
+            if base_n is not None and base_n > allowed:
+                # Over cap on the base already, and this branch grew it MORE.
+                print(
+                    f"  {rel}: {n} lines, was {base_n} on base, cap is {allowed} "
+                    f"(this branch added +{n - base_n} on top of an over-cap file)"
+                )
+            else:
+                origin = "" if base_n is None else f", was {base_n} on base"
+                print(
+                    f"  {rel}: {n} lines{origin}, baseline allows {allowed} "
+                    f"(+{n - allowed})"
+                )
+        print(
+            "\nThese files are frozen — this branch may not grow them past the\n"
+            "cap. Either trim the addition, move the new code into a fresh\n"
+            "module / register_*_routes split that nets the file smaller, or —\n"
+            "after a legitimate shrink — re-freeze the baseline:\n"
+            "  tools/file-size-ratchet --update-baseline"
+        )
+        return 1
+
+    notes = []
+    if below:
+        notes.append(
+            f"{below} file(s) now BELOW baseline — run "
+            "`tools/file-size-ratchet --update-baseline` to ratchet down"
+        )
+    if inherited:
+        notes.append(
+            f"{inherited} file(s) over cap on the base but unchanged here "
+            "(not this branch's debt)"
+        )
+    if notes:
+        print("✓ no capped file grew. " + "; ".join(notes) + ".")
+    else:
+        print("✓ no capped file grew past its no-growth cap.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
