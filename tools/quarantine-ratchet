@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""quarantine-ratchet — no-growth cap on ci-quarantine.txt (roadmap 6.5).
+
+ci-quarantine.txt (repo root) is the central allowlist of baseline test
+failures excluded from the blocking CI gate. Every line is a real failing
+test that someone owes a fix. The 80->100 roadmap (item 6.5) requires two
+things this gate provides:
+
+  1. NO GROWTH: CI fails if the quarantine's line count exceeds a frozen
+     baseline. New quarantine entries must be paid for by removing old ones
+     (or by fixing a failure outright). The baseline only ratchets DOWN.
+
+  2. A WRITTEN MONTHLY REDUCTION TARGET (recorded here, the single source):
+
+         MONTHLY TARGET: net >=10 lines removed from ci-quarantine.txt per
+         calendar month. Re-baseline on each reduction PR (run
+         `tools/quarantine-ratchet --update-baseline` after deleting fixed
+         entries) so the ceiling tracks the floor and the count is strictly
+         decreasing month-over-month.
+
+The baseline is the integer in tools/ci-quarantine-baseline.txt — the same
+"frozen count, only shrinks" shape as the per-file baselines
+(tools/except-pass-baseline.txt et al.), reduced to a single number because
+there is exactly one quarantine file. The count is `wc -l` of
+ci-quarantine.txt (comments and blank lines included — the ceiling tracks
+the whole file, so even comment churn is visible rather than a loophole).
+
+Usage:
+  tools/quarantine-ratchet                     # check the count vs baseline
+  tools/quarantine-ratchet --all               # alias for the above
+  tools/quarantine-ratchet --update-baseline   # re-freeze after a reduction
+
+Re-freeze after a reduction: delete the fixed entries from ci-quarantine.txt,
+then rerun `tools/quarantine-ratchet --update-baseline` so the new, lower
+count becomes the ceiling. The diff is reviewable — the number only drops.
+
+Exit status: 0 if the count is at or below baseline; 1 if it grew.
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+QUARANTINE_PATH = REPO_ROOT / "ci-quarantine.txt"
+BASELINE_PATH = REPO_ROOT / "tools" / "ci-quarantine-baseline.txt"
+
+
+def _line_count(path: Path) -> int:
+    """Newline count, matching `wc -l`."""
+    try:
+        return path.read_bytes().count(b"\n")
+    except OSError:
+        return 0
+
+
+def _load_baseline() -> int | None:
+    if not BASELINE_PATH.exists():
+        return None
+    for line in BASELINE_PATH.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            return int(line)
+        except ValueError:
+            continue
+    return None
+
+
+def _write_baseline(count: int) -> None:
+    text = (
+        "# ci-quarantine-baseline — frozen `wc -l` ceiling for ci-quarantine.txt\n"
+        "# (roadmap 6.5). The ratchet (tools/quarantine-ratchet) blocks any growth\n"
+        "# past this number, so it may only ratchet DOWN. MONTHLY TARGET: net >=10\n"
+        "# lines removed per calendar month; re-baseline on each reduction PR.\n"
+        f"{count}\n"
+    )
+    BASELINE_PATH.write_text(text, encoding="utf-8")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description="No-growth cap on ci-quarantine.txt (roadmap 6.5)."
+    )
+    ap.add_argument(
+        "--all", action="store_true",
+        help="check the quarantine count (the default; accepted for symmetry)",
+    )
+    ap.add_argument(
+        "--update-baseline", action="store_true",
+        help="re-freeze the count from ci-quarantine.txt (after a reduction)",
+    )
+    args = ap.parse_args()
+
+    current = _line_count(QUARANTINE_PATH)
+
+    if args.update_baseline:
+        _write_baseline(current)
+        print(f"baseline written: ci-quarantine.txt frozen at {current} lines")
+        return 0
+
+    baseline = _load_baseline()
+    if baseline is None:
+        print(
+            f"✗ no baseline found at {BASELINE_PATH.relative_to(REPO_ROOT)}",
+            file=sys.stderr,
+        )
+        return 2
+
+    if current > baseline:
+        print(
+            f"✗ ci-quarantine.txt grew: {current} lines, baseline allows "
+            f"{baseline} (+{current - baseline}).\n\n"
+            "Each line is a real failing test. Don't add quarantine entries —\n"
+            "fix a failure and delete its line, or pay for a new entry by\n"
+            "removing an old one. After a net reduction, re-freeze:\n"
+            "  tools/quarantine-ratchet --update-baseline\n"
+            "Monthly target: net >=10 lines removed per calendar month."
+        )
+        return 1
+
+    if current < baseline:
+        print(
+            f"✓ ci-quarantine.txt at {current} lines, BELOW baseline {baseline} "
+            f"(-{baseline - current}) — run `tools/quarantine-ratchet "
+            "--update-baseline` to ratchet down."
+        )
+    else:
+        print(f"✓ ci-quarantine.txt at {current} lines, at baseline.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

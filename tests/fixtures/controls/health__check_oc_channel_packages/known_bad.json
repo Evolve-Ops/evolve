@@ -1,0 +1,12 @@
+{
+  "_comment": "AXIS: the same list, non-empty. Identical installed runtime (2026.9.2) and identical bot — only the staleness differs. This is the 2026-09-07 symptom on disk: a per-bot package left on the 2026.8 line, which surfaced to the operator only as `Package subpath './plugin-sdk/channel-streaming' is not defined` with the channel dead and nothing saying why. Replayed by packages/admin/tests/test_oc_runtime_controls.py::test_channel_packages_known_bad_warns.",
+  "_axis": "stale_packages",
+  "members": ["botalpha"],
+  "installed_version": "2026.9.2",
+  "stale_packages": ["@openclaw/plugin-sdk@2026.8.3", "@openclaw/channel-slack@2026.8.3"],
+  "expect": {
+    "status": "WARN",
+    "name": "botalpha:channel_packages",
+    "message_contains": "@openclaw/plugin-sdk@2026.8.3"
+  }
+}

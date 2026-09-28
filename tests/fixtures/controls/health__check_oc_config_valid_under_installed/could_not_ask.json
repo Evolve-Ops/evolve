@@ -1,0 +1,8 @@
+{
+  "_comment": "The THIRD state this control's docstring exists to separate: `we could not ask` is not `we know it is invalid`. The validator returned an error. Fixed under hold-fix-4277-preflight-fails-closed-and-is-wired-to-the-upgrade (D-CS7, internal/dispatch/reviews/pr-4277.md item 5): this used to emit NO check at all for the bot, which is the exact silent-control defect the D-CS7 programme exists to close — a validator that cannot run must read as WARN 'could not check', never as an absence indistinguishable from a clean pod. Not part of the registry's required pair (tools/control-registry reads known_good.json + known_bad.json); carried here because the distinction is the control's whole point. Replayed by packages/admin/tests/test_oc_runtime_controls.py::test_config_valid_could_not_ask_warns.",
+  "_axis": "validator_result.error",
+  "members": ["botalpha"],
+  "network": {"networkId": "fixture-net", "bots": {"botalpha": {"role": "member"}}},
+  "validator_result": {"valid": false, "issues": [], "error": "openclaw: command not found"},
+  "expect": {"checks": 1, "status": "WARN", "message_contains": "openclaw: command not found"}
+}

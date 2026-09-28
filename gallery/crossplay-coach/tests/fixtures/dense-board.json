@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "game_id": "dense-smoke",
+  "board": [
+    "...a..........V",
+    "...I.........KI",
+    "A..O........WIN",
+    "M..L.....EMBEDs",
+    "I.TI.A...Y.AT..",
+    "N.H..L.JOE.I...",
+    "OWE..I.AY..TAGs",
+    ".UNCOVER...H..I",
+    ".ZA.FELL......G",
+    "..REF.........N",
+    "....AGO..Q..SHE",
+    ".....OD..U..PER",
+    "........BOX.AR.",
+    ".........T...E.",
+    ".........ACROSS"
+  ],
+  "rack": "ETRDESN",
+  "bag_count": null,
+  "scores": {
+    "you": null,
+    "opponent": null
+  }
+}

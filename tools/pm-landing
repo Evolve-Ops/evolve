@@ -1,0 +1,890 @@
+#!/usr/bin/env python3
+"""pm-landing — turn a manifest the PM staged into a pushed branch and a PR.
+
+WHY THIS EXISTS (D-PM9, operator-decided 2026-09-03 —
+`internal/spec-delta-pm-lane-rules-of-engagement-2026-09-03.md`).
+
+The PM is a Cowork session. It can WRITE files into the operator's checkout over the
+device bridge, and it cannot push: the cloud sandbox's proxy refuses pushes for
+repositories outside the session's source set, and the folder-side shell carries no
+credential. So every PM session ended by handing the operator a paste script — nine of
+them in three days — and every post-merge cleanup was a second paste. The `meta-dispatch`
+scheduled task already runs on the operator's laptop with a real `git` and `gh`; landing
+PM output is the same shape, and this is that task's helper.
+
+The PM writes `internal/_pm-landing/<slug>.json`; this turns it into a branch, a commit
+and a PR, and then moves the manifest to `done/<slug>.json` with the PR number written in.
+
+WHAT IT WILL NOT DO, and why each one is a rule rather than a preference. All three are
+incidents from the week of 2026-09-01, and every one of them was a write to the operator's
+MAIN CHECKOUT:
+
+  * **It never touches the main checkout's index.** No `git add`, no `git commit`, no
+    `git checkout`, no `git stash`, no `git reset`, and never `git add -A` anywhere. The
+    commit is built in a throwaway worktree cut from `origin/main` under `.worktrees/`,
+    which shares `.git` but has its own index and working tree. GitHub Desktop
+    auto-stashing the dev checkout, a session run in the main checkout, and a `git add -A`
+    sweeping another session's staged lane moves are all outside the blast radius by
+    construction, not by care.
+  * **It never deletes a TRACKED file.** `--sweep` unlinks only untracked working-tree
+    copies, and only ones it can prove are byte-identical to `origin/main`. The 2026-09-02
+    `rm` of a tracked file is the thing that cannot happen here.
+  * **It never re-lands a brief the dispatcher has already moved.** A manifest listing a
+    path under `internal/dispatch/inflight/`, or listing `queued/<id>.md` for an id the
+    dispatcher currently holds in `inflight/`, is REFUSED. The PM staged that manifest
+    before the tick ran; landing it now would put one id in two lane dirs, which is
+    `blocked_by: "lane-conflict"` and stops the whole lane.
+
+THE MANIFEST. One JSON object per PR, at `internal/_pm-landing/<slug>.json`:
+
+    {
+      "branch":         "pm/marching-orders-2026-09-04",
+      "title":          "PM: marching orders block for 2026-09-04",
+      "body":           "…the PR body, markdown…",
+      "commit_message": "PM: marching orders block for 2026-09-04\\n\\n…",
+      "files":            ["internal/marching-orders.md"],
+      "expect_untracked": ["internal/marching-orders.md"],
+      "co_authored_by":   "Claude Fable 5.1 <noreply@anthropic.com>"
+    }
+
+`files` are read from the OPERATOR'S CHECKOUT WORKING TREE — that is where the PM wrote
+them, and for a brand-new doc it is the only place they exist. `expect_untracked` must be a
+subset of `files`: it names the copies the PM left lying in the checkout, and it is the
+ONLY thing `--sweep` will ever consider deleting. That subset rule is what bounds the
+sweep to files this tool itself landed.
+
+`co_authored_by` is optional and the tool does not default it. A model name baked into a
+tool goes stale on the next model; the PM knows its own and puts it in the manifest.
+
+IDEMPOTENCE, which matters because this runs unattended every 30 minutes. A manifest whose
+branch already exists on `origin` is never re-pushed. If that branch is this manifest's own
+(proved by the `Landed-by:` trailer on its tip commit, not by the name) the run finishes
+whatever bookkeeping the previous run did not — opens the PR if `gh` failed last time, or
+moves the manifest to `done/` if the PR is already open — and otherwise it refuses and says
+the name is taken. A re-run with nothing pending is a no-op that writes nothing.
+
+EXIT CODES. 0 for a completed run, whatever the per-manifest outcomes were: a refusal is
+DATA (it goes in the JSON and the scheduled task pokes it), not a process failure, because
+one bad manifest must not stop the others from landing. 2 only for a run that could not
+start at all — no repo, no manifest dir, a bad flag.
+"""
+
+from __future__ import annotations
+
+import argparse
+import ast
+import datetime
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+DEFAULT_DIR = "internal/_pm-landing"
+DONE_SUBDIR = "done"
+WORKTREE_SUBDIR = ".worktrees"
+
+# PM output is DOCS. Code lands through the PM lane as a brief a chip builds, which is the
+# path that gets a two-pass review — so a manifest that lists a `.py` under `packages/` is
+# not a shortcut, it is the review being skipped.
+PATH_ALLOWLIST = ("internal/", "docs/", "claude/")
+
+# ...with one hole punched in it. `docs/private/` is where the operator's local-only
+# material lives, including the PM's own fine-grained token; it is git-ignored, so `git add`
+# would drop it anyway — but only AFTER the bytes had been read and copied into a worktree.
+# "Secrets are never read" has to be a refusal on the path, not a rescue by .gitignore.
+PATH_DENYLIST = ("docs/private/",)
+
+# The deploy checkout is pulled `--ff-only` every 15 minutes by the repo-puller daemon, and
+# an untracked file it did not expect wedges that pull. This tool writes `done/<slug>.json`
+# and (mid-run) `.worktrees/` — both untracked there. It belongs on the operator's dev
+# clone; running it here is always a mistake, so it is a refusal rather than a warning.
+DEPLOY_CHECKOUT = "/Users/Shared/evolve-repo"
+
+# The scrub guard (`packages/admin/tests/test_public_launch_scrub.py`) reds CI on any new
+# occurrence of a reserved identifier in a tracked file, and two ordinary English words are
+# on its list. A PM PR that trips it cannot be fixed through this tool — the branch exists,
+# so every later run refuses to push again — so the scan happens BEFORE anything is pushed.
+# The tuple is read out of the guard's own source with `ast` rather than copied here: the
+# guard imports pytest (absent from an unattended `python3` run), and a copy would both
+# drift and put the reserved words themselves into this tracked file.
+SCRUB_GUARD_REL = "packages/admin/tests/test_public_launch_scrub.py"
+SCRUB_TOKENS_NAME = "RESERVED_TOKENS"
+
+LANE_INFLIGHT = "internal/dispatch/inflight/"
+LANE_QUEUED = "internal/dispatch/queued/"
+
+SLUG_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+BRANCH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
+
+REQUIRED_KEYS = ("branch", "title", "body", "commit_message", "files")
+OPTIONAL_KEYS = ("expect_untracked", "co_authored_by", "note")
+# Written by this tool onto the `done/` copy; accepted on the way back in so a done
+# manifest re-read by `--sweep` does not look malformed to its own validator.
+RESULT_KEYS = ("pr", "pr_url", "landed_at", "landed_commit", "swept")
+
+TRAILER_KEY = "Landed-by"
+
+EXIT_REFUSED = 2
+
+
+class Refused(Exception):
+    """A precondition failed. Nothing has been changed."""
+
+
+# --------------------------------------------------------------------------------------
+# process + git plumbing
+# --------------------------------------------------------------------------------------
+
+
+def _run(args, cwd):
+    return subprocess.run(args, cwd=str(cwd), capture_output=True, text=True)
+
+
+def _repo_root(start: Path) -> Path | None:
+    r = _run(["git", "rev-parse", "--show-toplevel"], start)
+    return Path(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else None
+
+
+def _is_tracked(repo: Path, rel: str) -> bool:
+    """True iff git has this exact path in the main checkout's index.
+
+    `--error-unmatch` is the narrow question. Plain `ls-files` on a path git has never
+    heard of exits 0 with empty output, which reads as "untracked" for a path that is
+    merely absent — and here that difference decides whether a file may be deleted.
+    """
+    return _run(["git", "ls-files", "--error-unmatch", "--", rel], repo).returncode == 0
+
+
+def _blob_at(repo: Path, ref: str, rel: str) -> str | None:
+    r = _run(["git", "rev-parse", "%s:%s" % (ref, rel)], repo)
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def _hash_file(repo: Path, abs_path: Path) -> str | None:
+    r = _run(["git", "hash-object", "--", str(abs_path)], repo)
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+# --------------------------------------------------------------------------------------
+# validation — every refusal below is a shape that has cost something
+# --------------------------------------------------------------------------------------
+
+
+def check_slug(slug: str) -> None:
+    if not SLUG_RE.match(slug or ""):
+        raise Refused("manifest name %r is not strict kebab-case" % slug)
+
+
+def check_branch(branch) -> str:
+    if not isinstance(branch, str) or not BRANCH_RE.match(branch):
+        raise Refused("branch %r is not a plausible ref name" % (branch,))
+    if branch.endswith("/") or branch.endswith(".lock") or ".." in branch \
+            or "//" in branch or "@{" in branch:
+        raise Refused("branch %r is not a valid ref name" % branch)
+    return branch
+
+
+def check_repo_rel(rel, *, what: str = "file") -> str:
+    """One repo-relative path, checked hard enough to hand to `git add` unattended."""
+    if not isinstance(rel, str) or not rel.strip():
+        raise Refused("%s entry %r is not a non-empty string" % (what, rel))
+    if rel != rel.strip():
+        raise Refused("%s %r has leading or trailing whitespace" % (what, rel))
+    if rel.startswith("/") or "\\" in rel or ":" in rel:
+        raise Refused("%s %r must be a repo-relative POSIX path" % (what, rel))
+    parts = rel.split("/")
+    if any(p in ("", ".", "..") for p in parts):
+        raise Refused("%s %r has an empty or relative path segment" % (what, rel))
+    if rel.startswith(LANE_INFLIGHT):
+        raise Refused(
+            "%s %r is under %s — the dispatcher's in-flight markers are working-tree-local "
+            "by design (D-PM10) and landing one puts the id in two lane dirs"
+            % (what, rel, LANE_INFLIGHT))
+    if rel.startswith(PATH_DENYLIST):
+        raise Refused(
+            "%s %r is under %s — that is the operator's private, git-ignored material "
+            "(the PM's own token lives there). Nothing under it is ever read or landed."
+            % (what, rel, ", ".join(p.rstrip("/") for p in PATH_DENYLIST)))
+    if not rel.startswith(PATH_ALLOWLIST):
+        raise Refused(
+            "%s %r is outside %s — PM output is docs; code lands through the lane as a "
+            "brief a chip builds, so it gets a two-pass review"
+            % (what, rel, "/".join(p.rstrip("/") for p in PATH_ALLOWLIST)))
+    return rel
+
+
+def check_not_in_flight(repo: Path, rel: str) -> None:
+    """Refuse a queued brief whose id the dispatcher is already holding in `inflight/`.
+
+    The PM stages a manifest and a `*/30` tick runs between then and now. If that tick
+    launched the very brief the manifest re-adds, landing it puts one id in `queued/` AND
+    `inflight/` — which `tools/meta-dispatch-eligible` reports as `conflicts[]` +
+    `blocked_by: "lane-conflict"`, and the lane dispatches nothing at all until a human
+    deletes a file by hand. Four of those in three days is what D-PM8 was written for; this
+    is the same condition caught one step earlier, before it exists.
+    """
+    if not (rel.startswith(LANE_QUEUED) and rel.endswith(".md")):
+        return
+    brief_id = Path(rel).stem
+    if (repo / LANE_INFLIGHT / ("%s.md" % brief_id)).exists():
+        raise Refused(
+            "%s: the dispatcher already moved %r to %s — re-landing the queued copy would "
+            "put one id in two lane dirs (lane-conflict). The PM must not re-land a brief "
+            "that is in flight." % (rel, brief_id, LANE_INFLIGHT))
+
+
+def check_not_ignored(repo: Path, rel: str) -> None:
+    """Refuse a path git is ignoring in the operator's checkout.
+
+    `docs/private/` is denied by name above; this is the general case behind it. An ignored
+    path cannot land — `git add` would drop it silently — so reading its bytes buys nothing
+    and can only expose material the operator marked local-only. Refusing before
+    `read_payload` is what makes "secrets are never read" true of the code rather than of
+    the ordering.
+    """
+    if _run(["git", "check-ignore", "-q", "--", rel], repo).returncode == 0:
+        raise Refused(
+            "%s is git-ignored in the checkout — an ignored path cannot land (`git add` "
+            "drops it), and its bytes are the operator's local-only material" % rel)
+
+
+def reserved_tokens(repo: Path) -> tuple:
+    """The scrub guard's reserved tokens, read from the guard's own source.
+
+    Read, not imported: the guard is a pytest module and an unattended `python3` run has no
+    pytest. Read, not copied: a copy in this file would be a second list to keep in step,
+    and it would put the reserved words into a tracked file — the very thing the guard
+    exists to catch.
+    """
+    src = repo / SCRUB_GUARD_REL
+    try:
+        tree = ast.parse(src.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, SyntaxError) as e:
+        raise Refused(
+            "cannot read the scrub guard's %s from %s (%s) — refusing rather than landing "
+            "an unscanned payload; a PM PR that reds the scrub guard cannot be fixed "
+            "through this tool" % (SCRUB_TOKENS_NAME, SCRUB_GUARD_REL, e))
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(tgt, ast.Name) and tgt.id == SCRUB_TOKENS_NAME
+                   for tgt in node.targets):
+            continue
+        try:
+            value = ast.literal_eval(node.value)
+        except ValueError:
+            break
+        if isinstance(value, (tuple, list, set, frozenset)) and value:
+            return tuple(str(v) for v in value)
+        break
+    raise Refused("%s in %s is missing or is not a literal sequence — refusing rather than "
+                  "landing an unscanned payload"
+                  % (SCRUB_TOKENS_NAME, SCRUB_GUARD_REL))
+
+
+def check_no_reserved_tokens(payload: "dict[str, bytes]", tokens: tuple) -> None:
+    """Whole-word, case-insensitive scan of the bytes about to be landed.
+
+    Whole-word because the guard is: a reserved word reds, the same letters inside a longer
+    word do not, and a substring match would refuse manifests the guard would have passed. `errors="ignore"` because a
+    PNG under `docs/` is a legitimate payload and must not raise here — a binary simply has
+    no words to find.
+    """
+    pattern = re.compile(r"\b(?:%s)\b" % "|".join(re.escape(tok) for tok in tokens),
+                         re.IGNORECASE)
+    for rel, blob in payload.items():
+        text = blob.decode("utf-8", errors="ignore")
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            m = pattern.search(line)
+            if m:
+                raise Refused(
+                    "%s:%d contains the reserved identifier %r — the scrub guard reds CI on "
+                    "it, and a pushed PM branch cannot be re-pushed by this tool, so the "
+                    "PR would be unfixable. Use the placeholder from "
+                    "docs/PLACEHOLDER_NAMING.md and re-stage the manifest."
+                    % (rel, lineno, m.group(0)))
+
+
+def check_done_collision(root: Path, slug: str, data: dict) -> None:
+    """Refuse a slug that has already landed under a DIFFERENT branch.
+
+    A `done/` record is not scratch: `--sweep` reads it to decide which untracked paths it
+    may delete, so overwriting one with a different landing silently re-points that delete
+    authority at files the old PR never carried. A slug reused after its PR landed is how
+    that happens, and the fix is a fresh slug, not a merge of two records.
+
+    The SAME branch is the benign case — this run finishing what a previous one started —
+    and it overwrites, so a crash between the `done/` write and the source unlink cannot
+    wedge the slug.
+
+    Checked BEFORE anything is pushed. Discovering this from inside the manifest move would
+    be discovering it one branch, one commit and one PR too late: the manifest would stay
+    pending, the next run would find its own branch on origin and refuse again, and the
+    slug would be wedged with a live PR nobody meant to open.
+    """
+    dst = root / DONE_SUBDIR / ("%s.json" % slug)
+    if not dst.exists():
+        return
+    try:
+        prior = json.loads(dst.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        prior = {}
+    if not isinstance(prior, dict):
+        prior = {}
+    if prior.get("branch") and prior.get("branch") != data.get("branch"):
+        raise Refused(
+            "%s/%s.json already records branch %s — this slug has already landed. "
+            "Overwriting it would re-point --sweep's delete authority at files that PR "
+            "never carried; use a fresh slug." % (DONE_SUBDIR, slug, prior["branch"]))
+
+
+def parse_manifest(path: Path) -> dict:
+    """Read + validate one manifest. Strict about unknown keys on purpose.
+
+    An unrecognised key is far more often a typo of a real one (`file` for `files`,
+    `message` for `commit_message`) than a deliberate extension, and a typo'd `files` lands
+    an EMPTY commit under a title that claims otherwise. Naming the allowed set costs the
+    PM one correction; guessing costs a wrong PR nobody notices.
+    """
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        raise Refused("cannot read %s: %s" % (path.name, e))
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise Refused("%s is not valid JSON: %s" % (path.name, e))
+    if not isinstance(data, dict):
+        raise Refused("%s must be a JSON object, got %s" % (path.name, type(data).__name__))
+
+    known = set(REQUIRED_KEYS) | set(OPTIONAL_KEYS) | set(RESULT_KEYS)
+    unknown = sorted(set(data) - known)
+    if unknown:
+        raise Refused("%s has unknown key(s) %s — allowed: %s"
+                      % (path.name, ", ".join(unknown), ", ".join(sorted(known))))
+    missing = [k for k in REQUIRED_KEYS if k not in data]
+    if missing:
+        raise Refused("%s is missing %s" % (path.name, ", ".join(missing)))
+    for key in ("title", "body", "commit_message"):
+        if not isinstance(data[key], str) or not data[key].strip():
+            raise Refused("%s: %s must be a non-empty string" % (path.name, key))
+    check_branch(data["branch"])
+
+    files = data["files"]
+    if not isinstance(files, list) or not files:
+        raise Refused("%s: files must be a non-empty list" % path.name)
+    files = [check_repo_rel(f) for f in files]
+    if len(set(files)) != len(files):
+        raise Refused("%s: files lists the same path twice" % path.name)
+
+    untracked = data.get("expect_untracked") or []
+    if not isinstance(untracked, list):
+        raise Refused("%s: expect_untracked must be a list" % path.name)
+    untracked = [check_repo_rel(u, what="expect_untracked") for u in untracked]
+    stray = sorted(set(untracked) - set(files))
+    if stray:
+        # The subset rule is the sweep's whole safety argument: it can only ever delete a
+        # path this tool itself landed. Widen it and the sweep becomes an unattended `rm`
+        # over arbitrary operator paths.
+        raise Refused("%s: expect_untracked names %s, which files[] does not — the sweep "
+                      "may only delete a path this manifest landed"
+                      % (path.name, ", ".join(stray)))
+
+    co = data.get("co_authored_by")
+    if co is not None and (not isinstance(co, str) or not co.strip()):
+        raise Refused("%s: co_authored_by must be a non-empty string when present"
+                      % path.name)
+
+    data["files"] = files
+    data["expect_untracked"] = untracked
+    return data
+
+
+# --------------------------------------------------------------------------------------
+# landing
+# --------------------------------------------------------------------------------------
+
+
+def trailer_for(slug: str, manifest_rel: str) -> str:
+    """The one trailer this tool owns. It is also the OWNERSHIP PROOF for a branch.
+
+    A branch whose name matches a manifest is not evidence the branch came from that
+    manifest — names collide, and a run that opened a PR for somebody else's branch would
+    be worse than one that refused. The tip commit carrying this exact line is evidence.
+    """
+    return "%s: tools/pm-landing (manifest %s, slug %s)" % (TRAILER_KEY, manifest_rel, slug)
+
+
+def commit_message_for(data: dict, slug: str, manifest_rel: str) -> str:
+    body = data["commit_message"].rstrip("\n")
+    trailers = [trailer_for(slug, manifest_rel)]
+    if data.get("co_authored_by"):
+        trailers.append("Co-authored-by: %s" % data["co_authored_by"].strip())
+    keep = [t for t in trailers if t not in body]
+    if not keep:
+        return body + "\n"
+    sep = "\n\n" if not body.endswith("\n") else "\n"
+    return body + sep + "\n".join(keep) + "\n"
+
+
+def read_payload(repo: Path, files: list[str]) -> "dict[str, bytes]":
+    """The bytes to land, read from the operator's checkout working tree.
+
+    Bytes, not text: a manifest may legitimately carry a PNG under `docs/`, and a
+    decode/encode round-trip would silently rewrite line endings on a file the PR claims is
+    byte-identical to what the PM wrote.
+    """
+    out: "dict[str, bytes]" = {}
+    for rel in files:
+        abs_path = repo / rel
+        if abs_path.is_symlink():
+            raise Refused("%s is a symlink — landing one commits the link, not the content"
+                          % rel)
+        if not abs_path.is_file():
+            raise Refused("%s is not a regular file in the checkout — the PM must write it "
+                          "before the manifest can land it" % rel)
+        try:
+            out[rel] = abs_path.read_bytes()
+        except OSError as e:
+            raise Refused("cannot read %s: %s" % (rel, e))
+    return out
+
+
+def _branch_state(repo: Path, remote: str, branch: str) -> dict:
+    local = _run(["git", "rev-parse", "--verify", "--quiet",
+                  "refs/heads/%s" % branch], repo).returncode == 0
+    ls = _run(["git", "ls-remote", "--exit-code", "--heads", remote, branch], repo)
+    return {"local": local, "remote": ls.returncode == 0}
+
+
+def _pr_for_branch(repo: Path, repo_slug: str | None, branch: str) -> dict | None:
+    args = ["gh", "pr", "list", "--head", branch, "--state", "all",
+            "--limit", "1", "--json", "number,url,state"]
+    if repo_slug:
+        args += ["--repo", repo_slug]
+    r = _run(args, repo)
+    if r.returncode != 0:
+        return None
+    try:
+        rows = json.loads(r.stdout or "[]")
+    except json.JSONDecodeError:
+        return None
+    return rows[0] if rows else None
+
+
+def _owns_remote_branch(repo: Path, remote: str, branch: str, trailer: str) -> bool:
+    """Did THIS manifest push that branch? Read the tip commit's trailers and see."""
+    _run(["git", "fetch", "--quiet", remote, branch], repo)
+    for ref in ("%s/%s" % (remote, branch), "FETCH_HEAD"):
+        r = _run(["git", "log", "-1", "--format=%B", ref], repo)
+        if r.returncode == 0 and trailer in r.stdout:
+            return True
+    return False
+
+
+def _worktree_clear(repo: Path, wt: Path) -> None:
+    """Make `wt` free for a fresh `git worktree add`, tolerating a crashed prior run."""
+    _run(["git", "worktree", "prune"], repo)
+    if wt.exists():
+        _run(["git", "worktree", "remove", "--force", str(wt)], repo)
+    if wt.exists():
+        raise Refused("worktree path %s still exists and could not be removed — a previous "
+                      "run left it behind; clear it by hand" % wt)
+
+
+def _worktree_drop(repo: Path, wt: Path) -> None:
+    if wt.exists():
+        _run(["git", "worktree", "remove", "--force", str(wt)], repo)
+    _run(["git", "worktree", "prune"], repo)
+
+
+def open_pr(repo: Path, repo_slug: str | None, base: str, branch: str,
+            title: str, body: str) -> dict:
+    args = ["gh", "pr", "create", "--base", base, "--head", branch,
+            "--title", title, "--body", body]
+    if repo_slug:
+        args += ["--repo", repo_slug]
+    r = _run(args, repo)
+    if r.returncode != 0:
+        return {"ok": False, "error": (r.stderr or r.stdout).strip()}
+    url = r.stdout.strip().splitlines()[-1] if r.stdout.strip() else ""
+    m = re.search(r"/pull/(\d+)", url)
+    return {"ok": True, "url": url, "number": int(m.group(1)) if m else None}
+
+
+def finish(root: Path, slug: str, data: dict, *, pr: int | None, pr_url: str | None,
+           commit: str | None, now: str) -> str:
+    """Move the manifest to `done/<slug>.json` with the PR number written in.
+
+    COPY -> VERIFY -> DELETE, the same order `tools/meta-dispatch-move` uses and for the
+    same reason: the destination is written, re-read from disk and compared, and only then
+    is the source removed. A manifest is small, but it is the only record of which PR
+    landed which files, and `--sweep` reads it to decide what may be deleted.
+    """
+    done_dir = root / DONE_SUBDIR
+    done_dir.mkdir(parents=True, exist_ok=True)
+    dst = done_dir / ("%s.json" % slug)
+
+    check_done_collision(root, slug, data)      # belt-and-braces; land_one checks first
+
+    out = dict(data)
+    out["pr"] = pr
+    out["pr_url"] = pr_url
+    out["landed_at"] = now
+    out["landed_commit"] = commit
+    payload = json.dumps(out, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
+
+    tmp = done_dir / (".%s.json.tmp" % slug)
+    tmp.write_text(payload, encoding="utf-8")
+    os.replace(tmp, dst)
+    if dst.read_text(encoding="utf-8") != payload:
+        raise Refused("wrote %s but it did not read back identically — NOT removing %s"
+                      % (dst, slug))
+
+    src = root / ("%s.json" % slug)
+    if src.exists():
+        src.unlink()
+    return str(dst)
+
+
+def land_one(repo: Path, root: Path, path: Path, *, remote: str, base: str,
+             repo_slug: str | None, now: str, dry_run: bool) -> dict:
+    slug = path.stem
+    manifest_rel = os.path.relpath(str(path), str(repo)).replace(os.sep, "/")
+    result = {"slug": slug, "manifest": manifest_rel, "status": "refused",
+              "reason": None, "branch": None, "pr": None, "pr_url": None,
+              "files": [], "log": ""}
+
+    check_slug(slug)
+    data = parse_manifest(path)
+    check_done_collision(root, slug, data)
+    branch = data["branch"]
+    result["branch"] = branch
+    result["files"] = list(data["files"])
+
+    for rel in data["files"]:
+        check_not_in_flight(repo, rel)
+        check_not_ignored(repo, rel)
+    payload = read_payload(repo, data["files"])
+    # Before the worktree, before the branch, before anything reaches the remote.
+    check_no_reserved_tokens(payload, reserved_tokens(repo))
+    trailer = trailer_for(slug, manifest_rel)
+
+    fetched = _run(["git", "fetch", remote, base], repo)
+    if fetched.returncode != 0:
+        raise Refused("git fetch %s %s failed: %s" % (remote, base, fetched.stderr.strip()))
+    base_ref = "%s/%s" % (remote, base)
+
+    state = _branch_state(repo, remote, branch)
+    if state["remote"]:
+        # Idempotence, and the crash-recovery path. The branch is already pushed, so this
+        # run must never push again — but it may still owe the PR or the bookkeeping.
+        if not _owns_remote_branch(repo, remote, branch, trailer):
+            raise Refused(
+                "branch %s already exists on %s and its tip does not carry this manifest's "
+                "%s trailer — the name is taken by something else. Rename the manifest's "
+                "branch." % (branch, remote, TRAILER_KEY))
+        pr = _pr_for_branch(repo, repo_slug, branch)
+        if pr is None and not dry_run:
+            opened = open_pr(repo, repo_slug, base, branch, data["title"], data["body"])
+            if not opened["ok"]:
+                # Same STATE as a first run that pushed and could not open the PR: the
+                # branch carries the commit and no PR exists. Reporting it as `skipped`
+                # made it silent (`poke` counts only landed*/refused), so the condition
+                # repeated every 30 minutes with nobody told. `landed-no-pr` pokes once,
+                # edge-triggered, which is what the operator needs to see.
+                result.update(status="landed-no-pr", reason="branch-exists-pr-failed",
+                              log="%s: branch already on %s; `gh pr create` failed again: %s"
+                                  % (slug, remote, opened["error"]))
+                return result
+            pr = {"number": opened["number"], "url": opened["url"]}
+        if dry_run:
+            result.update(status="skipped", reason="branch-exists",
+                          log="%s: branch %s already on %s — would finish bookkeeping only"
+                              % (slug, branch, remote))
+            return result
+        result["pr"] = pr.get("number") if pr else None
+        result["pr_url"] = pr.get("url") if pr else None
+        done_path = finish(root, slug, data, pr=result["pr"],
+                           pr_url=result["pr_url"], commit=None, now=now)
+        result.update(status="skipped", reason="branch-exists",
+                      log="%s: branch %s already on %s (this manifest's own) — bookkeeping "
+                          "completed, manifest -> %s" % (slug, branch, remote, done_path))
+        return result
+    if state["local"]:
+        raise Refused("branch %s already exists locally but not on %s — a previous run "
+                      "died between the worktree and the push. Delete the local branch "
+                      "(`git branch -D %s`) and the next run will retry."
+                      % (branch, remote, branch))
+
+    if dry_run:
+        result.update(status="skipped", reason="dry-run",
+                      log="%s: would land %d file(s) on %s from %s"
+                          % (slug, len(payload), branch, base_ref))
+        return result
+
+    wt = repo / WORKTREE_SUBDIR / ("pm-%s" % slug)
+    _worktree_clear(repo, wt)
+    wt.parent.mkdir(parents=True, exist_ok=True)
+
+    pushed = False
+    try:
+        add = _run(["git", "worktree", "add", "-b", branch, str(wt), base_ref], repo)
+        if add.returncode != 0:
+            raise Refused("git worktree add failed: %s" % add.stderr.strip())
+
+        for rel, blob in payload.items():
+            dst = wt / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_bytes(blob)
+
+        # EXPLICIT paths, never `-A`. The worktree is fresh so nothing else could ride
+        # along, and naming them anyway is what makes that true by construction rather
+        # than by the worktree happening to be clean.
+        added = _run(["git", "add", "--"] + data["files"], wt)
+        if added.returncode != 0:
+            raise Refused("git add failed: %s" % added.stderr.strip())
+
+        if _run(["git", "diff", "--cached", "--quiet"], wt).returncode == 0:
+            # Every listed file is already byte-identical to base. Committing would open a
+            # PR that changes nothing and burn a full CI run; the manifest is simply done.
+            _worktree_drop(repo, wt)
+            _run(["git", "branch", "-D", branch], repo)
+            done_path = finish(root, slug, data, pr=None, pr_url=None, commit=None, now=now)
+            result.update(status="skipped", reason="already-on-main",
+                          log="%s: every listed file already matches %s — nothing to land; "
+                              "manifest -> %s" % (slug, base_ref, done_path))
+            return result
+
+        message = commit_message_for(data, slug, manifest_rel)
+        committed = _run(["git", "commit", "-m", message], wt)
+        if committed.returncode != 0:
+            raise Refused("git commit failed: %s"
+                          % ((committed.stderr or committed.stdout).strip()))
+        commit = _run(["git", "rev-parse", "HEAD"], wt).stdout.strip()
+
+        push = _run(["git", "push", "-u", remote, branch], wt)
+        if push.returncode != 0:
+            raise Refused("git push failed: %s" % push.stderr.strip())
+        pushed = True
+
+        opened = open_pr(repo, repo_slug, base, branch, data["title"], data["body"])
+    finally:
+        _worktree_drop(repo, wt)
+        if not pushed:
+            # Nothing reached the remote, so leave no local branch behind — otherwise the
+            # next run reads `branch-exists` and refuses forever on a state it created.
+            _run(["git", "branch", "-D", branch], repo)
+
+    if not opened["ok"]:
+        result.update(status="landed-no-pr", reason="pr-create-failed",
+                      log="%s: pushed %s but `gh pr create` failed: %s — the branch carries "
+                          "the commit; the next run retries the PR"
+                          % (slug, branch, opened["error"]))
+        return result
+
+    result["pr"] = opened["number"]
+    result["pr_url"] = opened["url"]
+    done_path = finish(root, slug, data, pr=opened["number"], pr_url=opened["url"],
+                       commit=commit, now=now)
+    result.update(status="landed", reason=None,
+                  log="%s: landed %d file(s) on %s -> %s; manifest -> %s"
+                      % (slug, len(payload), branch, opened["url"] or "(no url)", done_path))
+    return result
+
+
+def land(repo: Path, root: Path, *, remote: str = "origin", base: str = "main",
+         repo_slug: str | None = None, now: str = "", dry_run: bool = False) -> dict:
+    results = []
+    for path in sorted(root.glob("*.json")):
+        if path.name.startswith("."):
+            continue
+        try:
+            results.append(land_one(repo, root, path, remote=remote, base=base,
+                                    repo_slug=repo_slug, now=now, dry_run=dry_run))
+        except Refused as e:
+            # A refusal is DATA. One bad manifest must not stop the others from landing,
+            # and the operator needs the reason, not a stack trace in a log nobody reads.
+            results.append({"slug": path.stem, "manifest": path.name, "status": "refused",
+                            "reason": str(e), "branch": None, "pr": None, "pr_url": None,
+                            "files": [], "log": "%s: REFUSED — %s" % (path.stem, e)})
+    landed = [r for r in results if r["status"].startswith("landed")]
+    refused = [r for r in results if r["status"] == "refused"]
+    return {"verb": "land", "dir": str(root), "base": "%s/%s" % (remote, base),
+            "results": results, "landed": landed, "refused": refused,
+            "skipped": [r for r in results if r["status"] == "skipped"],
+            # The scheduled task's whole poke rule, computed here so the two cannot drift:
+            # a PR was opened, or a manifest was refused. Routine skips are silent.
+            "poke": bool(landed or refused)}
+
+
+# --------------------------------------------------------------------------------------
+# sweep — delete the untracked copies the PM left in the checkout, once main has them
+# --------------------------------------------------------------------------------------
+
+
+def sweep_one(repo: Path, path: Path, base_ref: str, dry_run: bool) -> dict:
+    slug = path.stem
+    data = parse_manifest(path)
+    deleted, kept = [], []
+
+    for rel in data.get("expect_untracked") or []:
+        abs_path = repo / rel
+        if not abs_path.exists():
+            continue                                   # a previous sweep, or a pull
+        if abs_path.is_symlink() or not abs_path.is_file():
+            kept.append({"path": rel, "why": "not a regular file"})
+            continue
+        if _is_tracked(repo, rel):
+            # The 2026-09-02 incident, made impossible. A tracked file's deletion is a
+            # staged change in the operator's main checkout — exactly the thing this tool
+            # is built never to make.
+            kept.append({"path": rel, "why": "tracked — a delete would stage a change"})
+            continue
+        want = _blob_at(repo, base_ref, rel)
+        if want is None:
+            kept.append({"path": rel, "why": "not on %s yet" % base_ref})
+            continue
+        have = _hash_file(repo, abs_path)
+        if have != want:
+            # Byte-identity with base is the property that makes the delete safe, and it
+            # is strictly stronger than "the PR merged": it holds whether the PR was
+            # squashed, rebased, or partly amended on the way in, and it fails when the
+            # operator edited the copy afterwards — in which case deleting it would
+            # destroy their edit.
+            kept.append({"path": rel, "why": "differs from %s — an edit would be lost"
+                                             % base_ref})
+            continue
+        if not dry_run:
+            abs_path.unlink()
+        deleted.append(rel)
+
+    if deleted and not dry_run:
+        data["swept"] = sorted(set((data.get("swept") or []) + deleted))
+        payload = json.dumps(data, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
+        tmp = path.with_name(".%s.json.tmp" % slug)
+        tmp.write_text(payload, encoding="utf-8")
+        os.replace(tmp, path)
+
+    log = ""
+    if deleted:
+        log = "%s: swept %d landed cop%s (%s)" % (
+            slug, len(deleted), "y" if len(deleted) == 1 else "ies", ", ".join(deleted))
+    return {"slug": slug, "status": "swept" if deleted else "clean",
+            "deleted": deleted, "kept": kept, "log": log}
+
+
+def sweep(repo: Path, root: Path, *, remote: str = "origin", base: str = "main",
+          dry_run: bool = False) -> dict:
+    done_dir = root / DONE_SUBDIR
+    base_ref = "%s/%s" % (remote, base)
+    fetched = _run(["git", "fetch", remote, base], repo)
+    if fetched.returncode != 0:
+        raise Refused("git fetch %s %s failed: %s" % (remote, base, fetched.stderr.strip()))
+
+    results, refused = [], []
+    if done_dir.is_dir():
+        for path in sorted(done_dir.glob("*.json")):
+            if path.name.startswith("."):
+                continue
+            try:
+                results.append(sweep_one(repo, path, base_ref, dry_run))
+            except Refused as e:
+                refused.append({"slug": path.stem, "status": "refused", "reason": str(e),
+                                "deleted": [], "kept": [],
+                                "log": "%s: REFUSED — %s" % (path.stem, e)})
+    deleted = [p for r in results for p in r["deleted"]]
+    return {"verb": "sweep", "dir": str(done_dir), "base": base_ref,
+            "results": results + refused, "deleted": deleted, "refused": refused,
+            # Deleting a landed copy is routine hygiene and pokes nobody; a done manifest
+            # that no longer parses is a finding.
+            "poke": bool(refused)}
+
+
+# --------------------------------------------------------------------------------------
+# CLI
+# --------------------------------------------------------------------------------------
+
+
+def _utc_now() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _repo_slug(repo: Path) -> str | None:
+    """The `repo_slug` from `.claude/meta.json`, so `gh` is never ambiguous about which
+    remote it is talking to when the run happens inside a worktree."""
+    try:
+        data = json.loads((repo / ".claude" / "meta.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    slug = data.get("repo_slug")
+    return slug if isinstance(slug, str) and slug.strip() else None
+
+
+def _build_parser():
+    ap = argparse.ArgumentParser(
+        prog="pm-landing",
+        description="Land the PM's staged manifests as branches + PRs (D-PM9).")
+    ap.add_argument("--dir", default=DEFAULT_DIR,
+                    help="manifest dir (default %s)" % DEFAULT_DIR)
+    ap.add_argument("--sweep", action="store_true",
+                    help="instead of landing: delete the untracked copies of files this "
+                         "tool already landed, once %s carries them byte-identically"
+                         % "origin/main")
+    ap.add_argument("--remote", default="origin")
+    ap.add_argument("--base", default="main")
+    ap.add_argument("--repo-slug", default=None,
+                    help="owner/name for gh (default: .claude/meta.json)")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="report what would happen; change nothing")
+    ap.add_argument("--json", action="store_true", help="machine-readable output")
+    return ap
+
+
+def main(argv=None):
+    args = _build_parser().parse_args(argv)
+
+    root = Path(args.dir).expanduser()
+    repo = _repo_root(root if root.is_dir() else Path.cwd())
+    if repo is None:
+        print("pm-landing: not inside a git repository", file=sys.stderr)
+        return EXIT_REFUSED
+    if os.path.realpath(str(repo)) == os.path.realpath(DEPLOY_CHECKOUT):
+        print("pm-landing: refusing to run in the deploy checkout (%s) — the repo-puller "
+              "pulls it --ff-only every 15 minutes and the files this tool writes are "
+              "untracked there. Run it in the operator's dev clone." % DEPLOY_CHECKOUT,
+              file=sys.stderr)
+        return EXIT_REFUSED
+    root = root.resolve() if root.is_dir() else (repo / args.dir)
+    if not root.is_dir():
+        print("pm-landing: no manifest dir at %s" % root, file=sys.stderr)
+        return EXIT_REFUSED
+
+    try:
+        if args.sweep:
+            result = sweep(repo, root, remote=args.remote, base=args.base,
+                           dry_run=args.dry_run)
+        else:
+            result = land(repo, root, remote=args.remote, base=args.base,
+                          repo_slug=args.repo_slug or _repo_slug(repo),
+                          now=_utc_now(), dry_run=args.dry_run)
+    except Refused as e:
+        print("pm-landing: refused: %s" % e, file=sys.stderr)
+        return EXIT_REFUSED
+    except OSError as e:
+        print("pm-landing: %s" % e, file=sys.stderr)
+        return EXIT_REFUSED
+
+    if args.json:
+        sys.stdout.write(json.dumps(result, indent=2, ensure_ascii=False) + "\n")
+    else:
+        lines = [r["log"] for r in result["results"] if r.get("log")]
+        sys.stdout.write(("\n".join(lines) if lines else
+                          "nothing to do (%s)" % result["dir"]) + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

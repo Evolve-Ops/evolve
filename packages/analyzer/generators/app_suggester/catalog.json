@@ -1,0 +1,255 @@
+[
+  {
+    "category": "health_tracking",
+    "title": "Daily health check-in",
+    "description": "Log mood, sleep quality, symptoms, and medications via conversation \u2014 builds a personal health timeline you can review over time",
+    "example_apps": [
+      "daily-health-log",
+      "symptom-tracker",
+      "medication-reminder"
+    ],
+    "tags": [
+      "domain:health",
+      "intent:explore"
+    ]
+  },
+  {
+    "category": "weekly_reflection",
+    "title": "Weekly reflection and intention-setting",
+    "description": "End-of-week review and next-week planning via structured prompts \u2014 captures what went well, what didn't, and your focus for the coming week",
+    "example_apps": [
+      "weekly-review",
+      "intention-setter",
+      "journaling-assistant"
+    ],
+    "tags": [
+      "domain:productivity",
+      "intent:explore"
+    ]
+  },
+  {
+    "category": "personal_finance",
+    "title": "Personal finance tracker",
+    "description": "Log expenses, track spending patterns, and get weekly summaries by category \u2014 conversational budgeting without a spreadsheet",
+    "example_apps": [
+      "expense-log",
+      "budget-tracker",
+      "subscription-watcher"
+    ],
+    "tags": [
+      "domain:finance",
+      "intent:explore"
+    ]
+  },
+  {
+    "category": "learning_log",
+    "title": "Learning and reading log",
+    "description": "Track books, articles, courses, and key takeaways \u2014 builds a personal knowledge base from what you're consuming",
+    "example_apps": [
+      "reading-log",
+      "course-tracker",
+      "insight-capture"
+    ],
+    "tags": [
+      "domain:learning",
+      "intent:explore"
+    ]
+  },
+  {
+    "category": "fitness_tracking",
+    "title": "Workout and activity log",
+    "description": "Log workouts, track personal records, and see progress trends \u2014 quick voice-style logging after each session",
+    "example_apps": [
+      "workout-log",
+      "run-tracker",
+      "strength-progress"
+    ],
+    "tags": [
+      "domain:fitness",
+      "intent:explore"
+    ]
+  },
+  {
+    "category": "creative_capture",
+    "title": "Creative ideas capture",
+    "description": "Quickly capture and develop creative ideas \u2014 project concepts, writing seeds, design directions \u2014 before they slip away",
+    "example_apps": [
+      "idea-capture",
+      "creative-journal",
+      "project-seed"
+    ],
+    "tags": [
+      "domain:creative",
+      "intent:explore"
+    ]
+  },
+  {
+    "category": "social_connections",
+    "title": "Relationship and social log",
+    "description": "Track meaningful conversations, follow-up intentions, and notes about people you care about \u2014 thoughtful connection maintenance",
+    "example_apps": [
+      "contact-notes",
+      "follow-up-tracker",
+      "relationship-log"
+    ],
+    "tags": [
+      "domain:social",
+      "intent:explore"
+    ]
+  },
+  {
+    "category": "meeting_prep",
+    "title": "Meeting preparation assistant",
+    "description": "Pre-meeting research, agenda drafting, and follow-up capture \u2014 never go into a meeting unprepared again",
+    "example_apps": [
+      "meeting-prep",
+      "agenda-builder",
+      "follow-up-capture"
+    ],
+    "tags": [
+      "domain:productivity",
+      "intent:explore"
+    ]
+  },
+  {
+    "category": "gratitude_practice",
+    "title": "Daily gratitude and mood journal",
+    "description": "Brief daily check-in capturing gratitude, mood, and one highlight \u2014 builds long-term wellbeing patterns from small daily inputs",
+    "example_apps": [
+      "gratitude-log",
+      "mood-tracker",
+      "daily-highlight"
+    ],
+    "tags": [
+      "domain:health",
+      "domain:productivity",
+      "intent:explore"
+    ]
+  },
+  {
+    "category": "project_momentum",
+    "title": "Personal project tracker",
+    "description": "Track side projects, goals, and next actions \u2014 lightweight enough to actually use, just tell the bot what you did and what's next",
+    "example_apps": [
+      "project-tracker",
+      "goal-log",
+      "next-action-capture"
+    ],
+    "tags": [
+      "domain:productivity",
+      "intent:explore"
+    ]
+  },
+  {
+    "category": "meal_planning",
+    "title": "Meal planning log",
+    "description": "Plan weekly meals, jot recipes you want to try, track favorites \u2014 your home kitchen working file.",
+    "example_apps": [
+      "meal-planner",
+      "recipe-vault",
+      "weekly-meals"
+    ],
+    "tags": [
+      "domain:food",
+      "intent:explore"
+    ]
+  },
+  {
+    "category": "household_upkeep",
+    "title": "Household upkeep tracker",
+    "description": "Log chores, repairs, garden tasks, and seasonal home work \u2014 keep a running record so the bot can remind you when things are due.",
+    "example_apps": [
+      "chore-log",
+      "home-maintenance",
+      "garden-journal"
+    ],
+    "tags": [
+      "domain:home",
+      "intent:explore"
+    ]
+  },
+  {
+    "category": "family_log",
+    "title": "Family schedule and milestones",
+    "description": "Track school events, kids' appointments, family milestones, and household scheduling \u2014 distinct from a personal calendar in scope.",
+    "example_apps": [
+      "family-calendar",
+      "kids-milestones",
+      "school-tracker"
+    ],
+    "tags": [
+      "domain:family",
+      "intent:explore"
+    ]
+  },
+  {
+    "category": "entertainment_log",
+    "title": "Watchlist and playlog",
+    "description": "Track movies, shows, games you want to try and what you've finished \u2014 conversational memory for your downtime decisions.",
+    "example_apps": [
+      "watchlist",
+      "gaming-log",
+      "showtracker"
+    ],
+    "tags": [
+      "domain:entertainment",
+      "intent:explore"
+    ]
+  },
+  {
+    "category": "travel_log",
+    "title": "Trip planning and memories",
+    "description": "Plan upcoming trips, capture itinerary thoughts, log memories from past travel \u2014 your travel-thinking workspace.",
+    "example_apps": [
+      "trip-planner",
+      "travel-journal",
+      "itinerary-keeper"
+    ],
+    "tags": [
+      "domain:travel",
+      "intent:explore"
+    ]
+  },
+  {
+    "category": "music_log",
+    "title": "Practice and playlist log",
+    "description": "Log practice sessions, track learning pieces, save discoveries \u2014 for active musicians or active listeners.",
+    "example_apps": [
+      "practice-log",
+      "playlist-thoughts",
+      "music-journal"
+    ],
+    "tags": [
+      "domain:music",
+      "intent:explore"
+    ]
+  },
+  {
+    "category": "career_log",
+    "title": "Career notes and interview prep",
+    "description": "Track career goals, interview prep, professional development \u2014 distinct from day-to-day productivity in scope and audience.",
+    "example_apps": [
+      "career-tracker",
+      "interview-prep",
+      "professional-journal"
+    ],
+    "tags": [
+      "domain:work",
+      "intent:explore"
+    ]
+  },
+  {
+    "category": "pet_care_log",
+    "title": "Pet care log",
+    "description": "Track vet visits, medications, feeding routines, behavior changes \u2014 a working record for your pets' care.",
+    "example_apps": [
+      "pet-care-log",
+      "vet-tracker",
+      "pet-journal"
+    ],
+    "tags": [
+      "domain:pets",
+      "intent:explore"
+    ]
+  }
+]

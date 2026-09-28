@@ -1,0 +1,7 @@
+{
+  "_comment": "The 2026-04-29 publickey-wedge shape: every recent tick is an ERROR, no success marker in the tail. Drives health._repo_puller_verdict().",
+  "log_lines": [
+    "[repo-puller] ERROR: pull --ff-only failed: Permission denied (publickey)."
+  ],
+  "age_seconds": 300
+}

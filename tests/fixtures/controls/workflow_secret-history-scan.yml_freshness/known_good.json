@@ -1,0 +1,8 @@
+{
+  "_comment": "Both event queries reachable, a run landed yesterday — well inside the 16-day freshness window. tests/test_ci_freshness.py::test_known_good_fixture_is_ok",
+  "sched_reachable": true,
+  "disp_reachable": true,
+  "any_runs_found": true,
+  "latest_run": {"id": "1001", "url": "https://example.invalid/actions/runs/1001"},
+  "latest_run_age_days": 1
+}

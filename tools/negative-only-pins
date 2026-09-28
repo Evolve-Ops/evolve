@@ -1,0 +1,248 @@
+#!/usr/bin/env python3
+"""negative-only-pins — report test subjects that NOTHING pins positively.
+
+The property (D-CS7, in test form): *a control fails silently when its passing
+condition can be satisfied by the absence of evidence.* A test whose only
+assertion is ``is None`` / ``=== undefined`` is satisfied both by "the subject
+correctly refused this input" and by "the subject resolves nothing at all". On
+its own that is fine — a pure function's ``unknown key -> None`` contract is
+exactly what it should assert. It stops being fine when NO test anywhere
+asserts a non-null result from that subject, because then a version of it that
+answers nothing passes every test it has.
+
+That is the criterion this script implements, and implementing it is the point.
+On 2026-09-17 the PM lane ran it as an ad-hoc regex and reported NINE subjects
+in the plugin suite. Eight were wrong: the regex only saw calls written INSIDE
+the assertion, and the suite's dominant style is
+
+    const result = subject(...);
+    assert.deepEqual(result, { ... });     # positive, and invisible to it
+
+so eight subjects with ordinary positive coverage were reported as unpinned.
+A checked-in implementation with its own test is the fix for a criterion that
+is easy to state and easy to get wrong.
+
+REPORTING ONLY. This is not a gate and has no baseline: the output is a list to
+read, not a ratchet, because most hits are legitimate and deciding which are
+not is a judgement a script should not make.
+
+  tools/negative-only-pins                 # the plugin (.mjs) suite
+  tools/negative-only-pins --python        # the admin/analyzer (.py) suites
+  tools/negative-only-pins --json
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# Names that appear in an assertion without being its subject.
+_NOISE = frozenset({
+    "assert", "equal", "strictEqual", "deepEqual", "deepStrictEqual", "ok",
+    "notEqual", "notDeepEqual", "match", "throws", "rejects", "test", "it",
+    "expect", "JSON", "parse", "stringify", "String", "Number", "Boolean",
+    "Object", "Array", "Map", "Set", "Date", "Math", "len", "str", "int",
+    "float", "list", "dict", "set", "tuple", "sorted", "isinstance", "print",
+    "pytest", "raises", "getattr", "hasattr", "repr", "type", "any", "all",
+})
+
+_NULLISH_JS = re.compile(r",\s*(null|undefined)\s*[,)]")
+_NULLISH_PY = re.compile(r"\bis\s+None\b|==\s*None\b")
+_CALL = re.compile(r"([A-Za-z_][A-Za-z0-9_.]*)\s*\(")
+_ASSIGN_JS = re.compile(r"(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?([^;]*?);", re.S)
+_ASSIGN_PY = re.compile(r"^\s*(\w+)\s*=\s*(.+)$", re.M)
+_IMPORT_JS = re.compile(r"import\s*\{([^}]*)\}\s*from\s*['\"]([^'\"]+)['\"]", re.S)
+_IMPORT_PY = re.compile(
+    r"^\s*(?:from\s+([\w.]+)\s+import\s+([^\n#]+)|import\s+([\w.]+))", re.M)
+
+
+def _imported(src: str, lang: str) -> set[str]:
+    """Names this test file imports from the code under test.
+
+    The filter that makes the criterion mean anything. Without it the scan
+    reports a file's own fixture builders — `mkConfig`, `fakeRegistry`,
+    `nonce` — as unpinned subjects, which is true and useless: a test helper
+    is not a control, and nobody should add an assertion about one. Only a
+    name the file IMPORTS is a subject under test.
+
+    A relative import only, so a name pulled from `node:assert` or `pytest`
+    is not mistaken for the code under test.
+    """
+    out = set()
+    if lang == "js":
+        for m in _IMPORT_JS.finditer(src):
+            if not m.group(2).startswith("."):
+                continue
+            for part in m.group(1).split(","):
+                name = part.split(" as ")[-1].strip()
+                if name:
+                    out.add(name.lstrip("_"))
+    else:
+        for m in _IMPORT_PY.finditer(src):
+            names = m.group(2) or m.group(3) or ""
+            for part in names.replace("(", "").replace(")", "").split(","):
+                name = part.split(" as ")[-1].strip()
+                if name and name != "*":
+                    out.add(name.split(".")[-1].lstrip("_"))
+    return out
+
+
+def _close(bound: dict[str, set[str]]) -> dict[str, set[str]]:
+    """Resolve bindings through each other, to a fixed point.
+
+    `const h = makeHandler(...)` then `const out = h(ev)` then
+    `assert.ok(out.result)` is a POSITIVE pin on `makeHandler`, two hops away.
+    A one-hop map reports `makeHandler` as unpinned, which is how the second
+    draft of this script still produced three false findings.
+    """
+    for _ in range(4):  # depth cap: these chains are two or three hops at most
+        changed = False
+        for var, owners in bound.items():
+            extra = set()
+            for o in list(owners):
+                extra |= bound.get(o, set())
+            if not extra <= owners:
+                owners |= extra
+                changed = True
+        if not changed:
+            break
+    return bound
+
+
+def _subjects(expr: str) -> set[str]:
+    """Every called name in `expr`, leading underscore stripped.
+
+    The underscore strip is what keeps an aliased import — the suite imports
+    `triggerKindToSessionClass` as `_triggerKindToSessionClass` in one file —
+    from reading as a different subject with no positive coverage.
+    """
+    out = set()
+    for m in _CALL.finditer(expr):
+        name = m.group(1).split(".")[-1].lstrip("_")
+        if name and name not in _NOISE:
+            out.add(name)
+    return out
+
+
+def _scan_js(path: Path):
+    """(positively pinned, negatively pinned) subjects in one .mjs test file."""
+    src = path.read_text(encoding="utf-8", errors="replace")
+    # A name only ever CONSTRUCTED is not a subject whose return a test can
+    # assert — `new ExecFailureAbsorber(...)` yields an instance, and what a
+    # test pins is what its methods answer. Dropping constructors is what took
+    # this scan from three findings to none; each of those three was an
+    # artifact, not a gap.
+    constructed = {m.group(1).lstrip("_") for m in re.finditer(r"new\s+([A-Za-z_]\w*)\s*\(", src)}
+    imported = _imported(src, "js") - constructed
+    pos, neg = set(), {}
+    # Variables bound to a call, so `const r = f(); assert.equal(r, X)` counts
+    # as a pin on `f` — the pattern the ad-hoc regex missed.
+    bound: dict[str, set[str]] = {}
+    for m in _ASSIGN_JS.finditer(src):
+        subs = _subjects(m.group(2))
+        if subs:
+            bound.setdefault(m.group(1), set()).update(subs)
+    _close(bound)
+    for m in re.finditer(r"assert\.[a-zA-Z]+\([^;]*?\);", src, re.S):
+        text = " ".join(m.group(0).split())
+        subs = _subjects(text)
+        for var, owners in bound.items():
+            if re.search(r"[(\s,]%s\b" % re.escape(var), text):
+                subs |= owners
+        if not subs:
+            continue
+        # Positives widen freely — a name pinned anywhere is pinned. Negatives
+        # are narrowed to imported subjects, so a local helper never becomes a
+        # finding.
+        if _NULLISH_JS.search(text):
+            for s in subs & imported:
+                neg.setdefault(s, []).append(path.name)
+        else:
+            pos |= subs
+    return pos, neg
+
+
+def _scan_py(path: Path):
+    src = path.read_text(encoding="utf-8", errors="replace")
+    imported = _imported(src, "py")
+    pos, neg = set(), {}
+    bound: dict[str, set[str]] = {}
+    for m in _ASSIGN_PY.finditer(src):
+        subs = _subjects(m.group(2))
+        if subs:
+            bound.setdefault(m.group(1), set()).update(subs)
+    _close(bound)
+    for line in src.splitlines():
+        t = line.strip()
+        if not t.startswith("assert "):
+            continue
+        subs = _subjects(t)
+        for var, owners in bound.items():
+            if re.search(r"[\s(,]%s\b" % re.escape(var), " " + t):
+                subs |= owners
+        if not subs:
+            continue
+        if _NULLISH_PY.search(t):
+            for s in subs & imported:
+                neg.setdefault(s, []).append(path.name)
+        else:
+            pos |= subs
+    return pos, neg
+
+
+def survey(paths, scan) -> list[dict]:
+    pos_all, neg_all = set(), {}
+    for p in paths:
+        pos, neg = scan(p)
+        pos_all |= pos
+        for s, files in neg.items():
+            neg_all.setdefault(s, []).extend(files)
+    rows = [
+        {"subject": s, "negative_tests": len(f), "files": sorted(set(f))}
+        for s, f in neg_all.items() if s not in pos_all
+    ]
+    rows.sort(key=lambda r: (-r["negative_tests"], r["subject"]))
+    return rows
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--python", action="store_true",
+                    help="scan the admin/analyzer pytest suites instead of the plugin's")
+    ap.add_argument("--json", action="store_true")
+    args = ap.parse_args(argv)
+
+    if args.python:
+        paths = sorted(
+            list((REPO_ROOT / "packages/admin/tests").glob("test_*.py"))
+            + list((REPO_ROOT / "packages/analyzer/tests").glob("test_*.py"))
+        )
+        rows = survey(paths, _scan_py)
+    else:
+        paths = sorted((REPO_ROOT / "packages/plugin/tests").glob("*.mjs"))
+        rows = survey(paths, _scan_js)
+
+    if args.json:
+        print(json.dumps({"files": len(paths), "subjects": rows}, indent=1))
+        return 0
+    print("scanned %d test files" % len(paths))
+    if not rows:
+        print("no subject is pinned only negatively.")
+        return 0
+    print("subjects with NO positive assertion anywhere "
+          "(a version returning nothing would pass every test it has):")
+    for r in rows:
+        print("  %-34s %2d negative test(s)  %s"
+              % (r["subject"], r["negative_tests"], ", ".join(r["files"])))
+    print("\nReporting only. A hit is a QUESTION — read the tests before changing "
+          "one; indirect coverage through a caller is real coverage and this "
+          "script cannot see it.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

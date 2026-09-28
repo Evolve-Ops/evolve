@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+"""oc-surface-snapshot — emit a canonical, diffable snapshot of OpenClaw's surface.
+
+A *surface snapshot* captures, for one OpenClaw version, the things Evolve
+builds on top of: the CLI command/flag surface, the bundled-extension set, the
+union channel catalog, the config-schema keys, and (when an ``oc_deps``
+manifest exists) fingerprints of the artifacts Evolve depends on. Output is
+sorted JSON, so two versions diff cleanly.
+
+This is the standalone front-end for ``evolve_admin.oc_surface``; the same
+library is wired into ``update_watcher`` to drift-diff every OC bump
+automatically (see internal/openclaw-coverage-audit-2026-06-04.md F1/F2 and the
+``updates.openclaw_surface_drift`` Signal).
+
+Examples
+--------
+    # Snapshot the OpenClaw installed on this host:
+    $ tools/oc-surface-snapshot --installed > /tmp/oc-installed.json
+
+    # Snapshot a specific dist tree (e.g. a staging worktree):
+    $ tools/oc-surface-snapshot --oc-root /opt/homebrew/lib/node_modules/openclaw
+
+    # Snapshot a candidate from a downloaded npm tarball:
+    $ tools/oc-surface-snapshot --tarball /tmp/openclaw-2026.6.5.tgz --version 2026.6.5
+
+    # Diff two snapshots and print the drift (exit 1 on any change):
+    $ tools/oc-surface-snapshot --diff /tmp/oc-installed.json /tmp/oc-candidate.json
+
+Exit codes
+----------
+0 — snapshot emitted, or ``--diff`` found no surface changes
+1 — ``--diff`` found surface changes (intended for CI / scripted use)
+2 — usage / IO error (no OpenClaw found, unreadable tarball, bad path)
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+from types import ModuleType
+
+_REPO = Path(__file__).resolve().parent.parent
+_OC_SURFACE_SRC = _REPO / "packages" / "admin" / "evolve_admin" / "oc_surface.py"
+
+
+def _load_oc_surface() -> ModuleType:
+    """Load the oc_surface module directly by path (no evolve_admin __init__
+    side effects), mirroring tools/check-public-manifest."""
+    return SourceFileLoader("oc_surface", str(_OC_SURFACE_SRC)).load_module()
+
+
+def _resolve_cli_path() -> str | None:
+    """Best-effort path to a runnable ``openclaw`` for --help parsing."""
+    import shutil
+    for cand in (
+        "/opt/homebrew/bin/openclaw",
+        "/usr/local/bin/openclaw",
+    ):
+        if Path(cand).exists():
+            return cand
+    return shutil.which("openclaw")
+
+
+def main(argv: list[str] | None = None) -> int:
+    ocs = _load_oc_surface()
+
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    src = parser.add_mutually_exclusive_group()
+    src.add_argument(
+        "--installed", action="store_true",
+        help="Snapshot the OpenClaw installed on this host.",
+    )
+    src.add_argument(
+        "--oc-root", type=Path, metavar="PATH",
+        help="Snapshot the OpenClaw package root at PATH "
+             "(the directory containing package.json + dist/).",
+    )
+    src.add_argument(
+        "--tarball", type=Path, metavar="PATH",
+        help="Snapshot a candidate from an npm .tgz tarball.",
+    )
+    parser.add_argument(
+        "--version", default=None,
+        help="Record this OpenClaw version string in the snapshot (provenance only).",
+    )
+    parser.add_argument(
+        "--no-cli", action="store_true",
+        help="Skip the runnable --help CLI probe (file-derived surfaces only).",
+    )
+    parser.add_argument(
+        "--diff", nargs=2, metavar=("OLD", "NEW"),
+        help="Diff two previously-emitted snapshot JSON files and print the drift. "
+             "Exits 1 if any surface changed.",
+    )
+    args = parser.parse_args(argv)
+
+    # ── Diff mode ───────────────────────────────────────────────────────────
+    if args.diff:
+        old_path, new_path = Path(args.diff[0]), Path(args.diff[1])
+        try:
+            old = json.loads(old_path.read_text())
+            new = json.loads(new_path.read_text())
+        except (OSError, ValueError) as e:
+            print(f"error: could not read snapshot(s): {e}", file=sys.stderr)
+            return 2
+        diff = ocs.diff_snapshots(old, new)
+        cross = ocs.cross_reference_dependencies(diff)
+        print(json.dumps(
+            {"diff": diff, "dependency_cross_reference": cross,
+             "summary": ocs.summarize_diff(diff, cross)},
+            sort_keys=True, indent=2,
+        ))
+        return 1 if diff.get("any_change") else 0
+
+    # ── Snapshot mode ────────────────────────────────────────────────────────
+    source = None
+    tarball_source = None
+    if args.tarball:
+        try:
+            data = args.tarball.read_bytes()
+        except OSError as e:
+            print(f"error: could not read tarball {args.tarball}: {e}", file=sys.stderr)
+            return 2
+        try:
+            tarball_source = ocs.TarballSource(data)
+        except Exception as e:  # tarfile.TarError and friends
+            print(f"error: {args.tarball} is not a readable .tgz: {e}", file=sys.stderr)
+            return 2
+        source = tarball_source
+        cli_path = None  # a tarball isn't runnable
+    else:
+        root = args.oc_root
+        if root is None:  # --installed or default
+            root = ocs.installed_oc_root()
+        if root is None or not (Path(root) / "package.json").exists():
+            print(
+                "error: no OpenClaw package root found "
+                "(pass --oc-root or --tarball, or install openclaw)",
+                file=sys.stderr,
+            )
+            return 2
+        source = ocs.DirSource(Path(root))
+        cli_path = None if args.no_cli else _resolve_cli_path()
+
+    try:
+        snapshot = ocs.build_snapshot(source, version=args.version, cli_path=cli_path)
+    finally:
+        if tarball_source is not None:
+            tarball_source.close()
+
+    sys.stdout.write(ocs.snapshot_json(snapshot))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,156 @@
+# morning-briefing — the universal OpenClaw first-project template.
+#
+# Extracted from a real morning-briefing bot and parameterized
+# for any user. The pattern: one morning message, delivered at a configured
+# time, covering schedule + email highlights + weather + news. ~5 min to
+# set up from this template.
+#
+# Voice preset: "admin_bot-warm" — concise, no filler, warm but not cute.
+# Derived from admin_bot's SOUL.md: "be genuinely helpful, not performatively
+# helpful. Skip filler. Just help."
+#
+# Dependencies:
+#   - gmail (required): Gmail read (Google Workspace)
+#   - calendar (required): Calendar list (Google Workspace; shares Google OAuth with gmail)
+#   - weather (optional): current conditions + forecast
+#   - news (optional): RSS-based headlines filtered to user interests
+#
+# Applications:
+#   - Morning Briefing: the headline app — daily digest at configured time
+#   - Calendar Watch: lightweight — flags conflicts, surfaces first event
+
+name: morning-briefing
+display_name: Morning Briefing
+description: >
+  A bot that delivers one morning message covering your schedule, top emails,
+  weather, and (optionally) news headlines. The most popular OpenClaw first
+  project — set up in about five minutes. Based on admin_bot's daily briefing
+  pattern.
+
+voice_preset: admin_bot-warm
+channel_pattern: any-messaging
+
+skills:
+  - id: gmail
+    source: openclaw-plugin
+    optional: false
+    config:
+      # Gmail scope needed by the Morning Briefing app.
+      # Read-only: no send, no delete.
+      scopes:
+        - gmail.readonly
+    # The Gmail install flow walks the user through Google OAuth. Calendar
+    # (below) reuses the same google_workspace OAuth profile — one Google
+    # consent, two skills.
+
+  - id: calendar
+    source: openclaw-plugin
+    optional: false
+    config:
+      # Calendar scope needed by the Morning Briefing + Calendar Watch apps.
+      # Read-only: no calendar writes.
+      scopes:
+        - calendar.readonly
+    # Calendar shares the google_workspace:<bot_id> OAuth profile with the
+    # gmail skill (V2.1-3 split). Installing gmail first means calendar
+    # install reuses the existing token — no extra OAuth round-trip.
+
+  # Weather and news are no longer declared as separate skills.
+  # briefing.py fetches weather directly from wttr.in (zero-config, no API
+  # key) and news from RSS URLs via stdlib urllib. No plugin installation
+  # required — the operator configures location and news_sources template
+  # vars and the app handles the rest.
+  #
+  # See: gallery/bot-templates/morning-briefing/scripts/briefing.py
+  #      fetch_weather() and fetch_news() functions.
+
+  - id: obsidian
+    source: filesystem
+    optional: true
+    config:
+      # vault_path is the absolute path to the user's Obsidian vault directory.
+      # When set, the morning briefing includes a "Notes from your vault"
+      # section with the 3 most recently modified notes.
+      # Leave empty (or omit) to skip the vault section.
+      vault_path: ""
+    # No OAuth, no API key. Obsidian vaults are directories of Markdown files.
+    # The Obsidian skill installer (V1.5-2) validates the vault path at install
+    # time and sets up exec-approvals scoped to the vault directory only.
+
+applications:
+  - name: Morning Briefing
+    embedded_path: morning_briefing.json
+    skill_deps:
+      - gmail
+      - calendar
+    # weather and news are declared as optional skill deps at the app level
+    # via the app manifest's optional_skill_deps field; they don't need to
+    # be listed here as required (the app handles their absence gracefully).
+
+  - name: Calendar Watch
+    embedded_path: calendar_watch.json
+    skill_deps:
+      - calendar
+
+template_vars:
+  user_name:
+    description: >
+      How the bot should address you — first name or nickname.
+      Used in the morning message greeting and in AGENTS.md.
+    required: true
+    example: "Alex"
+
+  time_zone:
+    description: >
+      Your local timezone (IANA format). Used for scheduled delivery and
+      for interpreting calendar event times.
+      Note: the cron schedule is baked at deploy time using the current
+      UTC offset. If clocks change (daylight saving time), re-deploy to
+      keep the delivery time accurate — it will drift by 1 hour otherwise.
+    required: true
+    default: America/Los_Angeles
+    example: "America/New_York"
+
+  briefing_time:
+    description: >
+      What time the morning briefing should arrive (24-hour HH:MM in your
+      local timezone). The bot's cron will be configured to this time.
+    required: false
+    default: "07:00"
+    example: "06:30"
+
+  briefing_detail:
+    description: >
+      How much detail in the morning message.
+      - concise: greeting + today's events + top 2 emails + weather line
+      - standard: above + email summaries + news headlines (default)
+      - detailed: full email previews + extended forecast + longer news
+    required: false
+    default: standard
+    example: "concise"
+
+  news_sources:
+    description: >
+      Comma-separated RSS URLs or topic keywords for the news section.
+      Leave blank to skip news. Example: "HN top, https://rss.nytimes.com/..."
+    required: false
+    default: ""
+    example: "Hacker News,https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml"
+
+  location:
+    description: >
+      City or ZIP code for weather. Examples: "Seattle, WA" or "98101".
+      Used by the weather skill to fetch current conditions.
+    required: false
+    default: ""
+    example: "San Francisco, CA"
+
+  vault_path:
+    description: >
+      Absolute path to your Obsidian vault directory. When set, the morning
+      briefing includes a "Notes from your vault" section with your 3 most
+      recently modified notes (titles + first line). Leave blank to skip.
+      Example: "/Users/alex/Documents/Obsidian/MyVault"
+    required: false
+    default: ""
+    example: "/Users/alex/Documents/Obsidian"

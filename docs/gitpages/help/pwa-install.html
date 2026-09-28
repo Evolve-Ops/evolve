@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Install the Evolve app on your phone or desktop · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">pwa</span><span class="chip">add-to-home-screen</span><span class="chip">mobile-install</span><span class="chip">https</span><span class="chip">tailscale</span></div><div class="reviewed">Last reviewed 2026-06-23</div></div><h1 id="install-the-evolve-app-on-your-phone-or-desktop">Install the Evolve app on your phone or desktop</h1>
+<p>The Evolve admin dashboard is a Progressive Web App (PWA) — you can install it as
+a real app with its own icon, on a phone or on a desktop, straight from the
+browser. No app store, no separate download.</p>
+<hr>
+<h2 id="before-you-start-https-is-required-for-phone-install">Before you start: HTTPS is required for phone install</h2>
+<p>Browsers only offer the "install this app" option on a page served over <strong>HTTPS</strong>
+(or over <code>localhost</code>). On a phone you're not on localhost, so you need HTTPS
+first.</p>
+<p>The simplest way to get there is <strong>Tailscale</strong>, which gives your pod a private
+<code>https://…ts.net</code> address reachable only by your own devices — no domain name, no
+public exposure. Once Tailscale is running on the pod, enable HTTPS with one
+command:</p>
+<pre><code class="language-bash">sudo evolve-admin enable-https
+</code></pre>
+<p>Your dashboard URL changes from <code>http://your-host:5050</code> to
+<code>https://your-host.your-tailnet.ts.net</code>. Same dashboard, now installable on a
+phone. (If you run the dashboard LAN-only over plain HTTP, it still works in a
+browser — you just can't install it on a phone. That's a fine tradeoff for a
+single-laptop setup.)</p>
+<p>Make sure Tailscale is also installed and signed in on the phone you want to
+install the app on, so it can reach that address.</p>
+<hr>
+<h2 id="on-iphone-or-ipad-safari">On iPhone or iPad (Safari)</h2>
+<ol>
+<li>Open <strong>Safari</strong> and go to your pod's HTTPS URL.</li>
+<li>Tap the <strong>Share</strong> button (the square with an arrow).</li>
+<li>Tap <strong>Add to Home Screen</strong>.</li>
+<li>Confirm — the Evolve app appears on your home screen like any other app.</li>
+</ol>
+<blockquote>
+<p>Add to Home Screen only appears in <strong>Safari</strong> on iOS, not in Chrome or other
+browsers.</p>
+</blockquote>
+<hr>
+<h2 id="on-android-chrome">On Android (Chrome)</h2>
+<ol>
+<li>Open <strong>Chrome</strong> and go to your pod's HTTPS URL.</li>
+<li>Tap the <strong>install banner</strong> that appears at the bottom, <strong>or</strong> open the Chrome
+   menu (⋮) and tap <strong>Install app</strong> / <strong>Add to Home screen</strong>.</li>
+<li>The Evolve app installs and appears in your app drawer.</li>
+</ol>
+<hr>
+<h2 id="on-desktop-chrome-or-edge">On desktop (Chrome or Edge)</h2>
+<p>You can install the dashboard as a desktop app too — handy for a dedicated
+window with its own Dock/taskbar icon:</p>
+<ol>
+<li>Open <strong>Chrome</strong> or <strong>Edge</strong> and go to your dashboard URL.</li>
+<li>Click the <strong>install icon</strong> in the right-hand side of the address bar (a small
+   monitor/▾ icon), <strong>or</strong> open the browser menu and choose <strong>Install Evolve…</strong> /
+   <strong>Apps → Install this site as an app</strong>.</li>
+<li>The dashboard opens in its own window and gets an icon you can pin.</li>
+</ol>
+<p>Desktop install works over <code>http://localhost:5050</code> as well as over HTTPS, so you
+don't strictly need Tailscale for the desktop app — though HTTPS is still
+recommended, and it's required if you also want push notifications for alerts.</p>
+<hr>
+<h2 id="why-install-it">Why install it?</h2>
+<ul>
+<li><strong>One tap</strong> to your pod instead of typing a URL.</li>
+<li>A <strong>standalone window</strong> with no browser chrome.</li>
+<li>On a phone over HTTPS, the foundation for <strong>push notifications</strong> when an alert
+  fires.</li>
+</ul>
+<p>To set up the underlying HTTPS access this builds on, see your platform guide:
+<a href="install-macos.html">macOS</a> or <a href="install-linux-vsp.html">Linux/VPS</a>.</p>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/pwa-install.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>
