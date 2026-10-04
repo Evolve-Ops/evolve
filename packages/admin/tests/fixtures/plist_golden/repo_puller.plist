@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.evolve.evolve.repo-puller</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>umask 002; sleep $((RANDOM % 60)); exec /Users/Shared/evolve-venv/bin/evolve-admin repo-pull --quiet</string>
+    </array>
+    <key>UserName</key>
+    <string>evolve</string>
+    <key>StartInterval</key>
+    <integer>900</integer>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/Shared/evolve/logs/repo-puller.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/Shared/evolve/logs/repo-puller.err.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <!-- Kill-switch for daemon auto-restart on pull. Default 1 (ON).
+             Edit to 0 + `sudo launchctl bootout && bootstrap` to disable
+             in 30 seconds if auto-restart misbehaves in production. The
+             puller itself keeps running; only the post-pull kickstart of
+             dependent daemons (admin-ui, heal/audit/verify) is skipped. -->
+        <key>EVOLVE_PULLER_AUTO_RESTART</key>
+        <string>1</string>
+    </dict>
+</dict>
+</plist>

@@ -1,0 +1,8 @@
+{
+  "_comment": "AXIS: whether the capture gate reported, and nothing else. The bot had turns this week and the plugin's gate posted its counters (evaluated 12, matched 1) into the Board store: live. Replayed by packages/admin/tests/test_board_capture.py::test_capture_gate_control_fixtures.",
+  "_axis": "gate_reported",
+  "bot_id": "personal-bot",
+  "turns_seen": true,
+  "gate": {"evaluated": 12, "matched": 1},
+  "expect": {"status": "PASS", "category": "board", "detail_contains": "capture gate ok"}
+}

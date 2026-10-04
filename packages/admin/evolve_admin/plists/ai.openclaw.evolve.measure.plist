@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.openclaw.evolve.measure</string>
+    <key>UserName</key>
+    <string>evolve</string>
+    <!-- Args are intentionally minimal: with no bot-id flag, measure.py iterates every member in network.json and writes one per-bot file per date. Passing a bot-id of "all" silently produces only metrics/all.json. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/Shared/evolve-venv/bin/python3</string>
+        <string>/Users/Shared/evolve-repo/packages/analyzer/measure.py</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/evolve</string>
+        <key>EVOLVE_SHARED</key>
+        <string>/Users/Shared/evolve</string>
+    </dict>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>1</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/Shared/evolve/logs/measure.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/Shared/evolve/logs/measure.err</string>
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

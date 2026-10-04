@@ -1,0 +1,8 @@
+{
+  "_comment": "AXIS: the same bot and model with a cache that prices only some OTHER model — the cold/partial-cache state of the 2026-09-14 phone test, where every Board action read 'cost estimate unavailable'. The control must NAME the bot and the model it could not price, never a count. Replayed by packages/admin/tests/test_pricing_warm.py::test_known_bad_fixture_names_bot_and_model.",
+  "_axis": "fast_model_in_cache",
+  "bot_id": "team_bot_a",
+  "fast_model": "acme/fast-1",
+  "cache_models": [{"provider": "acme", "model_id": "other-2", "input_cost_per_token": 1e-06, "output_cost_per_token": 5e-06}],
+  "expect": {"status": "WARN", "category": "runtime", "detail_contains": "team_bot_a (acme/fast-1)"}
+}

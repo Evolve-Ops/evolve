@@ -1,0 +1,17 @@
+{
+  "_comment": "Atlas on-demand research limits + budget + refusal templates. Install at workspace/atlas/research-config.json.",
+  "per_member_rate": {
+    "queries_per_hour": 3,
+    "queries_per_day": 10
+  },
+  "pod_budget": {
+    "max_cost_usd_per_day": 1.00,
+    "max_queries_per_day": 100
+  },
+  "refusal_templates": {
+    "off_topic": "Not in my lane — I cover OC, AI agents, agent tooling, ecosystem case studies, and warnings.",
+    "strategy": "Strategy questions go to the operator, not me. I can tell you what's happening; I can't tell you what to do about it.",
+    "rate_limited": "You've asked {n} questions in the last hour — limit is {cap}. Try again at {next_window}.",
+    "budget_exceeded": "Research budget for today is spent (${spent} of ${cap}). The daily digest will still run tomorrow at {time}."
+  }
+}

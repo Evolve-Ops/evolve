@@ -1,0 +1,348 @@
+#!/usr/bin/env python3
+"""help-coverage-lint — anti-drift gate for the admin-page ↔ help-doc mapping.
+
+The admin UI describes each page in several places that drifted apart because
+nothing tied them together: the live sidebar (``data-page="…"`` in index.html),
+the help corpus frontmatter (``ui_surface:`` in docs/help/*.md), the Evo tray's
+per-page context, and packages/analyzer/evolve_bot/AGENTS.md. The root cause was
+the lack of a canonical registry. ``docs/help/_pages.yaml`` is now that registry;
+this lint validates the live UI, the registry, and the help corpus against each
+other so the mapping can't silently rot again.
+
+What it checks
+--------------
+BLOCK (non-zero exit) — high-confidence drift:
+  * a ``data-page`` in index.html with no row in _pages.yaml (a NEW page that
+    nobody registered), or a registry row whose page_id is no longer a live
+    data-page (a stale/renamed row);
+  * a registry page with ``doc_status: present`` whose ``docs/help/<help_slug>.md``
+    is missing (a doc deleted/renamed out from under the registry);
+  * a ``docs/help/*.md`` whose ``ui_surface: admin.<x>`` resolves to no live page
+    id <x> (a stale frontmatter mapping — the exact bug this backbone kills);
+  * registry-integrity errors (missing required field, bad ``doc_status``,
+    help_slug/doc_status inconsistency, malformed ui_surface).
+
+WARN (printed, does not fail):
+  * registry pages whose ``help_slug`` is null — a page with no public doc;
+  * registry pages with ``doc_status: planned`` whose doc doesn't exist yet —
+    a known, actionable doc gap (a sibling content chip fills these);
+  * a present page whose doc back-links (via ui_surface) to a DIFFERENT live
+    page than the one it documents;
+  * pages not mentioned in AGENTS.md (by page_id or label).
+
+The AGENTS.md dimension starts warn-only. A sibling chip is adding the missing
+AGENTS.md page-tool coverage; once it lands, flip CI to ``--strict`` to promote
+that one dimension to BLOCK.
+# TODO(evo-asst): flip to block after AGENTS.md coverage chip — see --strict.
+
+Usage:
+  python3 tools/help-coverage-lint            # lint; exit 1 on any BLOCK
+  python3 tools/help-coverage-lint --strict   # additionally BLOCK on the
+                                              # AGENTS.md-coverage WARN
+  python3 tools/help-coverage-lint --quiet     # only print the table + findings
+
+Wired into .github/workflows/ci.yml as the ``help-coverage`` job.
+"""
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+from pathlib import Path
+
+try:
+    import yaml  # type: ignore
+except ImportError as exc:  # pragma: no cover — surfaced to operator/CI
+    sys.stderr.write(
+        f"help-coverage-lint: missing dependency: {exc.name}\n"
+        f"  install with: pip install pyyaml\n"
+    )
+    sys.exit(1)
+
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+INDEX_HTML = REPO_ROOT / "packages" / "admin" / "evolve_admin" / "web" / "index.html"
+HELP_DIR = REPO_ROOT / "docs" / "help"
+REGISTRY = HELP_DIR / "_pages.yaml"
+AGENTS_MD = REPO_ROOT / "packages" / "analyzer" / "evolve_bot" / "AGENTS.md"
+
+VALID_DOC_STATUS = ("present", "planned", "none")
+REQUIRED_FIELDS = ("page_id", "label", "bucket", "help_slug", "doc_status", "purpose")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sources
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# A sidebar nav item is a single-line div; the section divider precedes a group.
+# data-page values that are JS template expressions (``${...}``) are dynamic
+# clones, not real sidebar pages — skip them.
+_NAV_SECTION = re.compile(r'<div class="nav-section">([^<]+)</div>')
+_NAV_ITEM = re.compile(r'class="nav-item[^"]*"')
+_DATA_PAGE = re.compile(r'data-page="([^"$][^"]*)"')
+_TAG = re.compile(r"<[^>]+>")
+_BADGE_SPAN = re.compile(r"<span\b[^>]*>.*?</span>", re.DOTALL)
+
+
+def live_pages() -> dict[str, dict[str, str]]:
+    """Parse the authoritative live sidebar from index.html.
+
+    Returns ``{page_id: {"label": ..., "bucket": ...}}`` for every static
+    ``data-page`` nav item (template-literal clones excluded). Order of first
+    appearance is preserved (dict insertion order).
+    """
+    text = INDEX_HTML.read_text(encoding="utf-8")
+    pages: dict[str, dict[str, str]] = {}
+    bucket = "top"  # items above the first nav-section divider
+    for line in text.splitlines():
+        sec = _NAV_SECTION.search(line)
+        if sec:
+            bucket = sec.group(1).strip()
+            continue
+        if not _NAV_ITEM.search(line):
+            continue
+        m = _DATA_PAGE.search(line)
+        if not m:
+            continue
+        page_id = m.group(1)
+        # Label = nav-item text with badge spans and remaining tags stripped.
+        label = _BADGE_SPAN.sub("", line)
+        label = _TAG.sub("", label).strip()
+        pages.setdefault(page_id, {"label": label, "bucket": bucket})
+    return pages
+
+
+def load_registry() -> list[dict]:
+    raw = yaml.safe_load(REGISTRY.read_text(encoding="utf-8")) or {}
+    pages = raw.get("pages")
+    if not isinstance(pages, list):
+        raise ValueError(f"{REGISTRY.name}: top-level 'pages:' list is missing or malformed")
+    return pages
+
+
+_FM = re.compile(r"^---\n(.*?)\n---\n", re.DOTALL)
+
+
+def help_docs() -> dict[str, dict]:
+    """Return ``{slug: frontmatter_dict}`` for every docs/help/*.md.
+
+    ``slug`` is the filename stem (matches the ``slug:`` field by contract).
+    """
+    docs: dict[str, dict] = {}
+    for p in sorted(HELP_DIR.glob("*.md")):
+        text = p.read_text(encoding="utf-8")
+        m = _FM.match(text)
+        fm = (yaml.safe_load(m.group(1)) if m else None) or {}
+        fm["_path"] = f"docs/help/{p.name}"
+        docs[p.stem] = fm
+    return docs
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Lint
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class Findings:
+    def __init__(self) -> None:
+        self.block: list[str] = []
+        self.warn: list[str] = []
+
+    def b(self, msg: str) -> None:
+        self.block.append(msg)
+
+    def w(self, msg: str) -> None:
+        self.warn.append(msg)
+
+
+def _agents_text() -> str:
+    try:
+        return AGENTS_MD.read_text(encoding="utf-8").lower()
+    except OSError:
+        return ""
+
+
+def lint(*, strict: bool) -> tuple[Findings, list[dict]]:
+    f = Findings()
+    live = live_pages()
+    live_ids = set(live)
+    registry = load_registry()
+    docs = help_docs()
+    agents = _agents_text()
+
+    # ── Registry integrity + page-id ⇄ live cross-check ──────────────────────
+    reg_by_id: dict[str, dict] = {}
+    for row in registry:
+        if not isinstance(row, dict):
+            f.b(f"_pages.yaml: malformed row (not a mapping): {row!r}")
+            continue
+        pid = row.get("page_id")
+        for field in REQUIRED_FIELDS:
+            if field not in row:
+                f.b(f"_pages.yaml[{pid!r}]: missing required field '{field}'")
+        if pid is None:
+            continue
+        reg_by_id[pid] = row
+
+        status = row.get("doc_status")
+        slug = row.get("help_slug")
+        if status not in VALID_DOC_STATUS:
+            f.b(f"_pages.yaml[{pid!r}]: doc_status '{status}' not one of {VALID_DOC_STATUS}")
+        else:
+            if status == "none" and slug is not None:
+                f.b(f"_pages.yaml[{pid!r}]: doc_status 'none' requires help_slug: null (got {slug!r})")
+            if status in ("present", "planned") and not slug:
+                f.b(f"_pages.yaml[{pid!r}]: doc_status '{status}' requires a non-null help_slug")
+
+        # page_id must be a live data-page
+        if pid not in live_ids:
+            f.b(
+                f"_pages.yaml[{pid!r}]: page_id is not a live data-page in index.html "
+                f"— stale/renamed row (remove it or fix the page_id)"
+            )
+
+    # NEW page in the UI that nobody registered — the anti-drift catch.
+    for pid in live_ids:
+        if pid not in reg_by_id:
+            meta = live[pid]
+            f.b(
+                f"index.html: data-page=\"{pid}\" (label {meta['label']!r}, bucket "
+                f"{meta['bucket']!r}) has no row in docs/help/_pages.yaml — add one"
+            )
+
+    # ── Doc-side: ui_surface must resolve to a live page ─────────────────────
+    # Build doc→page map for the reverse/table checks at the same time.
+    surface_to_slugs: dict[str, list[str]] = {}
+    for slug, fm in docs.items():
+        surface = fm.get("ui_surface")
+        if surface is None:
+            continue
+        if not isinstance(surface, str) or not surface.startswith("admin."):
+            f.b(f"{fm['_path']}: ui_surface {surface!r} is malformed (expected 'admin.<page>' or null)")
+            continue
+        target = surface[len("admin."):]
+        surface_to_slugs.setdefault(target, []).append(slug)
+        if target not in live_ids:
+            f.b(
+                f"{fm['_path']}: ui_surface 'admin.{target}' resolves to no live admin page "
+                f"— stale mapping (live pages: {', '.join(sorted(live_ids))})"
+            )
+
+    # ── Per-page checks (block: present-doc missing; warns) ──────────────────
+    rows_out: list[dict] = []
+    for pid, row in reg_by_id.items():
+        slug = row.get("help_slug")
+        status = row.get("doc_status")
+        label = row.get("label", "")
+
+        doc_exists = bool(slug) and slug in docs
+        # doc? column
+        if not slug:
+            doc_col = "—"
+        elif doc_exists:
+            doc_col = "yes"
+        else:
+            doc_col = "MISSING"
+
+        if slug and status == "present" and not doc_exists:
+            f.b(f"page '{pid}': doc_status 'present' but docs/help/{slug}.md is missing")
+        if slug and status == "planned" and not doc_exists:
+            f.w(f"page '{pid}': known doc gap — create docs/help/{slug}.md (doc_status: planned)")
+        if slug and status == "planned" and doc_exists:
+            f.w(f"page '{pid}': docs/help/{slug}.md now exists — flip doc_status to 'present'")
+        if not slug:
+            f.w(f"page '{pid}' ({label}): no public help doc (help_slug: null)")
+
+        # ui_surface ok? — does some doc back-link to THIS page?
+        backlinkers = surface_to_slugs.get(pid, [])
+        if backlinkers:
+            surface_col = "yes"
+        else:
+            surface_col = "—"
+            # A present page whose own doc declares a non-null ui_surface pointing
+            # elsewhere is real drift; a null ui_surface (orientation docs like
+            # getting-started.md) is intentional and not flagged.
+            if doc_exists:
+                doc_surface = docs[slug].get("ui_surface")
+                if isinstance(doc_surface, str) and doc_surface != f"admin.{pid}":
+                    surface_col = f"→{doc_surface}"
+                    f.w(
+                        f"page '{pid}': its doc docs/help/{slug}.md back-links to "
+                        f"{doc_surface!r}, not 'admin.{pid}'"
+                    )
+
+        # AGENTS.md mention? (warn-only dimension)
+        mentioned = bool(agents) and (pid.lower() in agents or (label and label.lower() in agents))
+        if not mentioned:
+            msg = f"page '{pid}' ({label}): not mentioned in AGENTS.md (by page_id or label)"
+            if strict:
+                f.b(msg + " [--strict]")
+            else:
+                f.w(msg)
+
+        rows_out.append({
+            "page_id": pid,
+            "help_slug": slug if slug else "—",
+            "doc": doc_col,
+            "surface": surface_col,
+            "agents": "yes" if mentioned else "no",
+        })
+
+    return f, rows_out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Output
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def print_table(rows: list[dict]) -> None:
+    headers = ("page_id", "help_slug", "doc?", "ui_surface ok?", "AGENTS.md?")
+    cols = ("page_id", "help_slug", "doc", "surface", "agents")
+    widths = [len(h) for h in headers]
+    for r in rows:
+        for i, c in enumerate(cols):
+            widths[i] = max(widths[i], len(str(r[c])))
+    fmt = "  ".join(f"{{:<{w}}}" for w in widths)
+    print(fmt.format(*headers))
+    print("  ".join("-" * w for w in widths))
+    for r in rows:
+        print(fmt.format(*(str(r[c]) for c in cols)))
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description="Lint admin-page ↔ help-doc coverage.")
+    ap.add_argument(
+        "--strict",
+        action="store_true",
+        help="promote the AGENTS.md-coverage WARN to BLOCK (use once AGENTS.md is complete)",
+    )
+    ap.add_argument("--quiet", action="store_true", help="suppress the intro line")
+    args = ap.parse_args(argv)
+
+    if not args.quiet:
+        print("help-coverage-lint — admin page ↔ help-doc registry coverage\n")
+
+    f, rows = lint(strict=args.strict)
+    print_table(rows)
+
+    if f.warn:
+        print(f"\nWARN ({len(f.warn)}):")
+        for w in f.warn:
+            print(f"  ⚠ {w}")
+    if f.block:
+        print(f"\nBLOCK ({len(f.block)}):")
+        for b in f.block:
+            print(f"  ✗ {b}")
+
+    n_pages = len(rows)
+    print(
+        f"\nhelp-coverage-lint: {n_pages} pages · "
+        f"{len(f.block)} blocking · {len(f.warn)} warning."
+    )
+    return 1 if f.block else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,341 @@
+{
+  "pkg_id": "p-2c7a9b6e",
+  "pkg_version": "2026.07.02-1.4",
+  "gallery_version": "2026.07.02-1.4",
+  "schema_version": 5,
+  "manifest_type": "evolve_application",
+  "display_name": "Pre-Meeting Brief",
+  "author": "evolve",
+  "description": "Sends a short briefing message ~60 minutes before each external calendar event. Polls every 15 minutes via launchd, reads the Calendar Sync local cache, looks up Contacts memory for each attendee, and delivers the brief via `openclaw message send`. Dedupes via a sent-briefs log so each event is briefed at most once.",
+  "application_tags": [
+    "personal-productivity",
+    "executive-assistant",
+    "ea-suite",
+    "calendar",
+    "calendar-summary",
+    "meeting-prep",
+    "productivity",
+    "contacts",
+    "integration"
+  ],
+  "id": "app_pre_meeting_brief",
+  "name": "Pre-Meeting Brief",
+  "status": "active",
+  "dependencies": [],
+  "app_dependencies": [
+    {
+      "pkg_id": "p-fe9acef3",
+      "display_name": "Calendar Sync",
+      "required": true,
+      "reason": "Pre-Meeting Brief reads upcoming events from memory/calendar-upcoming.json (the schema Calendar Sync writes). Without Calendar Sync there is no event source, so the brief has nothing to fire on."
+    },
+    {
+      "pkg_id": "p-4136a932",
+      "display_name": "Contacts",
+      "required": false,
+      "reason": "If Contacts is installed, the brief includes a 'Context' block per attendee drawn from memory/contacts/{slug}.md (commitments + recent notes). Without Contacts the brief simply lists attendees without per-person context."
+    }
+  ],
+  "requirements": {
+    "integrations": [
+      {
+        "id": "google_calendar",
+        "display_name": "Google Calendar",
+        "required": true,
+        "check_path": "openclaw.json → integrations.google_calendar",
+        "setup_doc": "docs/integrations/google-calendar.md",
+        "reason": "Calendar Sync (the upstream app) authenticates against Google Calendar. Pre-Meeting Brief reads its cache, so the underlying integration must be present.",
+        "alternatives": [
+          {
+            "id": "google_path_c",
+            "display_name": "Google (path-C: service-account + DwD)",
+            "required": true,
+            "check_path": "network.json → bots[bot].google_integration",
+            "required_scopes": [
+              "https://www.googleapis.com/auth/calendar.readonly"
+            ],
+            "setup_doc": "internal/spec-google-integration-paths-2026-05-30.md",
+            "reason": "Path-C service-account auth from PR #1862. Same scope requirement passes through to this app via Calendar Sync."
+          }
+        ]
+      }
+    ],
+    "secrets": [],
+    "system": [],
+    "python_packages": [],
+    "messaging_channel": [
+      {
+        "id": "messaging_channel",
+        "display_name": "Connected messaging channel",
+        "required": true,
+        "reason": "Delivers each pre-meeting brief to the operator's primary channel via `openclaw message send`."
+      }
+    ]
+  },
+  "interface_contract": {
+    "populated_by_forge": false,
+    "extracted_at": null,
+    "data_files": [
+      {
+        "path": "memory/pre-meeting-sent.json",
+        "description": "Bounded log of event IDs that have already had a brief sent. Used for dedup across the 15-minute polling cadence so each event is briefed at most once.",
+        "schema": {
+          "storage_format": "JSON array of objects, capped at 200 entries (oldest pruned)",
+          "fields": {
+            "event_id": "string — Google Calendar event ID",
+            "sent_at": "ISO datetime with offset — when the brief was sent",
+            "event_start_iso": "ISO datetime with offset — for audit and retention pruning"
+          }
+        }
+      }
+    ],
+    "cli": [
+      {
+        "command": "python3 scripts/pre_meeting_brief.py poll",
+        "key_flags": [
+          "--bot BOT_ID",
+          "--dry-run"
+        ],
+        "output_signals": [
+          "PREMEET_SENT:",
+          "PREMEET_FAILED:",
+          "PREMEET_SKIPPED:"
+        ]
+      },
+      {
+        "command": "python3 scripts/pre_meeting_brief.py preview-next",
+        "key_flags": [
+          "--bot BOT_ID"
+        ],
+        "output_signals": []
+      },
+      {
+        "command": "python3 scripts/pre_meeting_brief.py status",
+        "key_flags": [],
+        "output_signals": []
+      }
+    ],
+    "key_paths": {
+      "cli": "scripts/pre_meeting_brief.py",
+      "sent_log": "memory/pre-meeting-sent.json",
+      "calendar_cache": "memory/calendar-upcoming.json"
+    },
+    "signal_prefixes": [
+      "PREMEET_SENT:",
+      "PREMEET_FAILED:",
+      "PREMEET_SKIPPED:"
+    ],
+    "output_signal_formats": {
+      "PREMEET_SENT:": "PREMEET_SENT: {event_id} {YYYY-MM-DD HH:MM} {title-excerpt}",
+      "PREMEET_FAILED:": "PREMEET_FAILED: {event_id} {reason}",
+      "PREMEET_SKIPPED:": "PREMEET_SKIPPED: {event_id} {reason} (e.g. internal_only, already_sent, outside_window)"
+    }
+  },
+  "files": [],
+  "install_job": null,
+  "improvement_history": [],
+  "identity": {
+    "purpose": "Reduce 'walked into meeting cold' as a failure mode. About an hour before each external calendar meeting, deliver a short brief naming the meeting, listing attendees, and pasting in any per-person context the operator has already captured in the Contacts memory layer. The brief is a pure read+compose+send — it never touches the calendar itself.",
+    "scope_includes": [
+      "Run on a 15-minute launchd polling cadence",
+      "Read upcoming events from memory/calendar-upcoming.json (written by the Calendar Sync app)",
+      "Filter events whose start falls within the configured lookahead window (default 45–75 minutes from now) AND have at least one external attendee (is_external==true)",
+      "For each qualifying event not yet in the sent log, compose a brief including title, time, attendees, and per-attendee context from memory/contacts/ if Contacts is installed",
+      "Send the brief via `openclaw message send` to the user's recorded channel",
+      "Append to memory/pre-meeting-sent.json with the event_id so the next 15-minute poll skips it",
+      "Support `--dry-run` for poll (compose + print + skip send + skip log write)",
+      "Emit PREMEET_SENT: / PREMEET_FAILED: / PREMEET_SKIPPED: signals for the delivery monitor"
+    ],
+    "scope_excludes": [
+      "Reading the Google Calendar API directly — the Calendar Sync app owns auth and event fetching",
+      "Internal-only meetings (all attendees in the bot's primary domain) — these are skipped on purpose",
+      "Sending RSVPs, declines, or any write to the calendar",
+      "Sending briefs to attendees — delivery is only to the operator's primary channel",
+      "Multi-brief escalation (no 'second reminder 10 minutes before' — one brief per event)",
+      "Recurring meeting deduplication based on series — each instance gets its own brief if its event_id is unique"
+    ],
+    "bot_interaction_pattern": "Cron-driven daemon at 15-minute cadence. The bot is not invoked as a session — launchd runs the script directly, which delivers via `openclaw message send`. The bot can also be asked 'preview my next pre-meeting brief' in conversation, which runs the preview-next subcommand.",
+    "user": "The primary bot operator. Briefs go to the operator's primary channel only — never to meeting attendees."
+  },
+  "success_criteria": {
+    "observable_outcomes": [
+      "When an external meeting is scheduled within 45–75 minutes from now, a brief arrives in the primary channel within one 15-minute poll cycle",
+      "Each event is briefed exactly once — memory/pre-meeting-sent.json gains exactly one entry per event_id",
+      "Attendee context is populated when memory/contacts/{slug}.md exists for that attendee, and absent otherwise (no fabrication)",
+      "Internal-only meetings (is_external==false) emit PREMEET_SKIPPED: internal_only and do not surface to the operator",
+      "If memory/calendar-upcoming.json is missing or empty, the poll exits 0 silently — no false PREMEET_FAILED:"
+    ],
+    "failure_signals": [
+      "External meeting starts and no brief was sent in the prior hour — daemon not running or window logic broken",
+      "Same event briefed twice in one day — sent-log dedup not honored",
+      "Brief sent for an internal-only meeting — is_external misread",
+      "Brief contains attendee context that contradicts what's in memory/contacts/{slug}.md — file read drift",
+      "Plist loaded but no PREMEET_SENT: signals for 24+ hours despite external meetings on the calendar — silent failure"
+    ],
+    "quality_bar": {
+      "minimum": "External meetings produce a brief that names the title, time, attendees, and any contact memory the operator already has. Internal meetings are never briefed. Dedup prevents repeat briefs.",
+      "excellent": "Briefs arrive on a consistent cadence (~60 min before start) regardless of when the event was added to the calendar. Context blocks are concise — only the most recent / most relevant items per contact. Operator never thinks 'I would have wanted that brief earlier' or 'why did I get this twice'."
+    }
+  },
+  "constraints": {
+    "privacy": [
+      "Attendee email addresses and event titles are sensitive — briefs go only to the primary channel, never to logs or shared locations",
+      "Per-attendee context pulled from memory/contacts/{slug}.md may include private notes — the brief excerpts at most ~10 lines per contact and never quotes a contact's struck-through (completed) commitments",
+      "memory/pre-meeting-sent.json stores event_id + sent_at only, never event title or attendee list"
+    ],
+    "safety": [
+      "Read-only against the calendar cache and Contacts files — no writes to memory/calendar-* or memory/contacts/",
+      "Delivery send must time out within 60 seconds; on failure emit PREMEET_FAILED: and exit non-zero so the next poll can retry the event",
+      "If Calendar Sync's cache is older than 2 hours, log a warning to stderr but still process its contents (do not block on staleness)"
+    ],
+    "dependencies": [
+      "Calendar Sync (p-fe9acef3) — REQUIRED. Writes memory/calendar-upcoming.json. This app reads it.",
+      "Contacts (p-4136a932) — OPTIONAL. If memory/contacts/ exists, per-attendee context is included.",
+      "openclaw CLI — REQUIRED. Brief is delivered via `openclaw message send`."
+    ],
+    "boundaries": [
+      "Polling cadence is fixed at 15 minutes — operator can change it by editing the plist's StartInterval; the script does not auto-adjust",
+      "One brief per event_id, ever. If a poll's sent log shows the event_id, skip — even across daemon restarts",
+      "Window is hard-coded to lookahead minutes from configuration; events outside the window are skipped, not queued",
+      "Brief never mentions internal attendees by name (privacy reflex even though it's only sent to the operator)"
+    ]
+  },
+  "build_spec": "# Pre-Meeting Brief — Build Specification\n\n## Overview\n\nA launchd-driven script that polls every 15 minutes, reads the Calendar Sync local cache, and sends a brief ~60 minutes before each external meeting via `openclaw message send`. Dedup is via a bounded sent-briefs log.\n\nNo external API calls — all data is sourced from local files written by the Calendar Sync and Contacts apps.\n\n**Prerequisite:** Calendar Sync (p-fe9acef3) must already be installed — `memory/calendar-upcoming.json` is the event source. Verify the file is readable before iterating events.\n\n**Optional:** Contacts (p-4136a932). If `memory/contacts/` exists, attendee context is folded in.\n\n## Python invocation\n\nUse `python3` (let the deploy environment resolve the binary). Do not hardcode venv paths.\n\n## File layout\n\n```\nscripts/\n  pre_meeting_brief.py        ← main CLI (subcommands: poll | preview-next | status)\n  pre-meeting-cron.sh         ← launchd trigger (rendered below)\nmemory/\n  pre-meeting-sent.json       ← bounded sent-briefs log (created on first send)\n```\n\n## scripts/pre_meeting_brief.py\n\n### Subcommands\n\n```\npre_meeting_brief.py poll          --bot BOT_ID [--dry-run]\npre_meeting_brief.py preview-next  --bot BOT_ID\npre_meeting_brief.py status\n```\n\n- `poll` — scan upcoming events, brief any that qualify and haven't been briefed yet, update sent log, emit signals.\n- `preview-next` — find the next external event within the next 24 hours, compose its brief, print to stdout. Does not send, does not update log.\n- `status` — summarize memory/pre-meeting-sent.json (count, last 5 sent_at + event_id).\n\n### Reading calendar cache\n\n```python\nfrom datetime import datetime, timezone, timedelta\nfrom pathlib import Path\nimport json\n\ndef load_upcoming(workspace: Path) -> list[dict]:\n    cache = workspace / \"memory\" / \"calendar-upcoming.json\"\n    if not cache.exists():\n        return []\n    try:\n        events = json.loads(cache.read_text())\n        return events if isinstance(events, list) else []\n    except (json.JSONDecodeError, OSError):\n        return []\n```\n\n### Window selection\n\nFrom the configured `lookahead_minutes` (default 60, configurable in network.json), build the window:\n\n```python\ndef in_window(event: dict, now: datetime, lookahead_min: int) -> bool:\n    try:\n        start = datetime.fromisoformat(event[\"start_iso\"])\n    except (KeyError, ValueError):\n        return False\n    if start.tzinfo is None:\n        start = start.replace(tzinfo=timezone.utc)\n    # Lookahead window: events starting within [lookahead_min - 15, lookahead_min + 15] from now\n    # (the +/-15 absorbs the 15-min polling cadence so each event gets briefed by the closest poll).\n    delta_min = (start - now).total_seconds() / 60\n    return lookahead_min - 15 <= delta_min <= lookahead_min + 15\n```\n\n### External-meeting filter\n\n```python\ndef is_external(event: dict) -> bool:\n    # Calendar Sync precomputes the is_external flag; trust it.\n    return bool(event.get(\"is_external\", False))\n```\n\nIf the flag is absent, fall back to comparing attendee domains against the bot's primary email domain (from openclaw.json → email). If the bot's domain is unknown, treat the event as external (fail open — better to brief than to silently skip).\n\n### Sent-briefs log\n\n```python\ndef load_sent(workspace: Path) -> list[dict]:\n    log_path = workspace / \"memory\" / \"pre-meeting-sent.json\"\n    if not log_path.exists():\n        return []\n    try:\n        data = json.loads(log_path.read_text())\n        return data if isinstance(data, list) else []\n    except (json.JSONDecodeError, OSError):\n        return []\n\ndef append_sent(workspace: Path, event_id: str, event_start_iso: str) -> None:\n    log_path = workspace / \"memory\" / \"pre-meeting-sent.json\"\n    sent = load_sent(workspace)\n    sent.append({\n        \"event_id\": event_id,\n        \"sent_at\": datetime.now().astimezone().isoformat(),\n        \"event_start_iso\": event_start_iso,\n    })\n    # Bound the log: keep last 200 entries\n    sent = sent[-200:]\n    log_path.parent.mkdir(parents=True, exist_ok=True)\n    # Atomic write\n    import os, tempfile\n    fd, tmp = tempfile.mkstemp(dir=log_path.parent, suffix=\".tmp\")\n    with os.fdopen(fd, \"w\") as f:\n        json.dump(sent, f, indent=2)\n    os.replace(tmp, log_path)\n```\n\nDedup check is by event_id: if any entry in `sent` has the same event_id, skip with `PREMEET_SKIPPED: {event_id} already_sent`.\n\n### Per-attendee context lookup\n\n```python\ndef contact_context(workspace: Path, email: str, max_lines: int = 8) -> list[str]:\n    name_part = email.split(\"@\")[0].lower().replace(\".\", \"-\")\n    contact_file = workspace / \"memory\" / \"contacts\" / f\"{name_part}.md\"\n    if not contact_file.exists():\n        return []\n    try:\n        text = contact_file.read_text()\n    except OSError:\n        return []\n    # Pull the Commitments section's first N non-empty, non-completed lines\n    lines = []\n    in_section = False\n    for raw in text.splitlines():\n        line = raw.strip()\n        if line.startswith(\"## \"):\n            in_section = line == \"## Commitments\"\n            continue\n        if not in_section or not line:\n            continue\n        # Skip struck-through (completed) commitments: lines containing ~~text~~\n        if \"~~\" in line:\n            continue\n        lines.append(line)\n        if len(lines) >= max_lines:\n            break\n    return lines\n```\n\nThe slug rule mirrors Contacts: `email.split('@')[0].lower().replace('.', '-')`. The slug rule used here MUST stay in sync with whatever Contacts uses; if Contacts changes its slug computation, update this script to match.\n\n### Brief composition\n\n```python\ndef compose_brief(event: dict, workspace: Path) -> str:\n    title = event.get(\"title\", \"Untitled meeting\")\n    start_iso = event.get(\"start_iso\", \"\")\n    try:\n        start_local = datetime.fromisoformat(start_iso).astimezone()\n        when = start_local.strftime(\"%-I:%M %p %Z\")\n    except ValueError:\n        when = start_iso\n    attendees = event.get(\"attendees\", []) or []\n    lines = [\n        f\"Meeting in about 60 minutes: {title}\",\n        f\"  Start: {when}\",\n    ]\n    if attendees:\n        lines.append(f\"  Attendees: {', '.join(attendees)}\")\n    lines.append(\"\")\n    # Per-attendee context\n    any_context = False\n    for email in attendees:\n        ctx = contact_context(workspace, email)\n        if ctx:\n            any_context = True\n            lines.append(f\"Context for {email}:\")\n            for c in ctx:\n                lines.append(f\"  {c}\")\n            lines.append(\"\")\n    if not any_context and attendees:\n        lines.append(\"(No contact memory on file for these attendees.)\")\n        lines.append(\"\")\n    description = (event.get(\"description\") or \"\").strip()\n    if description:\n        lines.append(\"Notes from event:\")\n        lines.append(\"  \" + description[:240] + (\"...\" if len(description) > 240 else \"\"))\n        lines.append(\"\")\n    return \"\\n\".join(lines).rstrip() + \"\\n\"\n```\n\n### Delivery\n\nSame pattern as Evening Sweep / Morning Brief — reuse the canonical delivery pattern (internal/spec-gallery-delivery-convention-2026-06-11.md; reference implementation in docs/reference/capabilities/template/scripts/example_script.py): resolve (channel, target) from the pod network.json — which lives ONLY at the canonical shared path `/Users/Shared/evolve/network.json` (read it there; it is NOT at `/Users/<bot>/.openclaw/network.json` and NOT in the workspace — copy the `SHARED_DIR = Path('/Users/Shared/evolve')` constant and `load_network()` helper from docs/reference/capabilities/template/scripts/example_script.py verbatim) — reading `bots.<bot_id>.primary_user.external_ids` (channel priority: telegram, whatsapp, signal, imessage, slack, discord, sms, matrix — intersected with the bot's own enabled channels from its openclaw.json `channels.<name>.enabled`, falling back to the best recorded id when there is no overlap so the send fails loudly), then run `openclaw message send --channel=<ch> --target=<target> --message=<text> --json` as the bot user (binary: `shutil.which(\"openclaw\")`, falling back to /opt/homebrew/bin, /usr/local/bin, /usr/bin; cwd = the executing account's pwd-database home, NOT $HOME, so node can resolve its CWD even under sudo-without--H; child PATH prefixed with the CLI's own bin dir so the `#!/usr/bin/env node` entrypoint resolves under launchd's minimal PATH; timeout 60s). Exit code 0 = the channel accepted the send. Never read gateway port/token; never POST to the gateway. On any send failure: emit `PREMEET_FAILED: {event_id} {reason}` and exit 2 — the next poll cycle will reattempt because the sent log only updates on a successful send. If the bot has no recorded delivery route: emit `PREMEET_SKIPPED: no-delivery-route` and exit 0 without marking any event as briefed.\n\n### Configuration (network.json)\n\n```json\n\"capabilities\": {\n  \"pre_meeting_brief\": {\n    \"enabled\": true,\n    \"lookahead_minutes\": 60,\n    \"channel\": \"primary\"\n  }\n}\n```\n\nDefaults if absent: lookahead_minutes=60, channel=primary.\n\n## scripts/pre-meeting-cron.sh\n\n```bash\n#!/bin/bash\n# pre-meeting-cron.sh — 15-minute polling trigger.\nWORKSPACE=\"/Users/{bot_id}/.openclaw/workspace\"\nexec python3 \"$WORKSPACE/scripts/pre_meeting_brief.py\" poll --bot \"{bot_id}\" \\\n  >> \"/tmp/{bot_id}-pre-meeting.log\" 2>&1\n```\n\n## Test surface\n\n```bash\npython3 -m py_compile scripts/pre_meeting_brief.py\npython3 scripts/pre_meeting_brief.py status\n# Expected: prints 'No briefs sent yet.' on a fresh install\npython3 scripts/pre_meeting_brief.py preview-next --bot {bot_id}\n# Expected: prints next external event brief OR 'No upcoming external meetings.' if calendar empty\npython3 scripts/pre_meeting_brief.py poll --bot {bot_id} --dry-run\n# Expected: simulates a poll, prints briefs that WOULD be sent, does NOT update sent log\n```\n\n## Provenance marker\n\n```python\n# evolve: pkg=p-2c7a9b6e file=f-XXXXXXXX@<version>\n```\n\n## What NOT to include\n\n- No direct Google Calendar API calls — Calendar Sync owns that.\n- No HEARTBEAT.md sections.\n- No openclaw.json mutation.\n- No background daemons or sleep loops — launchd is the only scheduler.\n- No retry-with-sleep on transient gateway failure — let the next 15-minute poll reattempt.\n",
+  "example_triggers": [
+    "Preview my next pre-meeting brief",
+    "When's my next external meeting?",
+    "Did I get a brief for my 2pm?",
+    "How many briefs have been sent today?"
+  ],
+  "test_cases": [
+    {
+      "trigger": "Preview my next pre-meeting brief",
+      "expected": "Run pre_meeting_brief.py preview-next --bot {bot_id}. Stdout shows the brief for the next external event in the next 24h, or 'No upcoming external meetings.' Exit 0."
+    },
+    {
+      "trigger": "Did the brief for my 2pm get sent?",
+      "expected": "Run pre_meeting_brief.py status. If the sent log contains an event_id whose start matches 2pm today, report yes with sent_at. Otherwise report 'not yet — next poll will check'."
+    },
+    {
+      "trigger": "Poll now (dry run)",
+      "expected": "Run pre_meeting_brief.py poll --bot {bot_id} --dry-run. Stdout lists qualifying events and their briefs; memory/pre-meeting-sent.json is NOT updated."
+    }
+  ],
+  "scheduled_actions": [
+    {
+      "id": "pre-meeting-brief-poll",
+      "mechanism": "launchd",
+      "trigger": {
+        "kind": "launchd",
+        "schedule": "StartInterval=900",
+        "evidence_path": "scripts/pre-meeting-cron.sh",
+        "evidence_locator": "pre-meeting-brief poll entrypoint"
+      },
+      "install": {
+        "plist_label": "ai.evolve.${bot_id}.pre-meeting-brief",
+        "command": "/bin/bash ${workspace}/scripts/pre-meeting-cron.sh",
+        "cwd": "${workspace}",
+        "schedule": {
+          "every_minutes": 15
+        },
+        "exec_policy": "inherit"
+      },
+      "inputs": [
+        {
+          "path": "memory/calendar-upcoming.json",
+          "kind": "data_file"
+        },
+        {
+          "path": "memory/pre-meeting-sent.json",
+          "kind": "data_file"
+        }
+      ],
+      "outputs": [
+        {
+          "kind": "session_message",
+          "channel": "primary"
+        }
+      ],
+      "delivery_contract": {
+        "user_facing": true,
+        "window_minutes": 15,
+        "evidence": {
+          "ran": {
+            "kind": "scheduler_state"
+          },
+          "delivered": {
+            "kind": "scheduler_state"
+          }
+        },
+        "heal": "none"
+      },
+      "summary": "Poll the calendar cache every 15 minutes; send a brief ~60 min before each external meeting (window: 45–75 min). delivered evidence is scheduler_state: briefs are conditional on upcoming meetings, so 'the poll ran' is the strongest deterministic delivery proof; the sent-log dedup owns per-event delivery. heal:none — a missed tick is covered by the next tick."
+    }
+  ],
+  "usage": {
+    "model": "scheduled",
+    "trigger_recognition": {
+      "pattern": "Pre-Meeting Brief polls the calendar and fires ~60 minutes before each external meeting. If the user asks for a preview of the next brief, use `preview-next`.",
+      "hint_words": [
+        "pre-meeting brief",
+        "next meeting",
+        "upcoming meeting",
+        "brief for my",
+        "did I get a brief"
+      ],
+      "requires_keyword": false
+    },
+    "auto_capture": {
+      "enabled": false,
+      "sources": []
+    },
+    "how_to_use": "The launchd poll handles delivery automatically. Use `preview-next` to see what the next brief would look like off-cycle. `status` reports the most recent deliveries.",
+    "bot_voice_examples": [
+      "Your 2pm with Alice — last met Aug 14, Q2 contract still pending, follow-up promised by Friday.",
+      "Next brief fires for your 4pm with Bob — sending around 3pm.",
+      "Briefs delivered for both your external meetings today."
+    ]
+  },
+  "verification": [
+    {
+      "kind": "artifact",
+      "name": "main_script_compiles",
+      "path": "scripts/pre_meeting_brief.py",
+      "checks": [
+        "exists",
+        "py_compiles"
+      ]
+    },
+    {
+      "kind": "artifact",
+      "name": "cron_wrapper",
+      "path": "scripts/pre-meeting-cron.sh",
+      "checks": [
+        "exists",
+        "owner_exec"
+      ]
+    },
+    {
+      "kind": "command",
+      "name": "cli_status",
+      "argv": [
+        "python3",
+        "scripts/pre_meeting_brief.py",
+        "status"
+      ],
+      "expected_exit": 0,
+      "timeout_s": 30
+    },
+    {
+      "kind": "artifact",
+      "name": "sent_log_valid_if_present",
+      "path": "memory/pre-meeting-sent.json",
+      "checks": [
+        "json_valid"
+      ],
+      "modes": [
+        "dry-run"
+      ]
+    }
+  ]
+}

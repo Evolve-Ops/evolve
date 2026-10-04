@@ -1,0 +1,9 @@
+{
+  "_comment": "AXIS: whether the gateway's own `channels status` read names the signed-in account, and nothing else. One connected bot, Messages running, config derived from the row, channel up, and the status read names personal-bot@example.com: healthy. A forged workspace/evolve/imessage-status.json naming the same handle sits in the bot's home in BOTH fixtures, so the only difference is the pod's read. Replayed by packages/admin/tests/test_imessage_channel.py::test_health_control_known_good_fixture_passes.",
+  "_axis": "channel_status_names_the_account",
+  "row": {"bot_id": "personal-bot", "macos_user": "personal-bot-user", "handle": "personal-bot@example.com", "allow_from": ["+15555550101"]},
+  "messages_running": true,
+  "channel_status": {"connected": true, "handle": "personal-bot@example.com"},
+  "forged_status_file": {"handle": "personal-bot@example.com"},
+  "expect": {"status": "PASS", "name": "imessage:personal-bot", "message_contains": "is healthy"}
+}

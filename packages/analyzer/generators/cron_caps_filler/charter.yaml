@@ -1,0 +1,36 @@
+id: cron_caps_filler
+schema_version: 1
+type: guardian
+dimension: safety
+bucket: operate
+# Surface routing: cleanup. Adding turn / budget caps to an uncapped cron
+# is hygiene the operator should accept-or-ignore in batch, not a fire.
+# Spec: internal/spec-recommendations-rework-2026-06-02.md §"Generator routing".
+surface: cleanup
+purpose: >
+  Consume ``perm_cron_uncapped_agent_turn`` Signals from permission_monitor and
+  surface UpsertCronJob Proposals that add the missing ``maxTurns`` +
+  ``maxBudgetUsd`` caps to each affected cron job. Closes the §13 resolver-
+  pattern gap that surfaced cron caps as the first case where evo identified a
+  problem with no matching proposal in the queue: now the proposal exists when
+  the signal does, and evo can resolve it in chat via proposal_action(action="apply").
+  Mirrors the admin UI's "Add caps" button — same defaults
+  (maxTurns=20, maxBudgetUsd=1.00), same applier (UpsertCronJob).
+cadence: daily
+resolves_when_silent: true
+invariants:
+  - id: action_kind_allowed
+    description: >
+      The filler only emits typed cron-edit proposals — no Investigation or
+      ConfigPatch. The applier refuses uncapped agentTurn payloads, so every
+      proposal we surface must carry both caps in the job dict.
+    check_kind: action_kind_allowed
+    params:
+      allowlist: [UpsertCronJob]
+  - id: touches_forbidden
+    description: >
+      Filler only modifies the bot's cron config — never auth, plugin install,
+      gateway core, or channel config.
+    check_kind: touches_forbidden
+    params:
+      forbidden: [auth, plugins, channel_config, gateway_core]

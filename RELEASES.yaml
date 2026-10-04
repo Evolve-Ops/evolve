@@ -1,0 +1,21 @@
+# RELEASES.yaml — retired 2026-08-15.
+#
+# Evolve ships continuously: every PR merged to main is a release, stamped
+# with a CalVer version of the form YYYY.MMDD.PR (date + PR number). What a
+# pod actually runs is decided by the gated release pointer on canary pods
+# (`evolve-admin release status`) or origin tip on direct pods. See
+# docs/help/updating.md.
+#
+# This file used to carry hand-curated per-release tier entries
+# (security / feature / maintenance) driving the upgrade banner
+# (internal/spec-release-tiers-2026-05-16.md). Curation stopped after
+# 2026-05-16; a stale classification is worse than none, so the surface is
+# formally retired. The banner plumbing
+# (packages/admin/evolve_admin/release_notes.py) still reads this file and,
+# finding no entries, resolves every update to the quiet "maintenance"
+# default — the same behavior operators have had since curation stopped.
+# To revive tiers, add entries per the spec's schema; the reader is
+# unchanged and an empty file is a designed, valid state.
+#
+# Per-change history: `git log --first-parent main` (each merge subject
+# carries the PR title and number).

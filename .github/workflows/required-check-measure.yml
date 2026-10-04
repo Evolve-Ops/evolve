@@ -1,0 +1,125 @@
+name: required-check-measure
+
+# Weekly refresh of the D-CS9 required-check health snapshot
+# (tools/required-check-health-report.json), the measurement
+# tools/required-check-gate's `check` subcommand validates on every PR
+# (see the "Enforce the required-check quarantine gate" step in ci.yml).
+#
+# `check` is deliberately network-free and only re-validates a CHECKED-IN
+# report — nothing on the PR path ever re-measures. Left alone, that report
+# is a snapshot nobody refreshes: a required check that starts failing 80%
+# of the time next month is invisible to the gate until a person remembers
+# to re-run `measure` by hand. This job is that "someone remembers", on a
+# schedule, plus `--max-age-days 14` in the gate itself so a report that
+# nobody refreshes eventually fails loudly instead of passing forever.
+#
+# This is meta/dev tooling: it touches only tools/required-check-health-report.json
+# and never ships to pods.
+
+on:
+  schedule:
+    # Mondays at 14:00 UTC (an hour after help-refresh's 13:00, so the two
+    # scheduled-PR workflows don't land in the same minute).
+    - cron: "0 14 * * 1"
+  workflow_dispatch: {}        # allow an operator to run it on demand
+
+# `actions: read` is for `tools/required-check-gate measure`'s own `gh api`
+# calls (workflow runs + their jobs). `contents: write` + `pull-requests:
+# write` are for pushing the refreshed report and opening the PR — with
+# the workflow's own GITHUB_TOKEN, not a PAT. If this repo's "Allow GitHub
+# Actions to create and approve pull requests" setting is off, GITHUB_TOKEN
+# cannot open the PR; the job fails loudly with that GraphQL sentence and
+# does NOT fall back to pushing straight to main (see the last step below).
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+
+concurrency:
+  # Never let two measure runs race on the same branch.
+  group: required-check-measure
+  cancel-in-progress: false
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+
+      - name: Measure required-check failure rates from the live Actions API
+        # --check is omitted on purpose: required_check_health.REQUIRED_CHECK_NAMES
+        # is the one place this repo lists the measured checks, so this
+        # workflow never repeats that list in YAML.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 tools/required-check-gate measure \
+              --repo "${{ github.repository }}" -n 100 \
+              > tools/required-check-health-report.json
+
+      - name: Open a PR with the refreshed report (only if it changed)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$(git status --porcelain tools/required-check-health-report.json)" ]; then
+            echo "required-check-measure: report unchanged — no PR opened."
+            exit 0
+          fi
+
+          run_date="$(date -u +%F)"
+          branch="required-check-measure/${run_date}"
+          title="chore(ci): refresh required-check health report ${run_date}"
+
+          # Idempotent: don't duplicate this week's refresh PR on a re-run.
+          existing="$(gh pr list --head "$branch" --state open --json number --jq 'length')"
+          if [ "$existing" != "0" ]; then
+            echo "required-check-measure: a refresh PR for ${branch} is already open — skipping."
+            exit 0
+          fi
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git checkout -b "$branch"
+          git add tools/required-check-health-report.json
+          git commit -m "$title"
+          git push --force-with-lease -u origin "$branch"
+
+          cat > /tmp/required-check-measure-body.md <<EOF
+          Automated weekly refresh of the required-check health snapshot
+          (tools/required-check-gate measure), so
+          tools/required-check-health-report.json does not silently go
+          stale under the per-PR gate's --max-age-days check.
+
+          No auto-merge; this PR is reviewed like any code change — a
+          jump in a check's failure rate here means a fresh quarantine row
+          (tools/required-check-quarantine.txt) may be needed.
+
+          Window ending ${run_date}.
+          EOF
+
+          # The branch is already pushed at this point; if gh pr create
+          # fails (most likely: "GitHub Actions is not permitted to create
+          # or approve pull requests", i.e. the repo setting is off), say
+          # so loudly and point at the pushed branch rather than silently
+          # falling back to pushing the report straight to main.
+          if ! err="$(gh pr create \
+                --base main \
+                --head "$branch" \
+                --title "$title" \
+                --body-file /tmp/required-check-measure-body.md 2>&1)"; then
+            echo "::error::required-check-measure: could not open the refresh PR on ${branch}."
+            echo "$err"
+            echo "::error::The refreshed report IS pushed on ${branch} — open the PR by hand,"
+            echo "::error::or enable \"Allow GitHub Actions to create and approve pull requests\""
+            echo "::error::in the repo's Settings > Actions > General."
+            exit 1
+          fi
+
+          echo "required-check-measure: opened refresh PR on ${branch}."

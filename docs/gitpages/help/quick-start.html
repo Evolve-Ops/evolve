@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quick Start · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">quick-start</span><span class="chip">install</span><span class="chip">first-week</span><span class="chip">day-zero</span><span class="chip">adopt-existing-bots</span></div><div class="reviewed">Last reviewed 2026-08-26</div></div><h1 id="quick-start">Quick Start</h1>
+<p>Step-by-step actions for new admins after install. Estimated time: 30–45 min.</p>
+<p>This guide is also available in the dashboard at <strong>Getting Started → Quick Start</strong>.</p>
+<hr>
+<h2 id="day-0-right-after-the-setup-wizard-finishes">Day 0: right after the setup wizard finishes</h2>
+<p>What the wizard already did depends on which kind of machine you ran it on.</p>
+<p><strong>If the machine had no bots on it — a from-scratch pod:</strong></p>
+<ul>
+<li>Created a user account for each bot</li>
+<li>Installed OpenClaw and started each gateway</li>
+<li>Added a dedicated <code>evo</code> bot, which is how you talk to Evolve itself</li>
+</ul>
+<p><strong>If you adopted bots that were already there:</strong></p>
+<ul>
+<li>Left each existing bot's account, OpenClaw config and provider keys alone</li>
+<li>Added the Evolve plugin to every bot you adopted</li>
+<li>Added a dedicated <code>evo</code> bot alongside them, on its own account</li>
+<li><strong>Ran a first app-discovery scan of the bots it adopted</strong> — so there is
+  already something waiting on Apps → Discovered (Step 2 below)</li>
+</ul>
+<p><strong>Either way, it also:</strong></p>
+<ul>
+<li>Set up the evolve background service (admin server on port 5050)</li>
+<li>Wrote <code>/Users/Shared/evolve/network.json</code> (<code>/var/lib/evolve/network.json</code> on
+  a Linux pod)</li>
+</ul>
+<p>Now do these five things before anything else:</p>
+<ol>
+<li><strong>Verify the admin server is running</strong> — on the pod machine, run
+   <code>curl -s http://localhost:5050/api/health</code>. Should return <code>{"status":"ok"}</code>.</li>
+<li><strong>Set up your SSH tunnel</strong> (see Step 1 below) so you can open the dashboard
+   from your laptop.</li>
+<li><strong>Note your bot IDs</strong> — the names you gave each bot during setup. On an
+   adopted pod they're the accounts your bots were already running under.</li>
+<li><strong>Open Apps → Discovered</strong> (Step 2 below). On an adopted pod this is the
+   first thing worth looking at; on a from-scratch pod it will be empty until
+   your bots have done some work.</li>
+<li><strong>Set up your first messaging channel</strong> (see Step 4) so bots can talk back.</li>
+</ol>
+<hr>
+<h2 id="step-1-ssh-tunnel-from-your-laptop">Step 1: SSH tunnel from your laptop</h2>
+<p>The admin dashboard runs at <code>http://localhost:5050</code> on your Mac. To open it
+from your laptop without exposing it to the network, forward the port over SSH.</p>
+<p><strong>Quickest — a plain ssh one-liner</strong> (one session):</p>
+<pre><code class="language-bash">ssh -N -L 5050:localhost:5050 &lt;pod-host&gt; &amp;
+</code></pre>
+<p><strong>Persistent — <code>evolve-admin connect</code>.</strong> Installs a persistent launchd agent
+that auto-reconnects on reboot or network drop, then opens the dashboard in
+your browser. <code>evolve-admin</code> is <strong>not on PyPI</strong> — install it on the laptop
+from a clone of the repo first (see
+<a href="install-macos.html#accessing-the-dashboard">Accessing the dashboard</a>):</p>
+<pre><code class="language-bash">evolve-admin connect --host &lt;pod-host&gt;
+</code></pre>
+<p>Manage it later with <code>evolve-admin connect --status</code> and stop it with
+<code>evolve-admin connect --uninstall</code>. <code>&lt;pod-host&gt;</code> is the SSH host of the
+pod machine — an alias from your <code>~/.ssh/config</code>, or the full <code>user@host</code> form.</p>
+<p>The same command works from any client OS — macOS or Linux terminal, and
+Windows 10+ PowerShell (Windows ships the OpenSSH client). Your laptop's OS
+doesn't matter; the dashboard is a browser app.</p>
+<p>Then open <code>http://localhost:5050</code> in your browser. Add a shell alias if you
+run it often:</p>
+<pre><code class="language-bash"># in ~/.zshrc or ~/.bashrc
+alias pod='ssh -N -L 5050:localhost:5050 &lt;pod-host&gt;'
+</code></pre>
+<p><strong>No-CLI alternative.</strong> The Maintenance page can generate a persistent tunnel
+installer for you: go to Maintenance → Claude Access → download the <code>.command</code>
+file and run it once on your laptop. Same launchd agent, no terminal required.</p>
+<p>Verified: port 5050 is the default from <code>packages/admin/evolve_admin/service.py</code>
+(<code>generate_plist(host="127.0.0.1", port=5050)</code>).</p>
+<hr>
+<h2 id="step-2-see-what-your-bots-are-already-doing">Step 2: See what your bots are already doing</h2>
+<p>Go to <strong>Apps → Discovered</strong>.</p>
+<p>Evolve reads each bot's workspace, its schedules and its standing instructions
+and works out which of them look like <em>applications</em> — a recurring thing the bot
+does for someone, rather than a loose script. Each one it finds lands here as a
+<strong>draft</strong>: something the bot appears to be doing that nobody has vouched for yet.</p>
+<p><strong>On a pod you adopted, this page has content on day zero.</strong> Evolve scanned each
+bot as it deployed, so the drafts are your bots' real habits, not examples.</p>
+<p>Discovery runs three ways, and you don't have to remember any of them:</p>
+<ul>
+<li><strong>On arrival</strong> — once per bot, the first time Evolve deploys to it</li>
+<li><strong>Weekly</strong> — a sweep every Sunday, so a habit that forms in week three still
+  shows up</li>
+<li><strong>On demand</strong> — the <strong>Sync all bots</strong> button on this page</li>
+</ul>
+<p>Press <strong>Sync all bots</strong> now if the page is empty, or if you've just added a bot.
+A full pass takes roughly a minute per bot. The page carries a <em>Last scanned</em>
+line so you can always tell whether you're looking at a fresh answer or a stale
+one, and it tells you plainly when a bot has never been scanned rather than
+implying there was nothing to find.</p>
+<p>Then work the list:</p>
+<ul>
+<li><strong>Promote</strong> — yes, this is a real app. It becomes a defined app on the Apps
+  page, where it can be audited, installed on your other bots, and managed
+  alongside everything else on the pod.</li>
+<li><strong>Never</strong> — no, and stop showing me this one.</li>
+<li>Leave it alone if you're not sure. Nothing expires.</li>
+</ul>
+<p>Each row carries a <strong>readiness</strong> band — Evolve's read on whether the app is
+solid enough to offer to the person it serves. A draft can read <em>ready</em> and
+still not be offered; when that happens the row says which measurement is
+missing rather than leaving you to guess.</p>
+<p>Don't try to clear the queue on day one. Promote the two or three you recognise
+immediately; that's enough to give the rest of the dashboard something real to
+work with.</p>
+<hr>
+<h2 id="step-3-add-another-bot-if-not-done-in-wizard">Step 3: Add another bot (if not done in wizard)</h2>
+<p>Skip this if the wizard already added every bot you need. Otherwise:</p>
+<p><strong>From the dashboard:</strong> click the + button in the Overview header bar.</p>
+<p><strong>From the CLI:</strong></p>
+<pre><code class="language-bash">sudo evolve-admin add-bot &lt;bot-id&gt; --port &lt;port&gt;
+</code></pre>
+<p>You'll need: the bot's macOS username, its role (<code>primary</code> or <code>member</code>), and
+the gateway port to assign. If the bot already has an OpenClaw gateway
+running, <code>add-bot</code> will reuse it; otherwise it provisions one.</p>
+<p><code>add-bot</code> registers the bot in <code>network.json</code> and deploys to it in a single
+step. Pass <code>--no-deploy</code> to skip the deploy if the bot's host isn't reachable
+yet — you can run <code>sudo evolve-admin deploy &lt;bot-id&gt;</code> later.</p>
+<p>Other useful options: <code>--user &lt;macos_account&gt;</code> (if the bot lives on a shared
+account), <code>--role primary</code> (for the pod's primary bot).</p>
+<hr>
+<h2 id="step-4-set-up-a-primary-messaging-channel-if-not-done-in-wizard">Step 4: Set up a primary messaging channel (if not done in wizard)</h2>
+<p>Most pods install a channel during the wizard — skip if yours already works.
+Otherwise, bots need a way to reach you (and vice versa). Supported channels:</p>
+<table>
+<thead>
+<tr>
+<th>Channel</th>
+<th>Who it's for</th>
+<th>Where to set up</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Slack</strong></td>
+<td>Teams, work bots</td>
+<td>Skills page → Slack → Install</td>
+</tr>
+<tr>
+<td><strong>Telegram</strong></td>
+<td>Personal bots, alerts</td>
+<td>Skills page → Telegram → Install</td>
+</tr>
+<tr>
+<td><strong>Discord</strong></td>
+<td>Community bots</td>
+<td>Skills page → Discord → Install</td>
+</tr>
+<tr>
+<td><strong>iMessage</strong></td>
+<td>Personal bots, no cloud (macOS pod hosts only)</td>
+<td>Skills page → iMessage → Install</td>
+</tr>
+</tbody>
+</table>
+<p>For each channel, you'll need API credentials (a bot token for Slack/Telegram/
+Discord, or no credentials for iMessage). The Skills install flow walks you
+through it.</p>
+<p>iMessage only works when the pod itself runs on a Mac (it reads Messages.app's
+local database — an upstream constraint), so pods on other host platforms
+won't show it in the catalog. The other channels work on any pod host.</p>
+<p>After install, test by sending <code>evo</code> to the bot. You should get a response.</p>
+<hr>
+<h2 id="step-5-install-your-first-app-from-the-gallery">Step 5: Install your first app from the Gallery</h2>
+<p>The App Gallery has proven application blueprints ready to install on any bot.</p>
+<p>Start with <strong>Morning Briefing</strong>:
+- Go to Apps → Gallery
+- Click Morning Briefing → Install
+- Pick which bot should deliver it, set the delivery time
+- The Forge will build the app on that bot — takes about a minute</p>
+<p>Morning Briefing is a good starter because:
+- It's low-stakes (read-only: email + calendar + weather)
+- It demonstrates the Applications vs. Skills distinction concretely
+- It gives the Better Engine its first real data to work with</p>
+<hr>
+<h2 id="step-6-daily-routine">Step 6: Daily routine</h2>
+<p>Once everything is running, the dashboard gives you three things to check:</p>
+<p><strong>Overview</strong> — glanceable pod state. Any alerts, current spend, bot health.
+Check this if something feels off.</p>
+<p><strong>Recommendations</strong> (Improve section) — the Better Engine's weekly queue.
+Check this on Fridays or whenever the badge shows new items. Each suggestion
+takes 10–30 seconds to act on.</p>
+<p><strong>Maintenance</strong> — system-driven alerts that need your attention. Check this
+when the badge lights up. Most issues are one-click fixes.</p>
+<p>You don't need to check anything else on a quiet day. The system surfaces
+what needs attention; you don't need to hunt for it.</p>
+<hr>
+<h2 id="step-7-when-you-need-more">Step 7: When you need more</h2>
+<p><strong>Deeper bot config</strong> — <code>evolve-admin menu exec-approvals &lt;bot&gt;</code> manages what
+commands a bot can run. <code>evolve-admin menu logs &lt;bot&gt;</code> tails the gateway log.
+If you can't remember the flag syntax, run <code>evolve-admin menu</code> with no
+arguments for the interactive single-letter menu.</p>
+<p><strong>From your laptop</strong> — <code>evolve-admin connect --host &lt;pod-host&gt;</code> installs a
+persistent SSH tunnel to the admin UI and opens it in your browser.
+Re-run with <code>--status</code> to check it, <code>--uninstall</code> to stop reconnecting.</p>
+<p><strong>From chat</strong> — <code>evo help</code> shows everything available from your messaging app.
+<code>evo summary</code> gives a pod-wide status update without opening the dashboard.</p>
+<p><strong>From the CLI</strong> — <code>sudo evolve-admin --help</code> lists all subcommands.
+<code>sudo evolve-admin health</code> runs a full pod health check and tells you what
+to fix.</p>
+<p><strong>For scripted ops</strong> — the CLI accepts all the same operations the dashboard
+does. Useful for cron jobs, automation, or doing things in bulk across bots.</p>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/quick-start.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>

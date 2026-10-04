@@ -1,0 +1,59 @@
+# control-coverage-quarantine — the pre-D-CS7 backlog (2026-09-14).
+#
+# Every control discovered by tools/control-registry that does not yet have
+# a known_good.json/known_bad.json fixture pair. Grandfathered in from
+# before the registry existed — NOT a place to add a new control. The
+# meta-test (packages/analyzer/tests/test_control_registry.py) enforces:
+#   - every control here is genuinely missing fixtures (no free passes)
+#   - a control discovered for the FIRST time here (i.e. not already in the
+#     frozen baseline) fails the test outright — it must ship fixtures from
+#     birth, never land in quarantine.
+#   - a control leaving this list (fixtures added) must be deleted here and
+#     the baseline re-frozen: tools/control-coverage-ratchet --update-baseline
+#
+# Ratcheted by tools/control-coverage-ratchet, modelled line-for-line on
+# tools/quarantine-ratchet. The ceiling only shrinks.
+generator:app_birth_detector
+generator:app_permission_drift
+generator:app_permission_review
+generator:app_promotion
+generator:app_suggester
+generator:auth_drift_filler
+generator:autonomy_promoter
+generator:bloat_investigator
+generator:bot_config_integrity
+generator:budget_hawk
+generator:cache_ttl_tuner
+generator:cost_root_cause_correlator
+generator:cost_spike
+generator:cron_caps_filler
+generator:efficiency_hawk
+generator:engagement_amplifier
+generator:evolve_watchdog
+generator:exec_outcome_investigator
+generator:gateway_diagnostician
+generator:manifest_quality
+generator:model_discovery
+generator:persona_tuner
+generator:pod_capability_lift
+generator:security_warden
+generator:session_quality
+generator:sysadmin_watchdog
+generator:user_profile_inferrer
+generator:workspace_inventory
+generator:workspace_security
+health:_check_bot_auth_provisioning
+health:_check_bot_turns_dirs
+health:_check_file_security
+health:_check_gateway_supervision
+health:_check_gateways
+health:_check_launchd
+health:_check_network_config
+health:_check_oc_instances
+health:_check_plugin_install
+health:_check_repo_ownership
+health:_check_runtime_environment
+health:_check_shared_dir
+health:_check_users
+workflow:publish-drift.yml:drift
+workflow:secret-history-scan.yml:scan
