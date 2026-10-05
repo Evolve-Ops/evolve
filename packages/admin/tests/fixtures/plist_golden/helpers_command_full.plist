@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.team_bot_b.evolve.report</string>
+  <key>UserName</key>
+  <string>team_bot_b</string>
+  <key>GroupName</key>
+  <string>staff</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/node</string>
+    <string>/Users/team_bot_b/app/report.js</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/team_bot_b/app</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>NODE_ENV</key>
+    <string>prod</string>
+    <key>Q</key>
+    <string>a&quot;&lt;&gt;&amp;</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key>
+    <integer>5</integer>
+    <key>Hour</key>
+    <integer>17</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/team_bot_b/.openclaw/logs/report.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/team_bot_b/.openclaw/logs/report.err.log</string>
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>

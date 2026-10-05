@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.evolve.evolve.mcp-bridge</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/Shared/evolve-venv/bin/python3</string>
+        <string>-m</string>
+        <string>evolve_admin.mcp_bridge</string>
+        <string>--network</string>
+        <string>/Users/Shared/evolve/network.json</string>
+        <string>--port</string>
+        <string>5051</string>
+        <string>--host</string>
+        <string>0.0.0.0</string>
+    </array>
+    <key>UserName</key>
+    <string>evolve</string>
+    <key>KeepAlive</key>
+    <true/>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/evolve/.evolve/logs/mcp-bridge.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/evolve/.evolve/logs/mcp-bridge.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>

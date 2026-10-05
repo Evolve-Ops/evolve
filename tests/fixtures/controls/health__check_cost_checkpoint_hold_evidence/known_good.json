@@ -1,0 +1,10 @@
+{
+  "_comment": "AXIS: whether a holds.jsonl marker exists for the trip, and nothing else. Same trip (checkpoint pending at 19:52:47Z), same one interactive user-source turn seven minutes later, same bot. Marker present = the plugin recorded the interactive hold, so the D-CC1 checkpoint is evidenced. Replayed by packages/admin/tests/test_checkpoint_hold_evidence.py::test_known_good_fixture_passes.",
+  "_axis": "hold_marker_present",
+  "bot_id": "team_bot_a",
+  "tripped_at": "2026-09-17T19:52:47Z",
+  "now": "2026-09-17T20:00:00Z",
+  "interactive_turns_minutes_after_trip": [7],
+  "hold_marker": true,
+  "expect": {"status": "PASS", "category": "cost_checkpoint_hold"}
+}

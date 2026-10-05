@@ -1,0 +1,7 @@
+{
+  "_comment": "AXIS: whether before_tool_call ever evaluated a call, and nothing else. Same bot, same 40 tool results observed by the tool-result middleware (12 with a host exit status). The gate evaluated 40 calls: armed and live. Replayed by packages/admin/tests/test_no_progress_gate_health.py::test_known_good_fixture_passes.",
+  "_axis": "evaluated_calls",
+  "bot_id": "team_bot_a",
+  "status": {"armed": true, "identical_calls": 3, "failures": 3, "max_model_calls_per_run": null, "evaluated_calls": 40, "unknown_evaluations": 0, "results_observed": 40, "results_with_status": 12, "stops": 1},
+  "expect": {"status": "PASS", "category": "no_progress_gate", "detail_contains": "armed and live"}
+}

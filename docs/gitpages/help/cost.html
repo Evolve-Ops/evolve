@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>What Evolve costs your bots · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">evolve-overhead</span><span class="chip">overhead-breaker</span><span class="chip">attributed-spend</span><span class="chip">breaker-reactivation</span></div><div class="reviewed">Last reviewed 2026-10-03</div></div><h1 id="help-what-evolve-costs-your-bots">What Evolve costs your bots</h1>
+<p>Evolve sits next to your bots and, to do its job, sometimes makes model calls of its own: it summarises a conversation, classifies a message, decides which model should answer. It also puts a few thousand tokens of its own tool descriptions into every prompt. None of that is your bot talking to a person, and all of it is billed. The <strong>Evolve overhead</strong> panel on the Usage page puts one number on it so you can see whether Evolve is earning its keep.</p>
+<p>Evolve is meant to be quiet. The number should be small and, over time, go down.</p>
+<hr>
+<h2 id="what-the-number-means">What the number means</h2>
+<p>For each bot, over the last 7 days:</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>What it is</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Total spend</strong></td>
+<td>Everything the bot spent, Evolve's calls included.</td>
+</tr>
+<tr>
+<td><strong>Evolve calls</strong></td>
+<td>How many model calls Evolve made for itself. Expand the row to see them by kind — <em>classifiers &amp; routing</em>, <em>session summaries</em> — and, under each, by where the call came from.</td>
+</tr>
+<tr>
+<td><strong>Calls $</strong></td>
+<td>What those calls cost. Where OpenClaw priced a call, this is OpenClaw's own figure (marked <em>billed</em>); where it did not, it is Evolve's price table and is marked <em>estimate</em>.</td>
+</tr>
+<tr>
+<td><strong>Context (est.)</strong></td>
+<td><strong>An estimate, always.</strong> Evolve's tool descriptions ride in the prompt of every turn the bot answers. This is that weight (the tool-description tokens Evolve logs at start-up) × the number of turns × the answering model's cached-input price.</td>
+</tr>
+<tr>
+<td><strong>Overhead</strong></td>
+<td>Calls $ + Context.</td>
+</tr>
+<tr>
+<td><strong>Share</strong></td>
+<td>Overhead ÷ total spend. This is the number to watch.</td>
+</tr>
+<tr>
+<td><strong>Calls / message</strong></td>
+<td>Evolve model calls per message sent to the bot.</td>
+</tr>
+<tr>
+<td><strong>Person / no speaker</strong></td>
+<td>The bot's spend split by who was waiting (see below).</td>
+</tr>
+</tbody>
+</table>
+<p>The last row is the pod, summed. The weekly spend receipt carries the same figure as one line.</p>
+<h2 id="why-the-target-is-5">Why the target is 5%</h2>
+<p>The target is <strong>at most 5% of a bot's spend and at most one Evolve model call per message</strong>. It is a starting point, not a law: Evolve's whole case is that the bot costs less, or works better, with it than without it, and an overhead of a few percent is a price most operators will pay for that. Much above it and the machinery is the expensive part of the bot.</p>
+<p>Evolve does not meet the target by asking for a bigger budget. It meets it by doing less: deciding with rules and files where it can, and calling a model only when there is something a rule cannot decide.</p>
+<h2 id="how-to-move-it">How to move it</h2>
+<p>The two settings live in <code>network.json</code>, under <code>evolve.overhead</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>share_max</code></td>
+<td><code>0.05</code></td>
+<td>Evolve's share of a bot's spend.</td>
+</tr>
+<tr>
+<td><code>calls_per_user_turn_max</code></td>
+<td><code>1</code></td>
+<td>Evolve model calls per message.</td>
+</tr>
+<tr>
+<td><code>window_minutes</code></td>
+<td><code>60</code></td>
+<td>How long a stretch the breaker looks at.</td>
+</tr>
+<tr>
+<td><code>min_calls</code></td>
+<td><code>5</code></td>
+<td>Fewer Evolve calls than this in the window never trip the breaker, however the ratio reads.</td>
+</tr>
+<tr>
+<td><code>breaker_ttl_hours</code></td>
+<td><code>4</code></td>
+<td>How long a trip stands before Evolve may try again.</td>
+</tr>
+<tr>
+<td><code>enabled</code></td>
+<td><code>true</code></td>
+<td><code>false</code> turns the breaker off; the number stays.</td>
+</tr>
+</tbody>
+</table>
+<p>Edit the file to change them. To lower the number itself, the levers are elsewhere: fewer classifier and summariser calls, and a smaller set of tools in the prompt.</p>
+<hr>
+<h2 id="the-evolve-overhead-breaker">The Evolve overhead breaker</h2>
+<p>If, over a rolling hour, a bot's Evolve calls pass either target, <strong>Evolve's own breaker trips for that bot</strong>. This is a different thing from the bot's cost breaker:</p>
+<ul>
+<li><strong>What stops:</strong> Evolve's routing, session judges, classifiers and session summaries for that bot. Routing falls back to the rule and the bot's primary model.</li>
+<li><strong>What does not:</strong> the bot. It keeps answering every message on the model it would have used. Nothing here pauses a conversation, a heartbeat or a scheduled job, and no message is held.</li>
+</ul>
+<p>The card on the bot's tile and on this panel says so in plain words. It names the caller — for example <em>"Evolve's own routing calls: 41 calls in the last hour for 3 messages to the bot"</em> — with the busiest session and the count, so you know what to fix before you turn it back on.</p>
+<p>The breaker measures Evolve's <strong>model calls</strong>, not the context estimate: tripping can take calls away but cannot take tool descriptions off a prompt.</p>
+<p>Separately, if a bot's model-routing hook fires more than ten times its usual rate for that hour of the day, a <strong>Needs you</strong> line appears with the busiest session and what it was asking. That is the early warning for any runaway loop, before the spend shows it.</p>
+<h2 id="what-resume-accepts">What "Resume" accepts</h2>
+<p><strong>Resume Evolve's machinery</strong> turns Evolve's routing, judges and summaries back on for that bot. It <em>accepts the window</em>: the calls that tripped the breaker are not judged again, and the count starts from the moment you click. A fresh runaway after that still trips it — the target does not move, only the starting line.</p>
+<p>This is Evolve's button, not the bot's. It does not touch the bot's cost breaker, its daily cap, or its conversations. A trip also lifts by itself after <code>breaker_ttl_hours</code>.</p>
+<h2 id="a-person-working-and-everything-else">A person working, and everything else</h2>
+<p>The daily cost cap exists to catch a bot running away on its own. A person working a bot hard is the product doing its job, so the two are measured differently:</p>
+<ul>
+<li><strong>A person</strong> — a turn with a resolved human speaker (a known user on a known channel). Counted against a wide rolling window, <strong>7 days</strong> by default (<code>thresholds.attributedWindowDays</code>): up to the daily cap on average, every day of the window.</li>
+<li><strong>No speaker</strong> — cron jobs, heartbeats, Evolve's own calls, loops. These keep the tight per-day cap.</li>
+</ul>
+<p>Both numbers show on the bot's cost-breaker card. If a person has spent the whole window's budget, the allowance lapses and every dollar counts against the day again. Anything Evolve cannot prove was a person's counts as no-speaker, so a mistake can only make the cap tighter, never looser. Reactivating a bot starts the window fresh, the same way the daily cap does.</p>
+<p>None of this changes which model answers a message.</p>
+<hr>
+<h2 id="common-questions">Common questions</h2>
+<p><strong>Why is Context only an estimate?</strong> Evolve cannot see inside a prompt; it knows how big its own tool descriptions are and which model answered. The figure is that arithmetic, labelled as such.</p>
+<p><strong>The bot's share is over 5% but the breaker has not tripped.</strong> The breaker watches Evolve's model calls over the last hour, with a floor of five calls. A bot whose overhead is mostly context, or a quiet bot, can sit above the target without anything to turn off. The panel flags it; nothing pauses.</p>
+<p><strong>Can the breaker pause my bot?</strong> No. It only removes Evolve's own machinery from the path.</p>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/cost.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>

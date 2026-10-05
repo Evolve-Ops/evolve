@@ -1,0 +1,843 @@
+#!/usr/bin/env python3
+"""ui-style-lint — quick check for the most-violated admin-UI style rules.
+
+The full guide is at docs/style-guide.md; this script catches the common
+mistakes the highest-leverage rules from CLAUDE.md try to prevent. It's
+intentionally cheap and grep-based — false positives are acceptable, false
+negatives are not.
+
+Usage:
+  tools/ui-style-lint <file> [<file> ...]   # lint full file content
+  tools/ui-style-lint --staged              # diff-only: lint lines added or
+                                              changed by the current git index
+  tools/ui-style-lint --full <file>...      # full file even when --staged
+  tools/ui-style-lint --full                # whole-SPA non-canonical-collapse
+                                              audit (lists every site + count)
+  tools/ui-style-lint --strict <file>...    # block warn-tier + run the
+                                              whole-SPA collapse gate
+  tools/ui-style-lint --update-collapse-baseline   # re-freeze the collapse
+                                              baseline DOWN after a paydown
+  tools/ui-style-lint --update-inline-hex-baseline  # re-freeze the inline-hex
+                                              baseline DOWN after a paydown
+  tools/ui-style-lint --update-handrolled-caret-baseline  # re-freeze the
+                                              hand-rolled-caret baseline DOWN
+
+Severities:
+  block: off-scale fonts, inline rgba(0,0,0,…) shadows, Unicode expand
+         triangles — high-confidence rules where false positives are rare,
+         so a finding causes a non-zero exit.
+  warn:  input-without-width, non-canonical-collapse (a <details>/<summary>
+         collapse toggle missing the §9.13 .expand-icon chevron),
+         handrolled-collapse-caret (a raw triangle caret on a
+         caret/collapse-classed <span>/<button>/<div> — the non-<summary>
+         sibling of the above), and native-dialog (a native confirm()/alert()
+         — silently suppressed in the desktop webview; use confirmModal()/
+         toast() from dom-utils.js) — lower-confidence heuristics. Findings
+         print but don't fail.
+  --strict flips input-without-width to block-tier, and runs whole-SPA
+  shrink-only count gates for non-canonical-collapse, inline-hex and
+  handrolled-collapse-caret (per-file no-growth caps against their
+  tools/*-baseline.txt — the lists may only ratchet down). Useful in CI
+  once legacy debt is gone.
+
+The default --staged mode is what the pre-commit hook runs: it parses the
+staged diff and checks ONLY the lines you're adding/modifying — so existing
+violations don't block your commit, but new ones do. Run without --staged to
+audit the full file (useful for "how much legacy debt do we have?").
+"""
+from __future__ import annotations
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+# Paths we lint. Files outside these prefixes are silently skipped — the
+# style guide governs the admin SPA, not the rest of the repo.
+LINTED_PREFIXES = (
+    'packages/admin/evolve_admin/web/index.html',
+    'packages/admin/evolve_admin/web/static/css/',
+    'packages/admin/evolve_admin/web/static/js/',
+    'docs/gitpages/index.html',
+)
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+# Shrink-only count baseline for the non-canonical-collapse rule (same shape
+# as tools/file-size-baseline.txt). Lists every current violating site as
+# `<relpath>:<line>` so follow-on canonicalization bites have an audit list;
+# the --strict gate enforces a per-file no-growth cap (count-based, robust to
+# line drift), and the list may only ratchet DOWN.
+COLLAPSE_BASELINE_PATH = REPO_ROOT / 'tools' / 'collapse-canonical-baseline.txt'
+# Shrink-only count baseline for the inline-hex rule (same shape). Raw hex in
+# an inline `style=` attribute bypasses the §2/§3 token contract; the gap let
+# 200+ inline hexes accumulate under a green gate. Warn-tier per-finding (so
+# legacy code doesn't block a commit), gated under --strict by a per-file
+# no-growth cap so only NET-NEW inline hex blocks. See
+# internal/ui-audit-token-primitive-bypass-2026-06-19.md.
+INLINE_HEX_BASELINE_PATH = REPO_ROOT / 'tools' / 'inline-hex-baseline.txt'
+# Shrink-only count baseline for the handrolled-collapse-caret rule (same
+# shape). A raw triangle caret on a caret/collapse-classed <span>/<button>/
+# <div> bypasses the §9.13 .expand-icon primitive — the gap the block-tier
+# unicode-expand-triangle rule's glyph-set + `caret` exclusion left open
+# (the bot-tile caret, #3244). Warn-tier per-finding; gated under --strict by
+# a per-file no-growth cap so grandfathered sites don't block, only NET-NEW
+# carets do. See internal/ui-audit-expand-glyph-2026-06-24.md.
+HANDROLLED_CARET_BASELINE_PATH = REPO_ROOT / 'tools' / 'handrolled-caret-baseline.txt'
+
+# Off-scale font sizes per style-guide §4. The "good" sizes are
+# 0.58/0.65/0.66/0.68/0.7/0.72/0.74/0.75/0.78/0.8/0.82/0.85/0.9/0.95/1/1.1/1.3/1.4/2.
+OFF_SCALE_FONT = re.compile(r'font-size\s*:\s*0\.(83|84|86|88|55|64|81|87)rem\b')
+
+# Inline rgba(0,0,0,…) shadows — should use var(--shadow-*) instead.
+INLINE_DARK_SHADOW = re.compile(r'box-shadow\s*:[^;]*rgba\(\s*0\s*,\s*0\s*,\s*0\s*,')
+
+# Unicode expand/collapse triangles in markup — should be .expand-icon SVG.
+# Only flag triangles in obvious expand contexts; menu carets (▾ at end of
+# button label) and trend arrows (▲/▼ inside cost contexts) are explicitly
+# excluded by the surrounding-token check.
+EXPAND_TRIANGLE = re.compile(r'(?<!nav-icon">)[▸▾▼](?!&|;|<)')
+
+# Raw hex inside an inline `style=` attribute (§2/§3 mandate tokens). We match
+# the whole style attribute, strip any `var(--x, #hex)` fallbacks (the token IS
+# referenced there — the hex is a defensive default, cosmetic only), then flag
+# if a bare hex literal remains. SVG `fill="#fff"` etc. are attribute values,
+# not `style=`, so they're naturally excluded.
+INLINE_STYLE_ATTR = re.compile(r'style\s*=\s*"[^"]*"')
+HEX_LITERAL = re.compile(r'#[0-9a-fA-F]{3,8}\b')
+VAR_FALLBACK_HEX = re.compile(r'var\(\s*--[a-z0-9-]+\s*,\s*#[0-9a-fA-F]{3,8}\s*\)')
+
+# Native browser dialogs: confirm() / alert() (bare or window.-prefixed). These
+# are SILENTLY SUPPRESSED in the desktop Evolve Pods app (Tauri v2 + wry webview
+# with no script-dialog delegate), so a destructive action gated behind
+# `if (!confirm(msg)) return;` becomes a silent no-op and an error surfaced only
+# via alert() vanishes. They're also unthemed (style-guide violation). Use the
+# themed async confirmModal() and toast() helpers in core/dom-utils.js instead.
+# The lookbehind keeps custom `.confirm()`/`.alert()` methods (preceded by `.`)
+# and identifiers (preceded by a word char) clean; `confirmModal(` doesn't match
+# (no `(` directly after `confirm`). window.-prefixed native calls still flag.
+# Require `(` immediately after the name (real calls never space it —
+# `confirm (x)` isn't a thing), which drops label/prose FPs like
+# `'alert (critical)'`; the `(?!s\))` lookahead drops the English plural idiom
+# `alert(s)` that appears in headline strings ("3 alert(s) firing").
+NATIVE_DIALOG = re.compile(r'(?<![\w.])(?:window\.)?(?:confirm|alert)\((?!s\))')
+
+# Hand-rolled expand/collapse carets on NON-<summary> elements (§9.13). The
+# block-tier `unicode-expand-triangle` rule above has two blind spots that let
+# a raw caret on a <span>/<button>/<div> ship clean (the bot-tile caret that
+# motivated #3244): (1) its glyph set is only ▸▾▼, so an up-caret ▴/▵ or a ▶/▲
+# is never matched; (2) it skips any line containing the word `caret`, so a
+# `<span class="…caret">▾</span>` is excluded even when it's a genuine
+# disclosure control. This sibling rule closes the gap: it fires on a raw
+# triangle glyph (broader set) carried by an element whose CLASS names it a
+# caret/collapse/disclosure control — and only then — so it doesn't touch the
+# §9.13 KEEP categories (menu carets, CTA go-arrows, trend badges) which carry
+# no such class. Warn-tier + shrink-only baseline (like inline-hex): existing
+# matches are absorbed into tools/handrolled-caret-baseline.txt, and the
+# --strict gate blocks only a NET-NEW caret. See
+# internal/ui-audit-expand-glyph-2026-06-24.md.
+CARET_GLYPHS = '▴▵▾▿▸▹◂◃▲△▽▶◀▷◁►◄'
+CARET_GLYPH_RE = re.compile('[' + CARET_GLYPHS + ']')
+# A class-attribute value that names a caret/collapse/disclosure affordance.
+# `expand` is matched as a whole word so it doesn't swallow `expand-icon` (the
+# canonical primitive, which we exclude separately anyway).
+CARET_CLASS_TOKEN = re.compile(r'caret|collapse|disclosure|chevron|accordion|arrow|\bexpand\b', re.I)
+CLASS_ATTR_VALUE = re.compile(r'class\s*=\s*"([^"]*)"|class\s*=\s*\'([^\']*)\'')
+# Menu / dropdown / popover signals — a caret here is a §9.13 KEEP trigger
+# (it drops a floating panel), not an inline collapse. Mirrors the
+# unicode-expand-triangle menu exclusions.
+CARET_MENU_SIGNALS = (
+    'aria-haspopup', 'role="menu"', "role='menu'", 'menuitem', 'dropdown', 'popover',
+)
+
+
+def _line_has_inline_hex(line: str) -> bool:
+    """True if `line` carries a raw hex inside a `style="…"` attribute that is
+    not merely a `var(--x, #hex)` fallback."""
+    for m in INLINE_STYLE_ATTR.finditer(line):
+        if HEX_LITERAL.search(VAR_FALLBACK_HEX.sub('', m.group(0))):
+            return True
+    return False
+
+
+def _line_has_handrolled_caret(line: str) -> bool:
+    """True if `line` carries a raw triangle caret glyph on an element classed
+    as a caret/collapse/disclosure control that is NOT already the canonical
+    `.expand-icon` and is NOT a menu/dropdown/popover trigger (§9.13 KEEP).
+
+    Conservative by construction: a caret/collapse CLASS is required, so plain
+    CTA buttons (`▶ Set up`), trend badges (`▲`/`▼`) and bare `arrow = up ?`
+    assignments never match — they carry no such class. Menu carets that DO
+    use a `.caret` class (e.g. the Maintenance "More ▾" trigger) are excluded
+    by the haspopup/menu/dropdown signal."""
+    if not CARET_GLYPH_RE.search(line):
+        return False
+    if 'expand-icon' in line:                       # already canonical
+        return False
+    low = line.lower()
+    if any(sig in low for sig in CARET_MENU_SIGNALS):
+        return False
+    classes = ' '.join(
+        (m.group(1) or m.group(2) or '') for m in CLASS_ATTR_VALUE.finditer(line)
+    )
+    return bool(CARET_CLASS_TOKEN.search(classes))
+
+
+# <input> or <select> elements without any width-controlling class or inline
+# style. The .input-w-* utilities (or explicit width:auto / max-width inline)
+# are required for new form controls. This is the rule the timezone-override
+# bug violated.
+INPUT_OR_SELECT = re.compile(r'<(input|select)\b[^>]*?>')
+HAS_WIDTH_CONTROL = re.compile(
+    r'\b(?:'
+    r'class\s*=\s*"[^"]*\binput-w-(?:xs|sm|md|lg|xl|text|auto|full)\b'
+    r'|type\s*=\s*"(?:checkbox|radio|hidden|file|button|submit|reset|image|range|color)"'
+    r'|style\s*=\s*"[^"]*(?:\bwidth\s*:|\bmax-width\s*:|\bflex\s*:|\bflex-shrink\s*:)'
+    r'|class\s*=\s*"[^"]*\b(?:input-sm|toggle|toggle-input|form-select|gtag-chip-btn)\b'
+    r')'
+)
+
+# Non-canonical collapse toggles (§9.13 / §9.14). A `<summary>` inside a
+# `<details>` is ALWAYS a content-disclosure toggle, so per §9.13 it must
+# carry the `.expand-icon` SVG chevron. We flag any `<summary>` whose full
+# span lacks `.expand-icon` and isn't a `.collapsible-card-head` (which
+# carries the chevron by convention, §9.14). The chevron frequently sits on
+# the line AFTER `<summary>`, so detection scans the whole
+# `<summary>…</summary>` span, not a single line.
+#
+# This rule does NOT overlap with `unicode-expand-triangle`: menu carets
+# (`More ▾`), CTA arrows (`Continue ▸`), status badges (`▼ orphan`) and
+# trend arrows are Unicode glyphs on <button>/<span> elements, never
+# `<summary>` elements — that rule handles those. The skip-substring guard
+# below is belt-and-suspenders for the rare `<details>`-as-dropdown pattern.
+SUMMARY_OPEN = re.compile(r'<summary\b')
+SUMMARY_CLOSE = '</summary>'
+# A single <summary>…</summary> shouldn't span more than this; a malformed
+# (unclosed) summary must not swallow the rest of the file.
+_SUMMARY_SPAN_CAP = 40
+# Skip a summary whose span reads as a menu/dropdown rather than a content
+# disclosure (mirrors the unicode-expand-triangle menu exclusions).
+_COLLAPSE_SKIP_SUBSTRINGS = (
+    'dropdown', 'caret', 'popover', 'role="menu"', 'role=\'menu\'', 'menuitem',
+)
+
+
+def _lint_collapses(text: str) -> list[int]:
+    """Return the start line numbers of non-canonical collapse `<summary>`
+    elements — collapse toggles that lack the §9.13 `.expand-icon` chevron.
+
+    Scans the full `<summary>…</summary>` span (the chevron is often on the
+    line after `<summary>`). Mirrors lint_file's comment-skipping for the
+    line a summary STARTS on, so `<summary>` mentioned in a `//` or `/* */`
+    comment (e.g. apps.js's docstring) is not flagged."""
+    findings: list[int] = []
+    lines = text.splitlines()
+    n = len(lines)
+    in_block_comment = False
+    i = 0
+    while i < n:
+        line = lines[i]
+        stripped = line.lstrip()
+        if in_block_comment:
+            if '*/' in line:
+                in_block_comment = False
+            i += 1
+            continue
+        if '/*' in line and '*/' not in line:
+            in_block_comment = True
+            i += 1
+            continue
+        if stripped.startswith(('//', '<!--', '*', '#')):
+            i += 1
+            continue
+        if not SUMMARY_OPEN.search(line):
+            i += 1
+            continue
+        # A <summary> opened on a code line. Accumulate to </summary> —
+        # same line (single-line summary) or following lines, capped.
+        start_ln = i + 1
+        j = i
+        while (SUMMARY_CLOSE not in lines[j]
+               and (j - i) < _SUMMARY_SPAN_CAP
+               and j + 1 < n):
+            j += 1
+        span = '\n'.join(lines[i:j + 1])
+        span_lower = span.lower()
+        canonical = 'expand-icon' in span or 'collapsible-card-head' in span
+        excluded = any(s in span_lower for s in _COLLAPSE_SKIP_SUBSTRINGS)
+        if not canonical and not excluded:
+            findings.append(start_ln)
+        i = j + 1  # continue after this summary span
+    return findings
+
+
+def _is_template_literal_input(snippet: str) -> bool:
+    """Skip the rare case where the tag is built via template literal with
+    dynamic class — we can't reliably tell if it's compliant. False negatives
+    are acceptable; false positives on template-literal generated content
+    would be noisy."""
+    return '${' in snippet and 'class' not in snippet
+
+
+def lint_file(path: Path) -> list[tuple[int, str, str]]:
+    findings: list[tuple[int, str, str]] = []
+    try:
+        text = path.read_text()
+    except (UnicodeDecodeError, OSError):
+        return findings
+
+    is_css = path.suffix == '.css'
+    is_html_or_js = path.suffix in ('.html', '.js')
+
+    in_block_comment = False
+    for ln, line in enumerate(text.splitlines(), 1):
+        # Skip lines inside comments — they don't render. Track block
+        # comments (/* … */) across lines; skip JS // and HTML <!--
+        # single-line comments inline. This is a coarse filter — we don't
+        # parse strings vs. comments — but it eliminates the most common
+        # false positives (the rendered code that drives the UI is what
+        # we care about, not docs explaining it).
+        stripped = line.lstrip()
+        if in_block_comment:
+            if '*/' in line:
+                in_block_comment = False
+            continue
+        if '/*' in line and '*/' not in line:
+            in_block_comment = True
+            continue
+        if stripped.startswith(('//', '<!--', '*', '#')):
+            continue
+        if OFF_SCALE_FONT.search(line):
+            findings.append((ln, 'off-scale-font', line.strip()[:120]))
+        # Inline rgba(0,0,0,…) shadows — only flag in CSS. JS that injects
+        # shadows inline can be a legitimate compatibility shim.
+        if is_css and INLINE_DARK_SHADOW.search(line):
+            # Don't flag the token-definition block itself.
+            if '--shadow-' not in line:
+                findings.append((ln, 'inline-dark-shadow', line.strip()[:120]))
+        # Native confirm()/alert() — JS only (inline-onclick in HTML is rare
+        # and the page templates are noisier to scan reliably). Silently
+        # suppressed in the desktop webview → use confirmModal()/toast().
+        if path.suffix == '.js' and NATIVE_DIALOG.search(line):
+            findings.append((ln, 'native-dialog', line.strip()[:120]))
+        if is_html_or_js:
+            if _line_has_inline_hex(line):
+                findings.append((ln, 'inline-hex', line.strip()[:120]))
+            if _line_has_handrolled_caret(line):
+                findings.append((ln, 'handrolled-collapse-caret', line.strip()[:120]))
+            for m in INPUT_OR_SELECT.finditer(line):
+                tag = m.group(0)
+                # Skip closing tags (we matched only opening, but be safe).
+                if tag.startswith('</'):
+                    continue
+                if _is_template_literal_input(tag):
+                    continue
+                if not HAS_WIDTH_CONTROL.search(tag):
+                    findings.append((ln, 'input-without-width', tag[:120]))
+            for m in EXPAND_TRIANGLE.finditer(line):
+                # Don't flag triangles in non-expand contexts. The check is
+                # intentionally loose (case-insensitive substring) — false
+                # positives are noise but false negatives are real bugs, so
+                # we err toward skipping when context is ambiguous.
+                ctx = line.lower()
+                if any(skip in ctx for skip in (
+                    # Menu / dropdown indicators (▾ on a button or filter).
+                    'snooze', 'dismiss', 'bulk', 'more ▾', 'caret',
+                    'menu', 'dropdown', 'popover', 'score-chip', 'score-popover',
+                    # Trend direction (▲ +5% / ▼ −5%).
+                    'trend-up', 'trend-down', 'monitoring', 'pod-trend',
+                    'stat-delta',
+                    # Status indicators (a triangle prefix on a state badge —
+                    # "▼ orphan", "▼ ${count} error(s)").
+                    'orphan', 'incoherent', 'error(s)', 'drift',
+                    'badge-inline', 'recent_errors', 'badge-status',
+                    # Forward / "go" / play-style action affordances.
+                    'continue', 'verify', 'set up', 'dispatch', 'enable',
+                    'go ▸', 'set-up', 'install ▸',
+                    # SVG attribute values & icon utility classes (already SVG).
+                    '<svg', 'nav-icon', 'expand-icon',
+                    # Comments mentioning the old glyphs while documenting
+                    # what was migrated.
+                    'previously', 'was rendered', 'were rendered',
+                    'collapsed ▸', 'comment ▸', 'comment:',
+                    "was '", "phase 9 —",
+                    # Trend arrow variable assignment (`arrow = up ? '▲' : '▼'`).
+                    'arrow =',
+                    # Score/rank chip in self-improvement (the wrapping
+                    # span has score-chip on the previous line; the
+                    # triangle line itself just shows rank/score values).
+                    'rank #',
+                )):
+                    continue
+                findings.append((ln, 'unicode-expand-triangle', line.strip()[:120]))
+                break  # one finding per line is enough
+    if is_html_or_js:
+        for ln in _lint_collapses(text):
+            findings.append((
+                ln, 'non-canonical-collapse',
+                '<summary> collapse toggle missing .expand-icon (§9.13)',
+            ))
+    return findings
+
+
+def _staged_added_lines() -> dict[Path, set[int]]:
+    """Return {path: {line_numbers_added_or_modified}} from `git diff --cached`.
+    Line numbers are in the NEW file (the staged version)."""
+    r = subprocess.run(
+        ['git', 'diff', '--cached', '--unified=0', '--no-color'],
+        capture_output=True, text=True, check=False,
+    )
+    out: dict[Path, set[int]] = {}
+    current: Path | None = None
+    for line in r.stdout.splitlines():
+        if line.startswith('+++ b/'):
+            current = Path(line[len('+++ b/'):])
+            if current not in out:
+                out[current] = set()
+        elif line.startswith('@@') and current is not None:
+            # @@ -X,Y +A,B @@  →  added range is [A, A+B-1]
+            m = re.match(r'@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@', line)
+            if m:
+                start = int(m.group(1))
+                count = int(m.group(2)) if m.group(2) else 1
+                if count > 0:
+                    out[current].update(range(start, start + count))
+    return out
+
+
+# ── Non-canonical-collapse baseline (shrink-only count gate) ──────────────
+def _site_sort_key(site: str) -> tuple[str, int]:
+    rel, _, ln = site.rpartition(':')
+    try:
+        return (rel, int(ln))
+    except ValueError:
+        return (site, 0)
+
+
+def _enumerate_linted_files() -> list[Path]:
+    """Every existing .html/.js file under LINTED_PREFIXES — the fixed set
+    the global collapse gate scans (CSS has no <summary>)."""
+    out: list[Path] = []
+    seen: set[Path] = set()
+    for prefix in LINTED_PREFIXES:
+        base = REPO_ROOT / prefix
+        if prefix.endswith('/'):
+            if base.is_dir():
+                for p in sorted(base.rglob('*')):
+                    if p.is_file() and p.suffix in ('.html', '.js') and p not in seen:
+                        seen.add(p)
+                        out.append(p)
+        elif base.is_file() and base.suffix in ('.html', '.js') and base not in seen:
+            seen.add(base)
+            out.append(base)
+    return out
+
+
+def _scan_collapse_sites() -> list[str]:
+    """All current non-canonical collapse sites as sorted `relpath:line`."""
+    sites: list[str] = []
+    for p in _enumerate_linted_files():
+        try:
+            text = p.read_text()
+        except (UnicodeDecodeError, OSError):
+            continue
+        rel = p.relative_to(REPO_ROOT).as_posix()
+        for ln in _lint_collapses(text):
+            sites.append(f'{rel}:{ln}')
+    return sorted(sites, key=_site_sort_key)
+
+
+def _load_collapse_baseline() -> list[str]:
+    if not COLLAPSE_BASELINE_PATH.exists():
+        return []
+    sites: list[str] = []
+    for line in COLLAPSE_BASELINE_PATH.read_text(encoding='utf-8').splitlines():
+        line = line.strip()
+        if line and not line.startswith('#'):
+            sites.append(line)
+    return sites
+
+
+def _write_collapse_baseline(sites: list[str]) -> None:
+    sites = sorted(sites, key=_site_sort_key)
+    header = [
+        '# collapse-canonical-baseline — non-canonical <details>/<summary>',
+        '# collapse toggles that lack the .expand-icon chevron (style-guide',
+        '# §9.13 / §9.14). Generated by',
+        '# `tools/ui-style-lint --update-collapse-baseline`.',
+        '# SHRINK-ONLY: the --strict gate blocks any per-file net increase, so',
+        '# this list may only ratchet DOWN as follow-on bites canonicalize',
+        '# sites. Format: <relpath>:<line>, one per line.',
+        f'# total: {len(sites)}',
+        '',
+    ]
+    COLLAPSE_BASELINE_PATH.write_text('\n'.join(header + sites) + '\n', encoding='utf-8')
+
+
+def _per_file_lines(sites: list[str]) -> dict[str, list[int]]:
+    out: dict[str, list[int]] = {}
+    for s in sites:
+        rel, _, ln = s.rpartition(':')
+        out.setdefault(rel, [])
+        try:
+            out[rel].append(int(ln))
+        except ValueError:
+            pass
+    return out
+
+
+def _check_collapse_baseline() -> tuple[list[tuple[str, int, int, list[int]]], int, int]:
+    """Per-file no-growth check of current collapse sites vs. the baseline.
+    Returns (violations, current_total, baseline_total); each violation is
+    (relpath, current_count, baseline_count, current_line_numbers). Count
+    comparison is robust to line-number drift in unchanged sites."""
+    baseline = _per_file_lines(_load_collapse_baseline())
+    current_sites = _scan_collapse_sites()
+    current = _per_file_lines(current_sites)
+    violations: list[tuple[str, int, int, list[int]]] = []
+    for rel, lns in sorted(current.items()):
+        allowed = len(baseline.get(rel, []))
+        if len(lns) > allowed:
+            violations.append((rel, len(lns), allowed, sorted(lns)))
+    return violations, len(current_sites), sum(len(v) for v in baseline.values())
+
+
+# ── Inline-hex baseline (shrink-only count gate) ──────────────────────────
+def _scan_inline_hex_sites() -> list[str]:
+    """All current inline-hex sites as sorted `relpath:line`. Mirrors
+    lint_file's comment-skipping so hex in a `//`/`/* */` comment isn't
+    counted."""
+    sites: list[str] = []
+    for p in _enumerate_linted_files():
+        try:
+            text = p.read_text()
+        except (UnicodeDecodeError, OSError):
+            continue
+        rel = p.relative_to(REPO_ROOT).as_posix()
+        in_block_comment = False
+        for ln, line in enumerate(text.splitlines(), 1):
+            stripped = line.lstrip()
+            if in_block_comment:
+                if '*/' in line:
+                    in_block_comment = False
+                continue
+            if '/*' in line and '*/' not in line:
+                in_block_comment = True
+                continue
+            if stripped.startswith(('//', '<!--', '*', '#')):
+                continue
+            if _line_has_inline_hex(line):
+                sites.append(f'{rel}:{ln}')
+    return sorted(sites, key=_site_sort_key)
+
+
+def _load_inline_hex_baseline() -> list[str]:
+    if not INLINE_HEX_BASELINE_PATH.exists():
+        return []
+    sites: list[str] = []
+    for line in INLINE_HEX_BASELINE_PATH.read_text(encoding='utf-8').splitlines():
+        line = line.strip()
+        if line and not line.startswith('#'):
+            sites.append(line)
+    return sites
+
+
+def _write_inline_hex_baseline(sites: list[str]) -> None:
+    sites = sorted(sites, key=_site_sort_key)
+    header = [
+        '# inline-hex-baseline — raw hex inside an inline style="…" attribute',
+        '# (style-guide §2/§3: colors must reference tokens, not literals).',
+        '# Generated by `tools/ui-style-lint --update-inline-hex-baseline`.',
+        '# SHRINK-ONLY: the --strict gate blocks any per-file net increase, so',
+        '# this list may only ratchet DOWN as paydown bites tokenize sites.',
+        '# `var(--x, #hex)` fallbacks are excluded (the token is referenced).',
+        '# Format: <relpath>:<line>, one per line.',
+        f'# total: {len(sites)}',
+        '',
+    ]
+    INLINE_HEX_BASELINE_PATH.write_text('\n'.join(header + sites) + '\n', encoding='utf-8')
+
+
+def _check_inline_hex_baseline() -> tuple[list[tuple[str, int, int, list[int]]], int, int]:
+    """Per-file no-growth check of current inline-hex sites vs. the baseline.
+    Count comparison is robust to line-number drift in unchanged sites."""
+    baseline = _per_file_lines(_load_inline_hex_baseline())
+    current_sites = _scan_inline_hex_sites()
+    current = _per_file_lines(current_sites)
+    violations: list[tuple[str, int, int, list[int]]] = []
+    for rel, lns in sorted(current.items()):
+        allowed = len(baseline.get(rel, []))
+        if len(lns) > allowed:
+            violations.append((rel, len(lns), allowed, sorted(lns)))
+    return violations, len(current_sites), sum(len(v) for v in baseline.values())
+
+
+# ── Hand-rolled-caret baseline (shrink-only count gate) ───────────────────
+def _scan_handrolled_caret_sites() -> list[str]:
+    """All current hand-rolled-caret sites as sorted `relpath:line`. Mirrors
+    lint_file's comment-skipping so a caret glyph in a `//`/`/* */` comment
+    (e.g. a doc line describing a migrated glyph) isn't counted."""
+    sites: list[str] = []
+    for p in _enumerate_linted_files():
+        try:
+            text = p.read_text()
+        except (UnicodeDecodeError, OSError):
+            continue
+        rel = p.relative_to(REPO_ROOT).as_posix()
+        in_block_comment = False
+        for ln, line in enumerate(text.splitlines(), 1):
+            stripped = line.lstrip()
+            if in_block_comment:
+                if '*/' in line:
+                    in_block_comment = False
+                continue
+            if '/*' in line and '*/' not in line:
+                in_block_comment = True
+                continue
+            if stripped.startswith(('//', '<!--', '*', '#')):
+                continue
+            if _line_has_handrolled_caret(line):
+                sites.append(f'{rel}:{ln}')
+    return sorted(sites, key=_site_sort_key)
+
+
+def _load_handrolled_caret_baseline() -> list[str]:
+    if not HANDROLLED_CARET_BASELINE_PATH.exists():
+        return []
+    sites: list[str] = []
+    for line in HANDROLLED_CARET_BASELINE_PATH.read_text(encoding='utf-8').splitlines():
+        line = line.strip()
+        if line and not line.startswith('#'):
+            sites.append(line)
+    return sites
+
+
+def _write_handrolled_caret_baseline(sites: list[str]) -> None:
+    sites = sorted(sites, key=_site_sort_key)
+    header = [
+        '# handrolled-caret-baseline — raw triangle caret glyphs on a',
+        '# caret/collapse/disclosure-classed <span>/<button>/<div> that bypass',
+        '# the §9.13 .expand-icon primitive (the gap the block-tier',
+        '# unicode-expand-triangle rule left open: its glyph set is only ▸▾▼',
+        '# and it skips any line containing "caret"). Generated by',
+        '# `tools/ui-style-lint --update-handrolled-caret-baseline`.',
+        '# SHRINK-ONLY: the --strict gate blocks any per-file net increase, so',
+        '# this list may only ratchet DOWN as follow-on bites canonicalize',
+        '# sites. Menu/dropdown carets (aria-haspopup/role=menu) are excluded',
+        '# by the rule, not by this list. Format: <relpath>:<line>, one per line.',
+        f'# total: {len(sites)}',
+        '',
+    ]
+    HANDROLLED_CARET_BASELINE_PATH.write_text(
+        '\n'.join(header + sites) + '\n', encoding='utf-8')
+
+
+def _check_handrolled_caret_baseline() -> tuple[list[tuple[str, int, int, list[int]]], int, int]:
+    """Per-file no-growth check of current hand-rolled-caret sites vs. the
+    baseline. Count comparison is robust to line-number drift in unchanged
+    sites."""
+    baseline = _per_file_lines(_load_handrolled_caret_baseline())
+    current_sites = _scan_handrolled_caret_sites()
+    current = _per_file_lines(current_sites)
+    violations: list[tuple[str, int, int, list[int]]] = []
+    for rel, lns in sorted(current.items()):
+        allowed = len(baseline.get(rel, []))
+        if len(lns) > allowed:
+            violations.append((rel, len(lns), allowed, sorted(lns)))
+    return violations, len(current_sites), sum(len(v) for v in baseline.values())
+
+
+# Severity tiers per kind. High-confidence rules block by default; lower-
+# confidence rules (where the grep heuristic might have false positives on
+# legitimate-but-unusual patterns) warn-only by default. --strict promotes
+# WARN_KINDS to block. See style-guide §14 for the rationale.
+BLOCK_KINDS = {'off-scale-font', 'inline-dark-shadow', 'unicode-expand-triangle'}
+WARN_KINDS = {'input-without-width', 'native-dialog'}
+# Baseline-gated kinds are always warn-tier in the per-finding output (even
+# under --strict). They are enforced separately by a shrink-only count
+# baseline (run once over the whole SPA when --strict is set), NOT by
+# per-finding promotion — so grandfathered legacy sites don't block, only a
+# net increase does. See _check_collapse_baseline.
+BASELINE_KINDS = {'non-canonical-collapse', 'inline-hex', 'handrolled-collapse-caret'}
+
+
+def _print_collapse_audit() -> int:
+    """Whole-SPA non-canonical-collapse audit (never blocks). The
+    `--full` no-args mode and the human-readable confirm-the-count surface."""
+    sites = _scan_collapse_sites()
+    by_file = _per_file_lines(sites)
+    for rel in sorted(by_file):
+        lns = ', '.join(str(n) for n in sorted(by_file[rel]))
+        print(f'  {rel}: {len(by_file[rel])} site(s) — L{lns}')
+    print(f'\ncollapse-canonical audit: {len(sites)} non-canonical collapse '
+          f'<summary>(s) across {len(by_file)} file(s) (baseline '
+          f'{sum(len(v) for v in _per_file_lines(_load_collapse_baseline()).values())}).')
+    print('Canonicalize with .expand-icon (§9.13) / .collapsible-card (§9.14); '
+          'ratchet down via `--update-collapse-baseline`.')
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    staged_mode = False
+    full_override = False
+    strict_mode = False
+    explicit_files: list[str] = []
+
+    args = list(argv)
+    if '--staged' in args:
+        staged_mode = True
+        args.remove('--staged')
+    if '--full' in args:
+        full_override = True
+        args.remove('--full')
+    if '--strict' in args:
+        strict_mode = True
+        args.remove('--strict')
+    if '--update-collapse-baseline' in args:
+        args.remove('--update-collapse-baseline')
+        sites = _scan_collapse_sites()
+        _write_collapse_baseline(sites)
+        rel = COLLAPSE_BASELINE_PATH.relative_to(REPO_ROOT).as_posix()
+        print(f'{rel} written: {len(sites)} non-canonical collapse site(s) '
+              f'across {len(_per_file_lines(sites))} file(s).')
+        return 0
+    if '--update-inline-hex-baseline' in args:
+        args.remove('--update-inline-hex-baseline')
+        sites = _scan_inline_hex_sites()
+        _write_inline_hex_baseline(sites)
+        rel = INLINE_HEX_BASELINE_PATH.relative_to(REPO_ROOT).as_posix()
+        print(f'{rel} written: {len(sites)} inline-hex site(s) '
+              f'across {len(_per_file_lines(sites))} file(s).')
+        return 0
+    if '--update-handrolled-caret-baseline' in args:
+        args.remove('--update-handrolled-caret-baseline')
+        sites = _scan_handrolled_caret_sites()
+        _write_handrolled_caret_baseline(sites)
+        rel = HANDROLLED_CARET_BASELINE_PATH.relative_to(REPO_ROOT).as_posix()
+        print(f'{rel} written: {len(sites)} hand-rolled caret site(s) '
+              f'across {len(_per_file_lines(sites))} file(s).')
+        return 0
+    explicit_files = args
+
+    # `--full` with no files (and not --staged) = whole-SPA collapse audit.
+    if full_override and not staged_mode and not explicit_files:
+        return _print_collapse_audit()
+
+    if not staged_mode and not explicit_files:
+        print('usage: ui-style-lint <file> [<file> ...]  |  --staged  '
+              '|  --full  |  --update-collapse-baseline', file=sys.stderr)
+        return 2
+
+    if staged_mode and not explicit_files:
+        added = _staged_added_lines() if not full_override else {}
+        r = subprocess.run(
+            ['git', 'diff', '--cached', '--name-only', '--diff-filter=ACM'],
+            capture_output=True, text=True, check=False,
+        )
+        files = [Path(p) for p in r.stdout.split('\n') if p]
+    else:
+        files = [Path(a) for a in explicit_files]
+        added = {}  # full-file mode for explicit args
+
+    files = [f for f in files if any(str(f).startswith(p) for p in LINTED_PREFIXES)]
+    # Don't early-return when --strict: the whole-SPA collapse gate below must
+    # still run even if no linted file was passed as an argument.
+    if not files and not strict_mode:
+        return 0
+
+    block_total = 0
+    warn_total = 0
+    for f in files:
+        if not f.exists():
+            continue
+        findings = lint_file(f)
+        # In --staged mode (without --full), filter to only lines added in
+        # the current staged diff so we don't churn on legacy violations.
+        if staged_mode and not full_override:
+            allowed = added.get(f, set())
+            findings = [x for x in findings if x[0] in allowed]
+        if findings:
+            print(f'\n{f}:')
+            for ln, kind, snippet in findings:
+                # BLOCK_KINDS always block; WARN_KINDS block only under
+                # --strict. BASELINE_KINDS (non-canonical-collapse) stay warn
+                # here — they're gated by the shrink-only baseline below, not
+                # per-finding promotion.
+                is_block = kind in BLOCK_KINDS or (strict_mode and kind in WARN_KINDS)
+                tier = 'block' if is_block else 'warn '
+                print(f'  L{ln}  [{tier}] [{kind}]  {snippet}')
+                if is_block:
+                    block_total += 1
+                else:
+                    warn_total += 1
+
+    # Whole-SPA shrink-only collapse gate (enforced under --strict / CI). A
+    # per-file count cap: a file may not gain non-canonical collapse sites
+    # above its baseline; the list may only ratchet down. Count-based so
+    # line-number drift in unchanged sites never trips it.
+    if strict_mode:
+        violations, cur_total, base_total = _check_collapse_baseline()
+        if violations:
+            print('\nnon-canonical-collapse: per-file no-growth cap exceeded '
+                  '(new <summary> collapse without .expand-icon, §9.13):')
+            for rel, cur, allowed, lns in violations:
+                print(f'  {rel}: {cur} collapse site(s), baseline allows '
+                      f'{allowed} (+{cur - allowed}); current lines {lns}')
+            block_total += len(violations)
+        rel_base = COLLAPSE_BASELINE_PATH.relative_to(REPO_ROOT).as_posix()
+        print(f'\ncollapse-canonical: {cur_total} non-canonical collapse '
+              f'site(s) (baseline {base_total}).')
+        if cur_total < base_total:
+            print(f'  Below baseline — run `tools/ui-style-lint '
+                  f'--update-collapse-baseline` to ratchet {rel_base} down.')
+
+        hx_violations, hx_cur, hx_base = _check_inline_hex_baseline()
+        if hx_violations:
+            print('\ninline-hex: per-file no-growth cap exceeded (new raw hex '
+                  'in an inline style="…", §2/§3 — use a token):')
+            for rel, cur, allowed, lns in hx_violations:
+                print(f'  {rel}: {cur} inline-hex site(s), baseline allows '
+                      f'{allowed} (+{cur - allowed}); current lines {lns}')
+            block_total += len(hx_violations)
+        rel_hx = INLINE_HEX_BASELINE_PATH.relative_to(REPO_ROOT).as_posix()
+        print(f'\ninline-hex: {hx_cur} inline-hex site(s) (baseline {hx_base}).')
+        if hx_cur < hx_base:
+            print(f'  Below baseline — run `tools/ui-style-lint '
+                  f'--update-inline-hex-baseline` to ratchet {rel_hx} down.')
+
+        hc_violations, hc_cur, hc_base = _check_handrolled_caret_baseline()
+        if hc_violations:
+            print('\nhandrolled-collapse-caret: per-file no-growth cap exceeded '
+                  '(new raw caret glyph on a caret/collapse-classed element '
+                  'instead of the §9.13 .expand-icon SVG):')
+            for rel, cur, allowed, lns in hc_violations:
+                print(f'  {rel}: {cur} hand-rolled caret site(s), baseline allows '
+                      f'{allowed} (+{cur - allowed}); current lines {lns}')
+            block_total += len(hc_violations)
+        rel_hc = HANDROLLED_CARET_BASELINE_PATH.relative_to(REPO_ROOT).as_posix()
+        print(f'\nhandrolled-collapse-caret: {hc_cur} hand-rolled caret site(s) '
+              f'(baseline {hc_base}).')
+        if hc_cur < hc_base:
+            print(f'  Below baseline — run `tools/ui-style-lint '
+                  f'--update-handrolled-caret-baseline` to ratchet {rel_hc} down.')
+
+    if block_total or warn_total:
+        print(f'\nui-style-lint: {block_total} blocking, {warn_total} warning.')
+        print('Style guide: docs/style-guide.md.')
+        print('Common fixes:')
+        print('  off-scale-font            -> round to nearest canonical rung (§4)')
+        print('  inline-dark-shadow        -> use var(--shadow-*) (§7)')
+        print('  input-without-width       -> add class="input-w-{sm,md,lg,...}" (§9.2)')
+        print('  unicode-expand-triangle   -> use .expand-icon SVG (§9.13)')
+        print('  inline-hex                -> reference a token var(--…) (§2/§3)')
+        print('  non-canonical-collapse    -> add .expand-icon to the <summary>, '
+              'or use .collapsible-card (§9.13/§9.14)')
+        print('  handrolled-collapse-caret -> replace the raw caret glyph with '
+              'the .expand-icon SVG chevron (§9.13)')
+        if block_total:
+            print('Bypass blocking: commit with --no-verify (and explain in the commit body).')
+            return 1
+        print('Warnings only — commit will proceed. Fix when you can.')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

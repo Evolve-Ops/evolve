@@ -1,0 +1,5 @@
+{
+  "_comment": "A log tail ending on a success marker, freshly written. Drives health._repo_puller_verdict() via a temp log file in packages/admin/tests/test_repo_puller.py.",
+  "log_lines": ["[repo-puller] stashes=0"],
+  "age_seconds": 300
+}

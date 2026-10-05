@@ -1,0 +1,7 @@
+{
+  "_comment": "AXIS: the same record with evaluated_calls at zero. Forty tool results went through the middleware and the gate never evaluated one of the calls that produced them. That is armed-but-not-live: the 171-call poll loop would run straight through it. The control reads it as WARN unknown, never a silent PASS. Replayed by packages/admin/tests/test_no_progress_gate_health.py::test_known_bad_fixture_warns_unknown.",
+  "_axis": "evaluated_calls",
+  "bot_id": "team_bot_a",
+  "status": {"armed": true, "identical_calls": 3, "failures": 3, "max_model_calls_per_run": null, "evaluated_calls": 0, "unknown_evaluations": 0, "results_observed": 40, "results_with_status": 12, "stops": 1},
+  "expect": {"status": "WARN", "category": "no_progress_gate", "detail_contains": "armed but not live"}
+}

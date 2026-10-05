@@ -1,0 +1,8 @@
+{
+  "_comment": "AXIS: whether the pricing cache holds the bot's fast-rung model, and nothing else. team_bot_a's fast rung is acme/fast-1 and the cache prices it (input AND output) — every Board LLM action can show a price. Replayed by packages/admin/tests/test_pricing_warm.py::test_known_good_fixture_passes.",
+  "_axis": "fast_model_in_cache",
+  "bot_id": "team_bot_a",
+  "fast_model": "acme/fast-1",
+  "cache_models": [{"provider": "acme", "model_id": "fast-1", "input_cost_per_token": 1e-06, "output_cost_per_token": 5e-06}],
+  "expect": {"status": "PASS", "category": "runtime", "detail_contains": "fast-rung price known for every bot"}
+}

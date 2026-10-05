@@ -1,0 +1,48 @@
+{
+  "_readme": [
+    "Starter heartbeat conditions. Copy this file to a bot's workspace, next to",
+    "its HEARTBEAT.md (/Users/<bot>/.openclaw/workspace/HEARTBEAT.json), edit the",
+    "conditions to match that bot's checklist, then flip 'enabled' to true.",
+    "",
+    "What it does: before a heartbeat or cron tick wakes the bot's model, Evolve",
+    "evaluates these conditions from files and the clock. Nothing due means no",
+    "model call at all. Something due means the bot wakes with just that item.",
+    "",
+    "It ships DISABLED on purpose. A conditions file decides whether a turn runs,",
+    "so it starts working only once someone has read it and meant it. Until then",
+    "(and on any bot with no file at all) every heartbeat wakes the model exactly",
+    "as it does today.",
+    "",
+    "Full guide: docs/help/heartbeat-conditions.md",
+    "Decision:   D-OH3, internal/decision-evolve-overhead-2026-09-07.md"
+  ],
+  "version": 1,
+  "enabled": false,
+  "conditions": [
+    {
+      "id": "inbox",
+      "when": "dir_non_empty",
+      "path": "inbox",
+      "wake": "Work through everything in inbox/ and clear it."
+    },
+    {
+      "id": "notes-changed",
+      "when": "file_changed",
+      "path": "memory/notes.md",
+      "wake": "Re-read memory/notes.md and act on what changed since last time."
+    },
+    {
+      "id": "morning-brief",
+      "when": "time_window",
+      "after": "06:30",
+      "before": "07:30",
+      "wake": "Send the morning brief."
+    },
+    {
+      "id": "safety-net",
+      "when": "every",
+      "interval": "6h",
+      "wake": "Run the full HEARTBEAT.md checklist — this is the periodic catch-all for anything the conditions above do not cover."
+    }
+  ]
+}

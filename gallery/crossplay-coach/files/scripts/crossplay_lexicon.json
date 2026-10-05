@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "version": "2026.09.26",
+  "reference": "NWL2023",
+  "supplied_by": "operator",
+  "default_path": "crossplay-data/lexicon.txt",
+  "note": "The operator supplies this word list; it may differ from NWL2023, the list Crossplay plays by. A played word it lacks is noted, and accepted only after a second game shows it."
+}

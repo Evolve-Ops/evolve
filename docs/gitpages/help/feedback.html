@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sending Feedback · Evolve Help</title>
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="_assets/help.css">
+</head>
+<body>
+  <nav>
+    <a href="../index.html" class="nav-logo">Evolve</a>
+    <div class="nav-links">
+      <a href="index.html">Help</a>
+      <a href="../index.html#why">About</a>
+      <a href="https://github.com/evolve-ops/evolve">GitHub</a>
+    </div>
+  </nav>
+  <main class="page">
+    <div class="topic-meta"><div class="chips"><span class="chip">feedback</span><span class="chip">bug-reports</span></div><div class="reviewed">Last reviewed 2026-07-28</div></div><h1 id="help-sending-feedback">Sending Feedback</h1>
+<p>The <strong>Send feedback</strong> button in the admin UI turns "something's wrong" into a
+GitHub issue with the environment details already filled in. There are two
+kinds — <strong>bug report</strong> and <strong>feature request</strong> — and you always review the
+issue before it's posted.</p>
+<h2 id="what-the-button-does">What the button does</h2>
+<p>For a bug report, the pod first builds a diagnostic snapshot and saves it to
+<code>~/.evolve/reports/report-&lt;timestamp&gt;.json</code> (the <code>evolve</code> user's home on a
+pod; the Reports tab under Maintenance lists the same files). Then:</p>
+<ul>
+<li><strong>If a GitHub token is configured</strong> (keystore slot <code>github_intake</code> — set it
+  with <code>evolve-admin keys set github_intake</code>), the issue is filed directly via
+  the GitHub API, labelled <code>bug</code> or <code>enhancement</code>, and the freshly filed issue
+  opens in a new tab for you to confirm.</li>
+<li><strong>Otherwise</strong>, a pre-filled new-issue page opens in your browser and you
+  post it under your own GitHub account — no tokens ever live on the pod for
+  this path. One quirk: with GitHub's issue-form templates only the title
+  survives the URL pre-fill, so paste your description into the form.</li>
+</ul>
+<p>Either way the issue body carries your note, the Evolve version and git
+commit, the hostname, and the last few error lines from the admin log.</p>
+<h2 id="the-snapshot-is-not-attached-automatically">The snapshot is not attached automatically</h2>
+<p>An issue can't carry a file by URL. If you want the full snapshot on the
+issue — and for bugs you usually do — drag the saved <code>report-*.json</code> file
+from <code>~/.evolve/reports/</code> into the issue's comment box before (or after)
+posting. The issue body includes the file path to remind you.</p>
+<h2 id="where-issues-get-filed">Where issues get filed</h2>
+<p>The target repo is auto-detected from the deploy checkout's <code>git remote
+get-url origin</code> — so a pod installed from a fork files issues against that
+fork, not upstream. To override, create <code>~/.evolve/feedback-config.json</code>:</p>
+<pre><code class="language-json">{ &quot;github_repo&quot;: &quot;owner/repo&quot; }
+</code></pre>
+<p>(or use the in-app config link, which does the same thing). If neither the
+config file nor the git remote resolves, the feedback flow reports itself
+unconfigured rather than guessing a repo.</p>
+<h2 id="what-makes-a-good-beta-bug-report">What makes a good beta bug report</h2>
+<ul>
+<li>What you did, what you expected, what actually happened.</li>
+<li>Roughly when it happened — the snapshot's log tail is time-stamped, so a
+  time lets us line the two up.</li>
+<li>The page or command involved, and whether it reproduces.</li>
+<li>Attach the snapshot. It answers the first ten questions we'd otherwise ask.</li>
+</ul>
+<p>For errors the pod itself caught, the <a href="errors.html">Errors page</a> has a per-error
+report flow that pre-selects the relevant crash.</p>
+<h2 id="privacy-what-the-snapshot-does-and-doesnt-contain">Privacy: what the snapshot does and doesn't contain</h2>
+<p>The snapshot <strong>contains</strong>: system info (hostname, user, OS and Python
+versions, Evolve version and git commit), a filtered set of environment
+variables (PATH, HOME and the like), admin-service status, the last 60
+error lines and last 300 lines of the admin log, the last 100 lines of the
+server log, the install record, and your pod configuration (<code>network.json</code>)
+<strong>with secrets redacted</strong> — tokens, API keys, passwords, webhooks, and the
+alert chat ID are replaced with <code>[REDACTED]</code>.</p>
+<p>It does <strong>not</strong> contain chat transcripts, bot memory, or workspace files.</p>
+<p>Two caveats: log lines are included verbatim, so anything an error message
+happened to echo (a file path, a username) is in there; and the config still
+shows structural details like bot names and ports. Nothing uploads on its
+own — the snapshot only leaves the pod when you attach it, so skim the file
+first if in doubt.</p>
+  </main>
+  <footer>
+    <p>
+      Evolve · <a href="https://github.com/evolve-ops/evolve">source</a> ·
+      <a href="https://github.com/evolve-ops/evolve/edit/main/docs/help/feedback.md">edit this page</a>
+    </p>
+  </footer>
+  <script src="_assets/help.js" defer></script>
+</body>
+</html>
