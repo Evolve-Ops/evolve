@@ -1,0 +1,587 @@
+#!/usr/bin/env python3
+"""openclaw-eacces-lint — recurrence guard for the Linux ``.openclaw`` ACL-mask
+EACCES bug class.
+
+────────────────────────────────────────────────────────────────────────────
+The bug class
+────────────────────────────────────────────────────────────────────────────
+On Linux/Ubuntu pods running Python 3.12, when the OpenClaw gateway (or an
+``openclaw`` invocation run AS a bot user) hardens a bot's ``.openclaw`` dir to
+0700, it re-clamps that dir's POSIX-ACL **mask** to ``---``, removing the
+``evolve`` service user's inherited traverse ACE. A bare ``Path.exists()`` /
+``Path.stat()`` / ``Path.is_file()`` / ``Path.is_dir()`` / ``open(...)`` on a
+path UNDER that dir then **raises** ``PermissionError`` (Py3.12; ≤3.11 returned
+``False``). Caught by a broad ``except Exception`` it silently aborts a deploy
+(the live VPS "0 of N bots upgraded" blocker, #3184); uncaught it crashes a
+daemon (``pod_perms_drift_monitor``, #2... W10-G round-6).
+
+The codified fix lives in ``packages/admin/evolve_admin/secret_config_perms.py``:
+
+  • existence checks → ``exists_or_unreachable(path)`` (catches ``OSError`` →
+    returns ``True`` = "present / unreachable, let the privileged write proceed");
+  • reads → ``read_text()`` with an EACCES fallback to ``sudo /bin/cat``;
+  • any of the above wrapped in an explicit ``try / except (PermissionError,
+    OSError)`` that classifies present/absent correctly.
+
+────────────────────────────────────────────────────────────────────────────
+Why a mechanical guard (the gap this closes)
+────────────────────────────────────────────────────────────────────────────
+TWO manual sweeps (#3141 created ``exists_or_unreachable`` and applied it 4× in
+deploy.py; #3145's follow-up swept again) BOTH missed the single most-used
+config-write site — ``safe_write_bot_config``'s ``config_path.exists()`` (the
+funnel every bot ``openclaw.json`` write passes through). #3184 fixed that one
+line by hand. Manual sweeps are demonstrably unreliable for this class, so this
+lint freezes the current set of bare calls and BLOCKS any new one.
+
+────────────────────────────────────────────────────────────────────────────
+What is flagged
+────────────────────────────────────────────────────────────────────────────
+A *candidate* is one of these calls whose target resolves to a bot ``.openclaw``
+path (heuristics below):
+
+  X.exists()    X.stat()    X.is_file()    X.is_dir()
+  open(X, ...)    os.open(X, ...)    io.open(X, ...)
+
+A candidate is a *violation* unless it is **guarded** — lexically inside the
+``try`` body of a ``try / except`` whose handler names ``PermissionError`` /
+``OSError`` (or the ``IOError`` / ``EnvironmentError`` aliases). A bare
+``except:`` and a broad ``except Exception`` do **NOT** count as guards — that
+broad swallow is precisely the #3184 bug (it converts the raise into a silent
+deploy-abort), not the fix. Routing through ``exists_or_unreachable(path)`` is
+inherently safe because it is a plain function call, not a ``.exists()`` method
+call, so it never matches a candidate; likewise a read rewritten to
+``sudo /bin/cat`` removes the bare ``open()`` entirely.
+
+"Resolves to a bot ``.openclaw`` path" (proximity heuristic) is true when the
+target expression's AST subtree contains, anywhere:
+
+  • an identifier (variable name / attribute) whose lower-case form contains a
+    NAME needle — ``openclaw``, ``oc_json``, ``oc_dir``, ``oc_config``,
+    ``oc_path``, ``oc_file``, ``oc_bak``, ``auth_profile`` / ``authprofile``; or
+  • a string literal (incl. f-string fragments) containing a STRING needle —
+    ``.openclaw``, ``auth-profiles.json``, ``agents/main``; or
+  • a local variable previously assigned from such an expression — the
+    assignment chain is resolved per-scope to a fixpoint, so
+
+        oc_dir = _user_home(bot_user) / ".openclaw"      # string needle
+        path   = oc_dir / rel                            # inherits via oc_dir
+        if path.exists():  ...                           # ← flagged
+
+    is caught even though ``path`` carries no needle of its own. This is the
+    exact shape of the #3184 funnel
+    (``config_path = _user_home(...) / ".openclaw/openclaw.json"``).
+
+────────────────────────────────────────────────────────────────────────────
+Known heuristic limits (documented, à la the platform-blind lint #3173)
+────────────────────────────────────────────────────────────────────────────
+Detection is name/string-proximity + per-scope assignment tracking — NOT a type
+checker or data-flow analysis. Consequences, accepted by design:
+
+  • A ``.openclaw`` path threaded through a helper return value, a dict, or a
+    function PARAMETER with a non-needle name is NOT recognised (false NEGATIVE).
+    The blessed pattern (resolve the path locally, then check) is what the funnel
+    sites use, so the high-value cases are covered.
+  • A non-``.openclaw`` path that happens to live in a variable named e.g.
+    ``oc_path`` would match (false POSITIVE). Such a hit is wrapped in
+    ``try / except OSError`` or routed through ``exists_or_unreachable`` to clear
+    it — both are harmless, correct hardening regardless of the path, so a rare
+    false positive costs only a defensive wrap.
+  • Treating a broad ``except Exception`` as NOT-a-guard is deliberate; it is the
+    only way this lint catches the #3184 shape. A site that genuinely wants the
+    broad handler still must funnel existence through ``exists_or_unreachable``.
+
+Scope is ``packages/admin/`` + ``packages/analyzer/`` Python, minus test files
+(tests pin both the broken and the fixed patterns as fixtures). Counts are
+frozen per-file in ``tools/openclaw-eacces-baseline.txt`` and may only ratchet
+DOWN. Goal state: empty.
+
+────────────────────────────────────────────────────────────────────────────
+Usage
+────────────────────────────────────────────────────────────────────────────
+  tools/openclaw-eacces-lint <file.py> [...]        # lint specific files
+  tools/openclaw-eacces-lint --all                  # lint all in scope (CI)
+  tools/openclaw-eacces-lint --staged               # lint git-staged (pre-commit)
+  tools/openclaw-eacces-lint --all --update-baseline  # re-freeze (shrink only)
+
+Exit status: 0 if no file exceeds its baseline; 1 if a new bare call appeared.
+
+To fix a hit, in order of preference:
+  1. existence check   → secret_config_perms.exists_or_unreachable(path)
+  2. read              → path.read_text() with an except → sudo /bin/cat fallback
+  3. unavoidable       → try / except (PermissionError, OSError): <classify>
+If a hit is genuinely unavoidable, bump tools/openclaw-eacces-baseline.txt in
+this PR so the exception is reviewable.
+"""
+from __future__ import annotations
+
+import argparse
+import ast
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+BASELINE_PATH = REPO_ROOT / "tools" / "openclaw-eacces-baseline.txt"
+
+# Roots walked by --all. The bug is admin/analyzer (evolve-side) code touching a
+# bot's .openclaw; in-bot app code runs AS the bot and is out of class.
+_LINT_ROOTS = ("packages/admin", "packages/analyzer")
+
+# ── openclaw-path heuristics ─────────────────────────────────────────────────
+# Substrings (case-insensitive) in an identifier that mark a .openclaw path var.
+_NAME_NEEDLES = (
+    "openclaw", "oc_json", "oc_dir", "oc_config", "oc_path", "oc_file",
+    "oc_bak", "auth_profile", "authprofile",
+)
+# Specific string literals (incl. f-string fragments) that mark a path inside a
+# bot's .openclaw tree. ``.openclaw`` itself is matched separately (see
+# _str_is_oc) so it only counts as a directory COMPONENT — the launchd label
+# ``ai.openclaw.<bot>-gateway.plist`` embeds the substring ``.openclaw.`` but
+# lives in /Library/LaunchDaemons, never under the clamped bot dir.
+_STRING_NEEDLES = ("auth-profiles.json", "agents/main")
+_OC_DIR = ".openclaw"
+
+# Methods whose receiver is the candidate path.
+_PATH_PROBE_METHODS = frozenset({"exists", "stat", "is_file", "is_dir"})
+# Exception types that count as a real EACCES guard (PermissionError ⊂ OSError).
+_GUARD_EXC_NAMES = frozenset({"OSError", "PermissionError", "IOError", "EnvironmentError"})
+
+
+def _is_test_path(rel: str) -> bool:
+    parts = rel.replace("\\", "/").split("/")
+    if any(p in ("tests", "test") for p in parts):
+        return True
+    base = parts[-1]
+    return base.startswith("test_") or base == "conftest.py"
+
+
+def _name_is_oc(ident: str) -> bool:
+    # Segment-anchored: a needle must begin at the start of the identifier or
+    # right after ``_`` — so ``oc_path`` matches but ``doc_path`` / ``proc_dir``
+    # (where ``oc_…`` is buried mid-segment) do not. snake_case is the norm here.
+    low = ident.lower()
+    for n in _NAME_NEEDLES:
+        i = low.find(n)
+        while i != -1:
+            if i == 0 or low[i - 1] == "_":
+                return True
+            i = low.find(n, i + 1)
+    return False
+
+
+def _str_is_oc(s: str) -> bool:
+    if any(n in s for n in _STRING_NEEDLES):
+        return True
+    # ``.openclaw`` only as a path component: followed by ``/`` or end-of-string.
+    # Excludes the launchd label form ``ai.openclaw.<bot>-gateway`` (``.openclaw.``).
+    idx = 0
+    while True:
+        i = s.find(_OC_DIR, idx)
+        if i < 0:
+            return False
+        end = i + len(_OC_DIR)
+        nxt = s[end] if end < len(s) else ""
+        if nxt in ("", "/"):
+            return True
+        idx = end
+
+
+# Path-producing constructs — used to keep taint propagation STRUCTURE-aware so
+# a tainted value used as a filename segment doesn't poison an unrelated dir.
+_PATH_PROP_ATTRS = frozenset({"parent"})  # attribute access yielding a path
+_PATH_METHODS = frozenset({
+    "with_suffix", "with_name", "with_stem", "joinpath",
+    "resolve", "absolute", "expanduser",
+})
+# Home-dir resolvers — return a home, NOT a path under .openclaw on their own;
+# only ``<home> / ".openclaw"`` is. Listed so they DON'T taint the bare home var.
+_HOME_FUNCS = frozenset({"_user_home", "user_home", "bot_home", "_bot_home"})
+
+
+def _str_node_is_oc(node: ast.AST) -> bool:
+    """True if a string / f-string literal node carries a .openclaw needle."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return _str_is_oc(node.value)
+    if isinstance(node, ast.JoinedStr):
+        return any(
+            isinstance(v, ast.Constant) and isinstance(v.value, str) and _str_is_oc(v.value)
+            for v in node.values
+        )
+    return False
+
+
+def _is_path_ctor(call: ast.Call) -> bool:
+    f = call.func
+    return (isinstance(f, ast.Name) and f.id == "Path") or (
+        isinstance(f, ast.Attribute) and f.attr == "Path"
+    )
+
+
+def _oc_path(node: ast.AST, oc_vars: set[str]) -> bool:
+    """True if *node* evaluates to a path UNDER a bot ``.openclaw`` tree.
+
+    Structure-aware (not a flat subtree scan): a ``a / b`` join is openclaw only
+    via its *base* (``a``) or a ``.openclaw`` dir-STRING segment — never via a
+    tainted variable used as a value/filename segment (the ``draft → pkg_id →
+    gallery/…/{pkg_id}.json`` over-taint). Path-producing wrappers (``Path(…)``,
+    ``.parent``, ``.with_suffix(…)``, …) recurse into their receiver/argument."""
+    if isinstance(node, ast.Name):
+        return node.id in oc_vars or _name_is_oc(node.id)
+    if isinstance(node, ast.Attribute):
+        if _name_is_oc(node.attr):
+            return True
+        if node.attr in _PATH_PROP_ATTRS:
+            return _oc_path(node.value, oc_vars)
+        return False
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        return _oc_path(node.left, oc_vars) or _str_node_is_oc(node.right)
+    if isinstance(node, ast.Call):
+        f = node.func
+        if _is_path_ctor(node):
+            return any(_str_node_is_oc(a) or _oc_path(a, oc_vars) for a in node.args)
+        if isinstance(f, ast.Attribute) and f.attr in _PATH_METHODS:
+            return _oc_path(f.value, oc_vars)
+        return False  # home resolvers + every other call: not under .openclaw alone
+    if isinstance(node, ast.IfExp):  # ``a if cond else b`` — oc if either branch is
+        return _oc_path(node.body, oc_vars) or _oc_path(node.orelse, oc_vars)
+    return _str_node_is_oc(node)
+
+
+def _assign_targets(node: ast.AST) -> list[str]:
+    """Simple ``Name`` targets bound by an assignment statement."""
+    out: list[str] = []
+    if isinstance(node, ast.Assign):
+        for t in node.targets:
+            if isinstance(t, ast.Name):
+                out.append(t.id)
+            elif isinstance(t, (ast.Tuple, ast.List)):
+                out.extend(e.id for e in t.elts if isinstance(e, ast.Name))
+    elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+        out.append(node.target.id)
+    elif isinstance(node, ast.NamedExpr) and isinstance(node.target, ast.Name):
+        out.append(node.target.id)
+    return out
+
+
+def _assign_value(node: ast.AST) -> ast.AST | None:
+    if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
+        return node.value
+    return None
+
+
+# ── scope partitioning ───────────────────────────────────────────────────────
+# Each FunctionDef/AsyncFunctionDef/ClassDef is its own scope so a generic name
+# like ``path`` flagged in one function never leaks into a sibling. Returns
+# (scope_root, nodes_owned_by_scope) where owned nodes exclude nested scopes.
+def _scopes(tree: ast.AST) -> list[tuple[ast.AST, list[ast.AST]]]:
+    scopes: list[tuple[ast.AST, list[ast.AST]]] = []
+
+    def collect(node: ast.AST, own: list[ast.AST]) -> None:
+        own.append(node)
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                child_own: list[ast.AST] = []
+                collect(child, child_own)
+                scopes.append((child, child_own))
+            else:
+                collect(child, own)
+
+    module_own: list[ast.AST] = []
+    for child in ast.iter_child_nodes(tree):
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            child_own = []
+            collect(child, child_own)
+            scopes.append((child, child_own))
+        else:
+            collect(child, module_own)
+    scopes.append((tree, module_own))
+    return scopes
+
+
+def _collect_oc_vars(own: list[ast.AST]) -> set[str]:
+    """Fixpoint over a scope's assignments: a target is an oc-var if its RHS is
+    an openclaw expression (which may itself reference earlier oc-vars)."""
+    oc_vars: set[str] = set()
+    for _ in range(12):  # bounded; chains in practice are 2-3 deep
+        grew = False
+        for node in own:
+            value = _assign_value(node)
+            if value is None:
+                continue
+            if _oc_path(value, oc_vars):
+                for t in _assign_targets(node):
+                    if t not in oc_vars:
+                        oc_vars.add(t)
+                        grew = True
+        if not grew:
+            break
+    return oc_vars
+
+
+# ── candidate + guard detection ──────────────────────────────────────────────
+def _exc_names(node: ast.AST | None) -> list[str]:
+    if node is None:
+        return []
+    if isinstance(node, ast.Name):
+        return [node.id]
+    if isinstance(node, ast.Attribute):
+        return [node.attr]
+    if isinstance(node, ast.Tuple):
+        out: list[str] = []
+        for e in node.elts:
+            out.extend(_exc_names(e))
+        return out
+    return []
+
+
+def _try_guards(try_node: ast.AST) -> bool:
+    """True if any handler on *try_node* names an EACCES-catching exception.
+    Bare ``except:`` / ``except Exception`` deliberately do NOT qualify."""
+    for h in getattr(try_node, "handlers", []):
+        for name in _exc_names(h.type):
+            if name in _GUARD_EXC_NAMES:
+                return True
+    return False
+
+
+def _candidate_target(call: ast.Call) -> ast.AST | None:
+    """The path expression a probe/open call tests, or None if not a candidate."""
+    fn = call.func
+    if isinstance(fn, ast.Attribute) and fn.attr in _PATH_PROBE_METHODS:
+        return fn.value
+    # open(X) / os.open(X) / io.open(X) — first positional arg, else file= kwarg.
+    is_open = (isinstance(fn, ast.Name) and fn.id == "open") or (
+        isinstance(fn, ast.Attribute)
+        and fn.attr == "open"
+        and isinstance(fn.value, ast.Name)
+        and fn.value.id in ("os", "io")
+    )
+    if is_open:
+        if call.args:
+            return call.args[0]
+        for kw in call.keywords:
+            if kw.arg == "file":
+                return kw.value
+    return None
+
+
+def _scope_violations(scope_root: ast.AST, oc_vars: set[str]) -> list[tuple[int, str]]:
+    """(lineno, detail) for each unguarded openclaw probe/open in this scope."""
+    out: list[tuple[int, str]] = []
+    _TRY_TYPES = (ast.Try,) + ((ast.TryStar,) if hasattr(ast, "TryStar") else ())
+
+    def visit(node: ast.AST, guarded: bool) -> None:
+        # Stop at nested scopes — they are linted with their own oc_vars.
+        if node is not scope_root and isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        ):
+            return
+        if isinstance(node, ast.Call):
+            target = _candidate_target(node)
+            if target is not None and not guarded and _oc_path(target, oc_vars):
+                fn = node.func
+                if isinstance(fn, ast.Attribute) and fn.attr in _PATH_PROBE_METHODS:
+                    detail = f".{fn.attr}() on a bot .openclaw path"
+                else:
+                    detail = "open() on a bot .openclaw path"
+                out.append((node.lineno, detail))
+        if isinstance(node, _TRY_TYPES):
+            elevated = guarded or _try_guards(node)
+            for stmt in node.body:            # only the try BODY is protected
+                visit(stmt, elevated)
+            for h in node.handlers:           # except/else/finally are not
+                visit(h, guarded)
+            for stmt in node.orelse:
+                visit(stmt, guarded)
+            for stmt in node.finalbody:
+                visit(stmt, guarded)
+            return
+        for child in ast.iter_child_nodes(node):
+            visit(child, guarded)
+
+    visit(scope_root, False)
+    return out
+
+
+def _violations(path: Path) -> list[tuple[int, str]]:
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (SyntaxError, UnicodeDecodeError, ValueError):
+        return []
+    out: list[tuple[int, str]] = []
+    for scope_root, own in _scopes(tree):
+        oc_vars = _collect_oc_vars(own)
+        out.extend(_scope_violations(scope_root, oc_vars))
+    out.sort()
+    return out
+
+
+def _count(path: Path) -> int:
+    return len(_violations(path))
+
+
+# ── file selection ───────────────────────────────────────────────────────────
+def _iter_production_files() -> list[Path]:
+    out: list[Path] = []
+    for root in _LINT_ROOTS:
+        for dirpath, _dirs, files in os.walk(REPO_ROOT / root):
+            if "__pycache__" in dirpath:
+                continue
+            for f in files:
+                if not f.endswith(".py"):
+                    continue
+                p = Path(dirpath) / f
+                rel = str(p.relative_to(REPO_ROOT))
+                if _is_test_path(rel):
+                    continue
+                out.append(p)
+    return out
+
+
+def _in_scope(rel: str) -> bool:
+    rel = rel.replace("\\", "/")
+    return rel.endswith(".py") and any(rel.startswith(r + "/") for r in _LINT_ROOTS)
+
+
+def _staged_files() -> list[Path]:
+    r = subprocess.run(
+        ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+    )
+    out = []
+    for name in r.stdout.splitlines():
+        if _in_scope(name) and not _is_test_path(name):
+            p = REPO_ROOT / name
+            if p.exists():
+                out.append(p)
+    return out
+
+
+# ── baseline I/O ─────────────────────────────────────────────────────────────
+def _load_baseline(path: Path) -> dict[str, int]:
+    if not path.exists():
+        return {}
+    baseline: dict[str, int] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split("\t", 1)  # "<count>\t<path>"
+        if len(parts) != 2:
+            continue
+        try:
+            baseline[parts[1]] = int(parts[0])
+        except ValueError:
+            continue
+    return baseline
+
+
+_HEADER = (
+    "# openclaw-eacces-baseline — bare .exists()/.stat()/.is_file()/.is_dir()/",
+    "# open() calls on a bot .openclaw path that are NOT guarded by",
+    "# try/except (PermissionError, OSError) and do NOT route through",
+    "# secret_config_perms.exists_or_unreachable(). On Linux/Py3.12 such a call",
+    "# RAISES PermissionError when the OC gateway clamps the .openclaw ACL mask",
+    "# to --- (the #3184 deploy-abort / W10-G daemon-crash class). Generated by",
+    "# `tools/openclaw-eacces-lint --all --update-baseline`. The lint BLOCKS any",
+    "# file that EXCEEDS its count, so this file may only ratchet DOWN: route the",
+    "# call through exists_or_unreachable() / a read_text()+cat fallback / an",
+    "# explicit except (PermissionError, OSError) -> rerun --update-baseline ->",
+    "# the number drops. Goal state: this file is empty.",
+)
+
+
+def _write_baseline(counts: dict[str, int]) -> None:
+    lines = list(_HEADER) + [""]
+    for p in sorted(counts):
+        if counts[p] > 0:
+            lines.append(f"{counts[p]}\t{p}")
+    BASELINE_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _rel(p: Path) -> str:
+    try:
+        return str(p.resolve().relative_to(REPO_ROOT))
+    except ValueError:
+        return str(p)
+
+
+# ── runner ───────────────────────────────────────────────────────────────────
+def _targets(args: argparse.Namespace) -> list[Path]:
+    if args.all:
+        return _iter_production_files()
+    if args.staged:
+        return _staged_files()
+    return [Path(f) for f in args.files if f.endswith(".py")]
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description="Recurrence guard for the Linux .openclaw ACL-mask EACCES bug class."
+    )
+    ap.add_argument("files", nargs="*", help="specific .py files to lint")
+    ap.add_argument("--all", action="store_true", help="lint all in-scope .py")
+    ap.add_argument("--staged", action="store_true", help="lint git-staged .py")
+    ap.add_argument(
+        "--update-baseline", action="store_true",
+        help="regenerate the baseline from current counts (requires --all)",
+    )
+    args = ap.parse_args()
+
+    if args.update_baseline:
+        if not args.all:
+            print("--update-baseline requires --all", file=sys.stderr)
+            return 2
+        counts = {_rel(p): _count(p) for p in _iter_production_files()}
+        _write_baseline(counts)
+        total = sum(counts.values())
+        files = sum(1 for v in counts.values() if v)
+        print(f"openclaw-eacces baseline written: {total} bare call(s) across {files} file(s)")
+        return 0
+
+    baseline = _load_baseline(BASELINE_PATH)
+    violations: list[tuple[str, int, int, list[tuple[int, str]]]] = []
+    below = 0
+    for p in _targets(args):
+        rel = _rel(p)
+        if _is_test_path(rel) or not p.exists():
+            continue
+        hits = _violations(p)
+        n = len(hits)
+        allowed = baseline.get(rel, 0)
+        if n > allowed:
+            violations.append((rel, n, allowed, hits))
+        elif n < allowed:
+            below += 1
+
+    if violations:
+        print("✗ new bare existence/open call(s) on a bot .openclaw path:\n")
+        for rel, n, allowed, hits in violations:
+            print(f"  {rel}: {n} call(s), baseline allows {allowed}")
+            for lineno, detail in hits:
+                print(f"    L{lineno}: {detail}")
+        print(
+            "\nOn Linux/Py3.12 a bare .exists()/.stat()/.is_file()/.is_dir()/open()\n"
+            "on a path under a bot .openclaw dir RAISES PermissionError when the OC\n"
+            "gateway clamps the ACL mask to --- (the #3184 deploy-abort class).\n"
+            "Fix, in order of preference:\n"
+            "  1. existence check → secret_config_perms.exists_or_unreachable(path)\n"
+            "  2. read           → path.read_text() with an except → sudo /bin/cat\n"
+            "  3. unavoidable    → try / except (PermissionError, OSError): <classify>\n"
+            "If a hit is genuinely unavoidable, bump tools/openclaw-eacces-baseline.txt\n"
+            "in this PR so the exception is reviewable.\n"
+        )
+        return 1
+
+    if below:
+        print(
+            f"openclaw-eacces-lint: {below} file(s) now below baseline — run\n"
+            "`tools/openclaw-eacces-lint --all --update-baseline` to ratchet down."
+        )
+    print("openclaw-eacces-lint: OK")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

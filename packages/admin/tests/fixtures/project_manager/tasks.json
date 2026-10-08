@@ -1,0 +1,40 @@
+{
+ "version": 1,
+ "last_updated": "2026-09-18T12:00:00-07:00",
+ "tasks": [
+  {
+   "id": "MN-0101",
+   "title": "Projector fuzzy — not displaying properly",
+   "status": "open",
+   "priority": "normal",
+   "owner": null,
+   "created_date": "2026-06-21T10:00:00-07:00",
+   "created_by": "team-bot-a"
+  },
+  {
+   "id": "MN-0102",
+   "title": "Keypad above the exit is dead",
+   "status": "blocked",
+   "priority": "high",
+   "severity": 3,
+   "owner": "Member A",
+   "created_date": "2026-09-01T09:00:00-07:00",
+   "created_by": "team-bot-a",
+   "expires": "2026-09-10T17:00:00-07:00"
+  },
+  {
+   "id": "MN-0103",
+   "title": "Swap the hallway bulb",
+   "status": "complete",
+   "priority": "low",
+   "created_date": "2026-08-01T09:00:00-07:00"
+  },
+  {
+   "id": "OP-0007",
+   "title": "Budget review on the agenda",
+   "status": "open",
+   "priority": "normal",
+   "created_date": "2026-09-02T09:00:00-07:00"
+  }
+ ]
+}

@@ -1,0 +1,42 @@
+# Dates the weekly refresh BOT wrote into `last_reviewed` before the field split
+# (#4268, #4390, #4559, ...) — they record that a doc was refreshed, not that a
+# person read it. tools/help-refresh reads this so the queue never mistakes one
+# for a human review.
+#
+# FROZEN: the tool no longer writes `last_reviewed`, so nothing is ever added
+# here. A person who re-reads a doc and sets `last_reviewed` to a date listed
+# here for that doc must pick a different date (or the doc stays "machine-dated").
+# Derived once from `git log --grep="weekly knowledge refresh" -p docs/help/*.md`
+# on 2026-10-06; kept as data because squash-merge subjects make git archaeology
+# unreliable once a human edit rides in a bot-titled PR.
+machine_dated:
+  ai-optimization:
+  - '2026-09-14'
+  apps:
+  - '2026-09-28'
+  backup:
+  - '2026-09-14'
+  getting-started:
+  - '2026-09-14'
+  issues:
+  - '2026-09-14'
+  meta-health:
+  - '2026-09-14'
+  overview:
+  - '2026-09-14'
+  recommendations:
+  - '2026-09-14'
+  reports:
+  - '2026-09-14'
+  security:
+  - '2026-09-14'
+  settings:
+  - '2026-09-14'
+  skills:
+  - '2026-09-14'
+  terminal:
+  - '2026-09-14'
+  usage:
+  - '2026-09-14'
+  users:
+  - '2026-09-28'

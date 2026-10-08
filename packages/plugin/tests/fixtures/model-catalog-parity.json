@@ -1,0 +1,144 @@
+{
+  "_comment": "Shared TS<->Python parity fixture for the keyed model-catalog merge (spec internal/spec-model-rungs-and-roles-2026-06-09.md Addendum 2). Both ModelRouter.ts (mergeModelCatalog) and primary_bot.py (merge_model_catalog) must resolve each scenario's four roles to the SAME primary model, AND the same models.defaultRole (D-DT4, internal/decision-default-tier-power-2026-09-23.md). The expected primaries/defaultRole below are the contract both sides are pinned to. The former judge role was collapsed (J3, internal/design-judge-role-collapse-2026-08-21.md 5.4) — cross-vendor checking is the resolveCrossVendor derivation, pinned by the availability fixture's expectCrossVendor. Legacy tiers-shaped layers are NOT parity material anymore: the TS runtime REFUSES them (LegacyTierShapeError, 2026-08-15) while Python's admin read side still normalizes them (_normalize_legacy_layer, covered by test_tier_shape_resolution.py) — so every scenario here must be rungs/roles-shaped. KEEP IN SYNC: edit this file once; both parity tests read it.",
+  "scenarios": [
+    {
+      "name": "bare pod — defaults only (Max ships armed)",
+      "_comment": "Defaults only: the four ladder roles resolve straight from the code catalog; Max ships armed. defaultRole is the code default, power (D-DT4).",
+      "pod": {},
+      "bot": {},
+      "expect": {
+        "fast": "anthropic/claude-haiku-4-5",
+        "standard": "anthropic/claude-sonnet-4-6",
+        "power": "anthropic/claude-opus-4-8",
+        "max": "anthropic/claude-fable-5",
+        "defaultRole": "power"
+      }
+    },
+    {
+      "name": "pod overrides standard rung — pod beats default",
+      "pod": {
+        "rungs": [
+          {
+            "id": "sonnet-class",
+            "models": [
+              "openai/gpt-4o",
+              "anthropic/claude-sonnet-4-6"
+            ],
+            "costClass": "medium"
+          }
+        ]
+      },
+      "bot": {},
+      "expect": {
+        "fast": "anthropic/claude-haiku-4-5",
+        "standard": "openai/gpt-4o",
+        "power": "anthropic/claude-opus-4-8",
+        "max": "anthropic/claude-fable-5",
+        "defaultRole": "power"
+      }
+    },
+    {
+      "name": "bot overrides power rung — bot beats pod beats default",
+      "pod": {
+        "rungs": [
+          {
+            "id": "opus-class",
+            "models": [
+              "anthropic/claude-opus-4-8"
+            ],
+            "costClass": "high"
+          }
+        ]
+      },
+      "bot": {
+        "rungs": [
+          {
+            "id": "opus-class",
+            "models": [
+              "google/gemini-pro-9"
+            ],
+            "costClass": "high"
+          }
+        ]
+      },
+      "expect": {
+        "fast": "anthropic/claude-haiku-4-5",
+        "standard": "anthropic/claude-sonnet-4-6",
+        "power": "google/gemini-pro-9",
+        "max": "anthropic/claude-fable-5",
+        "defaultRole": "power"
+      }
+    },
+    {
+      "name": "pod-only fable cap + max role still resolves from default fable rung",
+      "pod": {
+        "roleCaps": {
+          "max": {
+            "maxPerDayPerBot": 3
+          }
+        }
+      },
+      "bot": {},
+      "expect": {
+        "fast": "anthropic/claude-haiku-4-5",
+        "standard": "anthropic/claude-sonnet-4-6",
+        "power": "anthropic/claude-opus-4-8",
+        "max": "anthropic/claude-fable-5",
+        "defaultRole": "power"
+      }
+    },
+    {
+      "name": "bot empty sonnet-class rung is a no-op — does NOT brick standard",
+      "_comment": "An operator-written empty-models override rung must NOT shadow the base/default rung (mergeOneRung / _merge_one_rung): 'explicit config wins wherever it SPEAKS', and an empty models list does not speak. standard still resolves via the default sonnet-class cluster. The Evolve admin onboarding/checklist surfaces flag this broken-but-defaulted config separately via tier_override_is_broken (Python-only since 2026-08-15; the TS mirror was removed with the legacy runtime fallback) — but the merge/routing here must keep the bot working (#2561 onboarding semantics).",
+      "pod": {},
+      "bot": {
+        "rungs": [
+          {
+            "id": "sonnet-class",
+            "models": [],
+            "costClass": "medium"
+          }
+        ]
+      },
+      "expect": {
+        "fast": "anthropic/claude-haiku-4-5",
+        "standard": "anthropic/claude-sonnet-4-6",
+        "power": "anthropic/claude-opus-4-8",
+        "max": "anthropic/claude-fable-5",
+        "defaultRole": "power"
+      }
+    },
+    {
+      "name": "D-DT4: pod overrides models.defaultRole to standard",
+      "_comment": "The pod layer MAY override the code default 'power' (network.json::models.defaultRole is admin-owned).",
+      "pod": {
+        "defaultRole": "standard"
+      },
+      "bot": {},
+      "expect": {
+        "fast": "anthropic/claude-haiku-4-5",
+        "standard": "anthropic/claude-sonnet-4-6",
+        "power": "anthropic/claude-opus-4-8",
+        "max": "anthropic/claude-fable-5",
+        "defaultRole": "standard"
+      }
+    },
+    {
+      "name": "D-DT4: a per-bot defaultRole copy is ignored — the pod value still wins",
+      "_comment": "evolve-tiers.json (bot-home) is bot-writable, so models.defaultRole is pod-level by construction: a copy in the bot (override) layer is stripped before the merge, never folded in. Without this, a bot could forge an uncapped 'power' default for itself regardless of what the pod/operator set.",
+      "pod": {
+        "defaultRole": "standard"
+      },
+      "bot": {
+        "defaultRole": "fast"
+      },
+      "expect": {
+        "fast": "anthropic/claude-haiku-4-5",
+        "standard": "anthropic/claude-sonnet-4-6",
+        "power": "anthropic/claude-opus-4-8",
+        "max": "anthropic/claude-fable-5",
+        "defaultRole": "standard"
+      }
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+:bar_chart: _Weekly Maintenance Report_
+_Sep 18 – Sep 25, 2026_
+
+_Total issues reported:_ 5
+_Resolved:_ 1 | _Still open:_ 4
+
+_By room:_
+• North: 3
+• Annex: 1
+• Unknown: 1
+
+_By severity:_
+• Sev 3 (medium): 2
+• Sev 2 (low): 1
+• Sev 1 (minor): 1
+
+_Opened this week, still open (4):_
+• Sev 3 — Panel flickers during the finale — North
+• Sev 3 — Monitor stuck in setup mode — Annex
+• Sev 1 — Table leg is coming loose — North
+• Sev ? — replace the annex doormat
+
+_Full backlog still open (all-time, 6):_
+• Sev 3 — Keypad above the exit is dead (24d old)
+• Sev 3 — Panel flickers during the finale — North (4d old)
+• Sev 3 — Monitor stuck in setup mode — Annex (3d old)
+• Sev 1 — Table leg is coming loose — North (3d old)
+• Sev ? — Projector fuzzy — not displaying properly (96d old)
+• Sev ? — replace the annex doormat (3d old)
+
+:fire: *Hot spots* (3+ reports in past 7 days):
+• North: 3

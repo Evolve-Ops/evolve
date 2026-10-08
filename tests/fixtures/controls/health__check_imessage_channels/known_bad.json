@@ -1,0 +1,9 @@
+{
+  "_comment": "AXIS: the same pod, but the gateway's `channels status` read names no account. The bot's agent has written a forged workspace/evolve/imessage-status.json claiming the right handle — the file the first build fell back to (review pr-4667 second pass, finding 1). The control must read FAIL with the pod's reason, never PASS on the forged file. Replayed by packages/admin/tests/test_imessage_channel.py::test_health_control_known_bad_fixture_fails_despite_a_forged_status_file.",
+  "_axis": "channel_status_names_the_account",
+  "row": {"bot_id": "personal-bot", "macos_user": "personal-bot-user", "handle": "personal-bot@example.com", "allow_from": ["+15555550101"]},
+  "messages_running": true,
+  "channel_status": {"connected": true},
+  "forged_status_file": {"handle": "personal-bot@example.com"},
+  "expect": {"status": "FAIL", "name": "imessage:personal-bot", "message_contains": "read from the pod"}
+}

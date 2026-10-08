@@ -1,0 +1,22 @@
+{
+  "board_words": [
+    {
+      "word": "FACTIOUS",
+      "position": "G10",
+      "direction": "across"
+    },
+    {
+      "word": "WOWS",
+      "position": "N7",
+      "direction": "down"
+    }
+  ],
+  "rack": "IDOLLTH",
+  "bag_count": 15,
+  "scores": {
+    "you": 299,
+    "opponent": 321
+  },
+  "uncertain": [],
+  "confirmed_words_missing": []
+}

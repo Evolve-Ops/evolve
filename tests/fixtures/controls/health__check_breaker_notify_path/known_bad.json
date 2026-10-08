@@ -1,0 +1,6 @@
+{
+  "_comment": "AXIS: the openclaw CLI start probe's `state`, flipped to 'broken'. Everything else is byte-identical to known_good.json except the detail the probe returns, which exists only because the state is 'broken'. The shape this control was built for: the CLI rejects a key Evolve writes, so every breaker notice records not_delivered and nobody is told. This control FAILs where its oc_runtime siblings WARN — a confirmed-dead spend safety net is not a maybe. Replayed by packages/admin/tests/test_oc_runtime_controls.py::test_breaker_notify_path_known_bad_fails.",
+  "_axis": "cli_probe.state",
+  "cli_probe": {"state": "broken", "detail": "meta.lastTouchedAt: Unrecognized key"},
+  "expect": {"status": "FAIL", "name": "breaker_notify_path_can_start", "message_contains": "lastTouchedAt"}
+}

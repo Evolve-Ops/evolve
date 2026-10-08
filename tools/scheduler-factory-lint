@@ -1,0 +1,296 @@
+#!/usr/bin/env python3
+"""scheduler-factory-lint — ban scheduler-ADAPTER construction outside the seam.
+
+8.3 Linux port (internal/design-linux-port-2026-06-10.md §3, the scheduler
+portability seam): every daemon-management call site selects its scheduler
+through the process-wide ``runtime.scheduler.get_scheduler()`` /
+``set_scheduler()`` injection. The whole point of the seam is that a Linux
+pod swaps the macOS ``LaunchdScheduler`` for a ``SystemdScheduler`` ONCE,
+at the wizard's platform gate, and every other module routes through the
+injected singleton.
+
+A module-global or unguarded ``LaunchdScheduler(...)`` / ``SystemdScheduler(...)``
+construction defeats that: it bypasses the injection and pins launchctl on a
+host where launchctl does not exist. This is the exact bug class the
+scheduler-seam migration fixed (one bypass = launchctl invoked on a Linux
+pod). This gate locks it shut.
+
+The existing seam gate (packages/admin/tests/test_launchctl_seam_gates.py)
+censuses quoted ``launchctl`` argv and ``.raw(`` / ``get_launchd_scheduler(``
+call sites — but it does NOT ban adapter CONSTRUCTION. That blind spot is
+this tool's whole reason to exist.
+
+WHO MAY CONSTRUCT (the allowlist):
+
+  - SEAM (whole file): runtime/scheduler.py defines the adapters and the
+    get_scheduler/set_scheduler/get_launchd_scheduler factory. It is the one
+    place construction is unconditional.
+
+  - GATE (file:function): the wizard's Linux platform activation — the single
+    production caller of set_scheduler(SystemdScheduler()).
+
+  - GUARDED-DERIVE accessors (file:function): functions that build a
+    posture-customized launchd adapter ONLY after an
+    ``isinstance(get_scheduler(), LaunchdScheduler)`` guard, a fail-fast
+    ``get_launchd_scheduler()`` accessor (raises on a non-launchd adapter), or
+    a ``get_profile().name == "macos"`` platform branch — and reuse the
+    injected fake's runner under test (``_custom_runner``). This is the
+    sanctioned pattern: the seam's sudo-default / domain posture can't express
+    what a given probe needs, so the site derives a sibling adapter that still
+    honors a seam-injected fake and never builds on a non-launchd platform.
+    Allowlisted by ``file:function`` (NOT whole-file) so a NEW unguarded
+    construction in one of these files still trips.
+
+  - EXEMPTION (whole file): tunnel.py — a Mac-client-only user-session
+    LaunchAgent surface (often the operator's own Mac), never a pod daemon.
+
+  - TESTS: packages/*/tests/** — fakes inject LaunchdScheduler(runner=<fake>).
+
+Detection is AST-based (NOT regex): a ``Call`` whose callee is the bare name
+``LaunchdScheduler`` / ``SystemdScheduler`` / ``FakeScheduler``. This is
+deliberately distinct from ``isinstance(x, LaunchdScheduler)`` (the name
+appears as a Call ARG, not the callee), from type annotations
+(``x: LaunchdScheduler`` — not a Call), from the ``class`` definition, and
+from docstring / comment mentions (invisible to the AST). Regex can't make
+those distinctions; that imprecision is exactly the false-positive class
+the AST approach removes.
+
+Severity (hybrid, mirrors tools/ui-style-lint):
+  - default (local): WARN — prints findings, exit 0.
+  - --strict (CI):   BLOCK — any un-allowlisted construction → exit 1.
+
+Usage:
+  tools/scheduler-factory-lint <file.py> [...]   # lint specific files
+  tools/scheduler-factory-lint --all             # lint all production .py
+  tools/scheduler-factory-lint --staged          # lint git-staged .py
+  tools/scheduler-factory-lint --all --strict    # block (CI mode)
+
+Exit status: 0 unless --strict and an un-allowlisted construction exists.
+"""
+from __future__ import annotations
+
+import argparse
+import ast
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# Adapter constructors this gate guards. Names are matched on the bare callee
+# of a Call node — never on isinstance args, annotations, or the class def.
+_ADAPTER_NAMES = {"LaunchdScheduler", "SystemdScheduler", "FakeScheduler"}
+
+_LINT_ROOTS = ("packages",)
+
+# Files where construction is unconditional and always legitimate (the seam
+# defines the adapters; the tunnel is a documented Mac-client-only surface).
+_WHOLE_FILE_ALLOW = {
+    "packages/analyzer/runtime/scheduler.py",   # SEAM
+    "packages/admin/evolve_admin/tunnel.py",    # EXEMPTION (Mac-client-only)
+}
+
+# {relative-path: {function names allowed to construct}}. A construction in one
+# of these files is permitted ONLY inside a listed function — a NEW unguarded
+# construction elsewhere in the same file still trips. Each entry was verified
+# to guard with isinstance(get_scheduler(), LaunchdScheduler) /
+# get_launchd_scheduler() (fail-fast) / get_profile() macOS-branch + reuse the
+# injected fake's runner.
+_FUNCTION_ALLOW: dict[str, set[str]] = {
+    # GATE — the one production set_scheduler(SystemdScheduler()) call.
+    "packages/admin/evolve_admin/setup_wizard.py": {"_activate_linux_platform"},
+    # GUARDED-DERIVE accessors.
+    "packages/admin/evolve_admin/service.py": {"_user_scheduler"},
+    "packages/admin/evolve_admin/recovery.py": {"_launchctl_n"},
+    "packages/admin/evolve_admin/retire.py": {"_probe_scheduler"},
+    "packages/admin/evolve_admin/web/routes_trust.py": {"_get_probe_scheduler"},
+    "packages/admin/evolve_admin/web/routes_maintenance.py": {"_launchctl_probe"},
+    "packages/admin/evolve_admin/applications/infra_audit.py": {"_launchctl_probe"},
+    "packages/admin/evolve_admin/applications/scanner.py": {
+        "_snapshot_launchctl_labels",
+    },
+    "packages/admin/evolve_admin/mcp_service.py": {
+        "_scheduler_sudo",
+        "_scheduler_nosudo",
+        "_sudo_raw_adapter",
+        "_nosudo_raw_adapter",
+    },
+    "packages/admin/evolve_admin/cron_exit_monitor.py": {"_probe_scheduler"},
+    "packages/analyzer/app_audit_runner.py": {"_launchctl_labels"},
+    "packages/analyzer/metrics/resolvers/launchd.py": {"_resolve_macos"},
+    "packages/analyzer/tile_metrics.py": {"_check_infra_daemons"},
+}
+
+
+def _is_test_path(rel: str) -> bool:
+    parts = rel.replace("\\", "/").split("/")
+    if any(p in ("tests", "test") for p in parts):
+        return True
+    base = parts[-1]
+    return base.startswith("test_") or base == "conftest.py"
+
+
+def _callee_name(func: ast.expr) -> "str | None":
+    """The bare name a Call targets (``Foo(...)`` -> 'Foo', ``a.Foo(...)`` ->
+    'Foo'). None for anything else."""
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return None
+
+
+def _enclosing_funcs(tree: ast.AST) -> dict[int, str]:
+    """Map each AST node id to the name of the NEAREST enclosing
+    def/async-def, or '' if at module/class scope.
+
+    Nested defs resolve to the innermost function: walking the tree top-down
+    and overwriting as we descend means a node inside ``inner`` records
+    ``inner`` even though it also lies within ``outer``. The allowlist keys on
+    the function that lexically contains the construction, so the construction
+    in ``scanner._snapshot_launchctl_labels`` (which sits AFTER a nested
+    ``_as_bot_runner`` def, at the outer body level) maps to the outer
+    function — the nested def only owns the nodes physically inside it.
+    """
+    owner: dict[int, str] = {}
+
+    def visit(node: ast.AST, current: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                name = child.name
+                owner[id(child)] = current
+                # The def's own decorators/args/returns belong to the OUTER
+                # scope; its body belongs to the function itself.
+                visit(child, name)
+            else:
+                owner[id(child)] = current
+                visit(child, current)
+
+    visit(tree, "")
+    return owner
+
+
+def _constructions(path: Path) -> list[tuple[int, str, str]]:
+    """Return (lineno, adapter_name, enclosing_function) for every adapter
+    Call construction in the file. Docstrings/comments are invisible to the
+    AST, so they never appear here."""
+    try:
+        src = path.read_text(encoding="utf-8")
+        tree = ast.parse(src)
+    except (SyntaxError, UnicodeDecodeError, ValueError, OSError):
+        return []
+    owner = _enclosing_funcs(tree)
+    hits: list[tuple[int, str, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            name = _callee_name(node.func)
+            if name in _ADAPTER_NAMES:
+                fn = owner.get(id(node), "")
+                hits.append((node.lineno, name, fn))
+    return hits
+
+
+def _rel(p: Path) -> str:
+    try:
+        return str(p.resolve().relative_to(REPO_ROOT))
+    except ValueError:
+        return str(p)
+
+
+def _violations_for(path: Path) -> list[tuple[int, str, str]]:
+    """Constructions in ``path`` that are NOT covered by the allowlist."""
+    rel = _rel(path)
+    if rel in _WHOLE_FILE_ALLOW or _is_test_path(rel):
+        return []
+    allowed_fns = _FUNCTION_ALLOW.get(rel, set())
+    out = []
+    for lineno, name, fn in _constructions(path):
+        if fn in allowed_fns and fn:
+            continue
+        out.append((lineno, name, fn))
+    return out
+
+
+def _iter_production_files() -> list[Path]:
+    out: list[Path] = []
+    for root in _LINT_ROOTS:
+        for dirpath, _dirs, files in os.walk(REPO_ROOT / root):
+            if "__pycache__" in dirpath:
+                continue
+            for f in files:
+                if not f.endswith(".py"):
+                    continue
+                p = Path(dirpath) / f
+                rel = str(p.relative_to(REPO_ROOT))
+                if _is_test_path(rel):
+                    continue
+                out.append(p)
+    return out
+
+
+def _staged_py_files() -> list[Path]:
+    r = subprocess.run(
+        ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+    )
+    out = []
+    for name in r.stdout.splitlines():
+        if name.endswith(".py") and not _is_test_path(name):
+            p = REPO_ROOT / name
+            if p.exists():
+                out.append(p)
+    return out
+
+
+def main(argv: "list[str] | None" = None) -> int:
+    ap = argparse.ArgumentParser(
+        description="Ban scheduler-adapter construction outside the seam.",
+    )
+    ap.add_argument("files", nargs="*", help="specific .py files to lint")
+    ap.add_argument("--all", action="store_true", help="lint all production .py")
+    ap.add_argument("--staged", action="store_true", help="lint git-staged .py")
+    ap.add_argument(
+        "--strict", action="store_true",
+        help="block on any un-allowlisted construction (CI mode)",
+    )
+    args = ap.parse_args(argv)
+
+    if args.all:
+        targets = _iter_production_files()
+    elif args.staged:
+        targets = _staged_py_files()
+    else:
+        targets = [Path(f) for f in args.files if f.endswith(".py")]
+
+    findings: list[tuple[str, int, str, str]] = []
+    for p in targets:
+        if not p.exists():
+            continue
+        for lineno, name, fn in _violations_for(p):
+            findings.append((_rel(p), lineno, name, fn))
+
+    if not findings:
+        print("scheduler-factory-lint: OK")
+        return 0
+
+    tier = "BLOCK" if args.strict else "WARN "
+    print(f"scheduler-factory-lint: {len(findings)} un-allowlisted construction(s).\n")
+    for rel, lineno, name, fn in sorted(findings):
+        where = f"{fn}()" if fn else "<module scope>"
+        print(f"  [{tier}] {rel}:{lineno}  {name}(...) in {where}")
+    print(
+        "\nA bare LaunchdScheduler(...) / SystemdScheduler(...) construction "
+        "bypasses the\nprocess-wide get_scheduler()/set_scheduler() injection — "
+        "it pins launchctl on\na host where it may not exist (Linux pod). Route "
+        "through runtime.scheduler\n.get_scheduler() instead. If this is a "
+        "sanctioned guarded-derive (isinstance\nguard / get_launchd_scheduler() "
+        "fail-fast / get_profile() macOS branch +\n_custom_runner runner reuse), "
+        "add file:function to _FUNCTION_ALLOW in this\ntool — that addition is "
+        "the reviewable record of a new exception.\n"
+    )
+    return 1 if args.strict else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

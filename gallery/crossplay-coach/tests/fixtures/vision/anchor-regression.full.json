@@ -1,0 +1,97 @@
+{
+  "board_words": [
+    {
+      "word": "al",
+      "position": "A2",
+      "direction": "across"
+    },
+    {
+      "word": "yez",
+      "position": "G2",
+      "direction": "across"
+    },
+    {
+      "word": "divulge",
+      "position": "A3",
+      "direction": "across",
+      "blanks": [
+        "E3"
+      ]
+    },
+    {
+      "word": "JO",
+      "position": "A4",
+      "direction": "across"
+    },
+    {
+      "word": "THEORY",
+      "position": "G4",
+      "direction": "across"
+    },
+    {
+      "word": "ON",
+      "position": "A5",
+      "direction": "across"
+    },
+    {
+      "word": "CORBIES",
+      "position": "D8",
+      "direction": "across"
+    },
+    {
+      "word": "AXES",
+      "position": "A12",
+      "direction": "across"
+    },
+    {
+      "word": "VARY",
+      "position": "L1",
+      "direction": "down"
+    },
+    {
+      "word": "ADJOINED",
+      "position": "A2",
+      "direction": "down"
+    },
+    {
+      "word": "LION",
+      "position": "B2",
+      "direction": "down"
+    },
+    {
+      "word": "YET",
+      "position": "G2",
+      "direction": "down"
+    },
+    {
+      "word": "MOUTHS",
+      "position": "J3",
+      "direction": "down"
+    },
+    {
+      "word": "TRACKERS",
+      "position": "D5",
+      "direction": "down"
+    },
+    {
+      "word": "NIQABS",
+      "position": "H7",
+      "direction": "down"
+    }
+  ],
+  "rack": [
+    "g",
+    "s",
+    "t",
+    "o",
+    "u",
+    "e",
+    "i"
+  ],
+  "bag_count": 31,
+  "scores": {
+    "you": 218,
+    "opponent": 267
+  },
+  "uncertain": []
+}

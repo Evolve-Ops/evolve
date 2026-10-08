@@ -1,0 +1,19 @@
+{
+  "_comment": "Community defaults for the session tier classifier. This file ships with Evolve. Local overrides (learned via classifier audits) live in /Users/Shared/evolve/calibration/classifier.json. Overrides are additive for keywords (add/remove lists) and replace-on-key for confidence params.",
+  "schema_version": 1,
+  "classifier": {
+    "productive_keywords_add": [],
+    "productive_keywords_remove": [],
+    "maintenance_keywords_add": [],
+    "maintenance_keywords_remove": [],
+    "correction_patterns_add": [],
+    "correction_patterns_remove": [],
+    "confidence_params": {
+      "base": 0.5,
+      "per_signal": 0.1,
+      "max": 0.9,
+      "ambiguous_no_signals": 0.3,
+      "ambiguous_tie": 0.4
+    }
+  }
+}

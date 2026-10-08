@@ -1,0 +1,32 @@
+# required-check-quarantine.txt — required CI checks whose failure rate has
+# crossed the threshold set in tools/required-check-health-report.json, held
+# here with a named owner and an expiry instead of silently tolerated (D-CS9,
+# internal/assessment-silent-controls-2026-09-14.md §4).
+#
+# IMPORTANT: shrink this — each row is a merge gate that has stopped
+# discriminating between a real break and ambient noise. A row is not "we
+# accept this failing forever"; it is "we know, someone owns it, and it
+# expires" — the owner re-measures with tools/required-check-gate measure
+# and either deletes the row (fixed) or re-files it with a fresh expiry
+# (still environmental, still being worked).
+#
+# Format: one row per quarantined check, TAB-separated (check names contain
+# spaces and parens, so a bare-space format would be ambiguous):
+#
+#   <check-name>\t<owner>\t<expiry-date (YYYY-MM-DD)>  # <reason>
+#
+# Enforced by tools/required-check-gate (the gate: a row is required once a
+# check crosses threshold, and an expired row is a Firing signal, not a
+# pass) and ratcheted no-growth by tools/required-check-quarantine-ratchet
+# against tools/required-check-quarantine-baseline.txt, the same shape as
+# ci-quarantine.txt + tools/quarantine-ratchet for individual test failures.
+#
+# To add a row: run `tools/required-check-gate measure`, confirm the check
+# is genuinely environmental (not a dated, already-fixed incident — see the
+# admin-suite note in the PR that added this file for the distinction), and
+# file it with a real owner and a near-term expiry.
+#
+# To remove a row: the check's failure rate is back under threshold, or it
+# has been demoted from required — either way, delete the line.
+
+Linux e2e (Ubuntu bot deploy/run/admin)	platform-owner	2026-10-16	# environmental: useradd timeouts + apply-daemon startup failures on the Ubuntu e2e runner, not reproducible locally (tools/preflight can't mirror it). Measured 43/100 (43.0%) failures across the last 100 completed push-to-main CI runs, 2026-09-10..2026-09-16 (see tools/required-check-health-report.json). Not currently a GitHub-configured required check (see the PR body) — quarantined here per D-CS9 so the promise is dated and owned before or alongside that becoming true.

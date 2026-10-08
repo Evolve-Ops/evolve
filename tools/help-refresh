@@ -1,0 +1,918 @@
+#!/usr/bin/env python3
+"""help-refresh — the weekly knowledge-refresh routine for docs/help/.
+
+docs/help/README.md §"Weekly knowledge-refresh routine" specifies a routine that
+keeps the public help corpus from drifting away from what users actually see: every
+week, look at what merged, figure out which user-facing help docs are implicated,
+and re-surface them for a human to verify. The spec was written long before any
+code existed; this tool implements it.
+
+This is **meta/dev tooling** — it never ships to pods and has no pod-install path.
+It is deterministic and cheap: pure Python, no LLM call (drafting accurate
+user-facing prose is a human/LLM judgment call, deliberately out of scope for v1;
+see the LLM note at the bottom of README.md §Weekly knowledge-refresh routine).
+
+What it does (mirrors the six numbered README steps):
+
+  1. COLLECT the prior week's merged PRs to main via `gh pr list`.
+  2. TRIAGE: skip internal-only PRs (those touching ONLY evolve_admin/, tests/,
+     internal/spec-*, internal/incident-*, internal/diagnosis-*, internal/audit-*). Everything
+     else is a candidate.
+  3. MATCH concepts: extract concept terms (the controlled vocabulary in
+     docs/help/_index.yaml) from each candidate PR's title/body/changed-files and
+     map them to the help files that own them (deprecated docs are skipped).
+  4. STALE-DETECT: mark a help doc STALE when its `last_reviewed` is >30 days
+     before the run date, and NEEDS-HUMAN when no person has read it since the
+     window opened — including when its `last_reviewed` is a date an earlier bot
+     run wrote (listed in the frozen ledger docs/help/_machine-dated.yaml).
+  5. PRODUCE a human-gated review PR: stamp `last_refreshed_against` (the window
+     and concepts the tool mechanically checked) on each touched doc and
+     (re)write docs/help/REVIEW-QUEUE.md — per doc, a ranked, capped list of the
+     merged PRs that touched its concepts, lane-bookkeeping PRs collapsed, and
+     any still-unverified PRs carried forward from the previous queue.
+     **It NEVER writes `last_reviewed`.** That field records a person reading the
+     prose; a machine run cannot do that, and a date that recorded "nobody
+     looked" is the control-passes-on-absence-of-evidence class (D-CS7..9).
+     A stamp IS a site change — topic pages render it next to "Last reviewed" —
+     so a run that stamps anything also regenerates docs/gitpages/help/ via
+     tools/build_help_site.py, and the regenerated pages ride in the same PR.
+     Without that, each refresh red `help-site-check` (#4390, #4559).
+     A run that stamps nothing regenerates nothing. If the build cannot run, the
+     refresh REFUSES (exit 2) and leaves the tree as it found it — fails closed.
+  6. HUMAN GATE: the PR is reviewed and merged like any code change. No auto-merge.
+
+The pure logic (triage / concept-match / stale-detect / rendering) takes the run
+date and PR list as arguments and never touches the wall clock or the network, so
+it is unit-testable with fixture data (see tools/test_help_refresh.py). Wall-clock
+and `gh` live only in `main()` / the I/O helpers at the bottom.
+
+Usage:
+  python3 tools/help-refresh                       # default: PRs merged in the last
+                                                   #   7 days; write changes to disk
+  python3 tools/help-refresh --since 2026-06-01    # explicit cutoff
+  python3 tools/help-refresh --run-date 2026-06-23 # pin "today" (repro / CI)
+  python3 tools/help-refresh --dry-run             # compute + print the plan only
+  python3 tools/help-refresh --json                # emit the plan as JSON (no writes)
+
+Exit code is 0 on success (it is a producer, not a gate), 2 when a stamp was due
+but the help site could not be rebuilt (nothing is written). When there are no
+candidate PRs — or no affected docs — it makes ZERO file changes, so the calling
+workflow can use a plain `git status` check to avoid opening an empty PR.
+
+Wired into .github/workflows/help-refresh.yml (weekly cron, Mondays).
+"""
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import importlib.util
+import json
+import re
+import subprocess
+import sys
+from dataclasses import dataclass, field
+from pathlib import Path
+
+try:
+    import yaml  # type: ignore
+except ImportError as exc:  # pragma: no cover — surfaced to operator/CI
+    sys.stderr.write(
+        f"help-refresh: missing dependency: {exc.name}\n"
+        f"  install with: pip install pyyaml\n"
+    )
+    sys.exit(1)
+
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+HELP_DIR_REL = "docs/help"
+INDEX_REL = f"{HELP_DIR_REL}/_index.yaml"
+REVIEW_QUEUE_REL = f"{HELP_DIR_REL}/REVIEW-QUEUE.md"
+SITE_BUILDER_REL = "tools/build_help_site.py"
+SITE_OUT_REL = "docs/gitpages/help"
+# Imports tools/build_help_site.py needs; checked BEFORE any write so a refusal
+# leaves a clean tree instead of a half-applied refresh.
+SITE_BUILD_DEPS = ("markdown", "yaml")
+
+STALE_THRESHOLD_DAYS = 30
+DEFAULT_LOOKBACK_DAYS = 7
+DEFAULT_PR_LIMIT = 600
+# Per-doc cap on listed PRs: a verification nobody can afford guarantees the
+# bump-first path stays the one taken (security.md once listed 24 PRs).
+PER_DOC_PR_CAP = 8
+
+# ── Triage: internal-only path patterns (README step 2) ──────────────────────
+# A PR that touches ONLY internal paths is skipped. A path is "internal" when it
+# matches one of these. evolve_admin/ (the admin server, incl. its web/ SPA) is
+# treated as internal per the README spec — the concept-match + stale-detect
+# steps below are what actually narrow to user-facing help docs, so a UI change
+# that also touches docs/help/ or a capability still surfaces as a candidate.
+_INTERNAL_PATTERNS = (
+    re.compile(r"(^|/)evolve_admin/"),     # admin server python + its web SPA
+    re.compile(r"(^|/)tests?/"),           # any tests/ dir (root, packages, edr)
+    re.compile(r"^internal/spec-"),
+    re.compile(r"^internal/incident-"),
+    re.compile(r"^internal/diagnosis-"),
+    re.compile(r"^internal/audit-"),
+)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pure logic — no wall clock, no network. Unit-tested with fixtures.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def is_internal_path(path: str) -> bool:
+    """True if a single changed-file path is internal-only (triage skip set)."""
+    return any(p.search(path) for p in _INTERNAL_PATTERNS)
+
+
+def is_internal_only_pr(pr: dict) -> bool:
+    """True if a PR should be SKIPPED — it touches only internal paths.
+
+    A PR with no recorded file changes is also skipped: there is nothing for the
+    knowledge corpus to reflect.
+    """
+    files = pr.get("files") or []
+    if not files:
+        return True
+    return all(is_internal_path(f) for f in files)
+
+
+def vocabulary_terms(index: dict) -> list[str]:
+    """The controlled concept vocabulary — the keys of _index.yaml's `concepts:`."""
+    concepts = (index or {}).get("concepts") or {}
+    return sorted(concepts.keys())
+
+
+def concept_owner_map(index: dict) -> dict[str, list[str]]:
+    """concept -> [owning doc slug], derived from _index.yaml.
+
+    _index.yaml lists owners as filenames (``overview.md``); we key everything by
+    slug (the filename stem, ``overview``) to line up with how docs are loaded.
+    The primary owner stays first (insertion order preserved).
+    """
+    concepts = (index or {}).get("concepts") or {}
+    out: dict[str, list[str]] = {}
+    for concept, files in concepts.items():
+        slugs: list[str] = []
+        for fname in files or []:
+            stem = fname[:-3] if isinstance(fname, str) and fname.endswith(".md") else str(fname)
+            if stem not in slugs:
+                slugs.append(stem)
+        out[concept] = slugs
+    return out
+
+
+def _term_regex(term: str) -> re.Pattern:
+    """A case-insensitive matcher for a kebab-case concept term.
+
+    Hyphens in the term match a hyphen, underscore, space, or slash so that
+    ``model-tiers`` is found whether a PR wrote "model-tiers", "model tiers",
+    "model_tiers", or it appears in a path like ``.../model/tiers``. Boundaries
+    treat ``_`` `/` `-` and whitespace as separators (unlike ``\\b``), so a term
+    is found inside a path segment but never as a sub-word of a longer word
+    (``evo`` does not match inside ``evolve``).
+    """
+    body = re.escape(term).replace(r"\-", r"[-_/ ]")
+    return re.compile(rf"(?<![a-z0-9]){body}(?![a-z0-9])", re.IGNORECASE)
+
+
+def build_term_matchers(terms: list[str]) -> dict[str, re.Pattern]:
+    return {t: _term_regex(t) for t in terms}
+
+
+def _pr_strong_text(pr: dict) -> str:
+    """High-signal surface: the PR title + its changed file paths."""
+    parts = [str(pr.get("title") or "")]
+    parts.extend(pr.get("files") or [])
+    return "\n".join(parts)
+
+
+def match_concepts(pr: dict, matchers: dict[str, re.Pattern]) -> set[str]:
+    """The set of vocabulary concepts a PR mentions.
+
+    Precision rule: a concept matches if its term appears in the PR **title or any
+    changed file path** (the structured, high-signal fields). The free-prose
+    **body** is matched ONLY for *specific* concepts — those that are multi-word
+    (contain a hyphen), e.g. ``model-tiers``, ``app-audit``, ``daily-cap``. Those
+    are unambiguous in prose; bare single tokens (``cost``, ``apps``, ``install``,
+    ``security``) flood from incidental body mentions, so for them we require the
+    stronger title/path signal. An area-relevant PR nearly always names the
+    concept in its title or touches a matching path, so recall stays high while
+    the review queue stays legible. Deterministic and cheap (no LLM).
+    """
+    strong = _pr_strong_text(pr)
+    body = str(pr.get("body") or "")
+    matched: set[str] = set()
+    for term, rx in matchers.items():
+        if rx.search(strong) or ("-" in term and rx.search(body)):
+            matched.add(term)
+    return matched
+
+
+def parse_iso_date(value) -> dt.date | None:
+    """Parse a YYYY-MM-DD string (or pass through a date) — None if unparseable."""
+    if value is None:
+        return None
+    if isinstance(value, dt.date):
+        return value
+    try:
+        return dt.date.fromisoformat(str(value).strip())
+    except ValueError:
+        return None
+
+
+def doc_age_days(last_reviewed, run_date: dt.date) -> int | None:
+    """Days between a doc's last_reviewed and the run date; None if no/bad date."""
+    d = parse_iso_date(last_reviewed)
+    if d is None:
+        return None
+    return (run_date - d).days
+
+
+@dataclass
+class DocEntry:
+    """A help doc the queue lists: it owns ≥1 concept touched by a candidate PR
+    this run (``prs``), and/or it carries unverified PRs forward from earlier
+    runs (``carried``) because no human has read it since they were queued."""
+    slug: str
+    last_reviewed: str | None
+    exists: bool
+    stale: bool                 # last_reviewed absent or >threshold days old
+    concepts: list[str]
+    prs: list[tuple[int, str]]  # this run's (number, title), first-seen order
+    # last_reviewed was written by a refresh bot run, not a person (see
+    # load_machine_bumps) — the date records that nothing was read.
+    machine_dated: bool = False
+    # A person has not read this doc since the window opened (or ever).
+    needs_review: bool = True
+    # PRs from this run that touch no product surface (lane bookkeeping).
+    bookkeeping: set[int] = field(default_factory=set)
+    # PR number -> how many of this doc's touched concepts it matched (rank key).
+    hits: dict[int, int] = field(default_factory=dict)
+    # Unverified PRs from earlier queues, not already in ``prs``.
+    carried: list[tuple[int, str]] = field(default_factory=list)
+    carried_since: str | None = None   # generation date of the queue they came from
+
+
+@dataclass
+class RefreshPlan:
+    run_date: str          # ISO
+    since_date: str        # ISO
+    candidates: list[dict] = field(default_factory=list)  # {number,title,concepts}
+    skipped: list[int] = field(default_factory=list)
+    docs: list[DocEntry] = field(default_factory=list)    # listed, sorted by slug
+
+    @property
+    def stamped_docs(self) -> list[DocEntry]:
+        """Docs whose ``last_refreshed_against`` this run writes: touched this run
+        and present on disk (can't stamp a gap)."""
+        return [d for d in self.docs if d.prs and d.exists]
+
+    @property
+    def has_changes(self) -> bool:
+        """Whether this run would touch any file (REVIEW-QUEUE or a stamp)."""
+        return bool(self.docs)
+
+    def to_json(self) -> dict:
+        return {
+            "run_date": self.run_date,
+            "since_date": self.since_date,
+            "candidates": self.candidates,
+            "skipped": self.skipped,
+            "affected_docs": [
+                {
+                    "slug": d.slug,
+                    "last_reviewed": d.last_reviewed,
+                    "machine_dated": d.machine_dated,
+                    "needs_review": d.needs_review,
+                    "exists": d.exists,
+                    "stale": d.stale,
+                    "concepts": d.concepts,
+                    "prs": [{"number": n, "title": t} for n, t in d.prs],
+                    "carried": [{"number": n, "title": t} for n, t in d.carried],
+                }
+                for d in self.docs
+            ],
+            "stamped": [d.slug for d in self.stamped_docs],
+        }
+
+
+def is_bookkeeping_pr(pr: dict) -> bool:
+    """A PR that matched a concept by name but touches no product surface: a
+    lane-bookkeeping ``pm(...)`` PR, or one whose files all live under
+    ``internal/``, or the refresh's own weekly PR. Collapsed in the queue — nothing an operator reads changed."""
+    title = str(pr.get("title") or "")
+    if title.startswith("pm(") or title.startswith("docs(help): weekly knowledge refresh"):
+        return True
+    files = pr.get("files") or []
+    return bool(files) and all(f.startswith("internal/") for f in files)
+
+
+def refreshed_against(plan: RefreshPlan, d: DocEntry) -> str:
+    """The SUBJECT of a machine check: the window, how many PRs, which concepts.
+
+    A bare date would be the D-CS7 violation; this names what was ranged over.
+    PR numbers stay in REVIEW-QUEUE.md — the frontmatter ships with the doc.
+    """
+    n = len(d.prs)
+    return (
+        f"{plan.since_date}..{plan.run_date}; {n} merged PR{'s' if n != 1 else ''} "
+        f"touched concepts: {', '.join(d.concepts)}"
+    )
+
+
+_PREV_GENERATED = re.compile(r"_Generated by `tools/help-refresh` on (\d{4}-\d{2}-\d{2})")
+_PREV_SECTION = re.compile(r"^## ([\w.-]+?)\.md\b")
+_PREV_PR = re.compile(r"^- #(\d+)(?: — (.*))?$")
+_PREV_NUMBERS_LINE = re.compile(r"^(?:Lane bookkeeping|Beyond the cap)\b.*?:\s*((?:#\d+\s*)+)$")
+
+
+def parse_previous_queue(text: str | None) -> tuple[dt.date | None, dict[str, dict]]:
+    """Read last run's REVIEW-QUEUE.md back: (generation date, slug -> entry).
+
+    entry = {"concepts": [...], "prs": [(number, title), ...]} — every PR the
+    previous queue listed for the doc, including ones it collapsed or carried.
+    """
+    if not text:
+        return None, {}
+    m = _PREV_GENERATED.search(text)
+    gen = parse_iso_date(m.group(1)) if m else None
+    entries: dict[str, dict] = {}
+    cur: dict | None = None
+    for line in text.splitlines():
+        sec = _PREV_SECTION.match(line)
+        if sec:
+            cur = entries.setdefault(sec.group(1), {"concepts": [], "prs": []})
+            continue
+        if cur is None:
+            continue
+        if line.startswith("Concepts touched:"):
+            cur["concepts"] = re.findall(r"`([^`]+)`", line)
+            continue
+        pr = _PREV_PR.match(line.strip())
+        if pr:
+            item = (int(pr.group(1)), (pr.group(2) or "").strip())
+            if item[0] not in {n for n, _ in cur["prs"]}:
+                cur["prs"].append(item)
+            continue
+        nums = _PREV_NUMBERS_LINE.match(line.strip())
+        if nums:
+            for n in re.findall(r"#(\d+)", nums.group(1)):
+                if int(n) not in {x for x, _ in cur["prs"]}:
+                    cur["prs"].append((int(n), ""))
+    return gen, entries
+
+
+def human_reviewed_after(meta: dict, slug: str, after: dt.date | None,
+                         machine_bumps: dict[str, set[str]]) -> bool:
+    """True only when a PERSON set this doc's last_reviewed, strictly after
+    ``after``. A date the refresh bot wrote never counts; neither does a date on
+    the queue's own generation day (the bot's own bump day) — fails closed."""
+    lr = parse_iso_date(meta.get("last_reviewed"))
+    if lr is None or str(meta.get("last_reviewed")) in machine_bumps.get(slug, set()):
+        return False
+    return after is None or lr > after
+
+
+def build_plan(
+    prs: list[dict],
+    index: dict,
+    docs: dict[str, dict],
+    run_date: dt.date,
+    *,
+    since_date: dt.date,
+    stale_threshold_days: int = STALE_THRESHOLD_DAYS,
+    machine_bumps: dict[str, set[str]] | None = None,
+    previous_queue: str | None = None,
+) -> RefreshPlan:
+    """The heart of the routine — pure, deterministic, fixture-testable.
+
+    ``docs`` maps slug -> {"last_reviewed": "YYYY-MM-DD"|None, "status": str}.
+    ``index`` is the parsed _index.yaml. ``machine_bumps`` maps slug -> the
+    last_reviewed dates a refresh bot (not a person) wrote. ``previous_queue`` is
+    last run's REVIEW-QUEUE.md text — its still-unverified entries are carried
+    forward instead of being silently dropped. Deprecated docs are never listed.
+    Returns a RefreshPlan; it never decides a doc was *reviewed* — only a person
+    editing ``last_reviewed`` can.
+    """
+    machine_bumps = machine_bumps or {}
+    matchers = build_term_matchers(vocabulary_terms(index))
+    owners = concept_owner_map(index)
+
+    candidates: list[dict] = []
+    skipped: list[int] = []
+    # slug -> {"concepts": set, "prs": [(num, title)], "bookkeeping": set, "hits": {}}
+    affected: dict[str, dict] = {}
+
+    for pr in prs:
+        number = pr.get("number")
+        title = str(pr.get("title") or "")
+        if is_internal_only_pr(pr):
+            if number is not None:
+                skipped.append(number)
+            continue
+        matched = match_concepts(pr, matchers)
+        candidates.append({"number": number, "title": title, "concepts": sorted(matched)})
+        book = is_bookkeeping_pr(pr)
+        per_doc: dict[str, set[str]] = {}
+        for concept in matched:
+            for slug in owners.get(concept, []):
+                if (docs.get(slug) or {}).get("status") == "deprecated":
+                    continue
+                entry = affected.setdefault(
+                    slug, {"concepts": set(), "prs": [], "bookkeeping": set(), "hits": {}})
+                entry["concepts"].add(concept)
+                per_doc.setdefault(slug, set()).add(concept)
+                if (number, title) not in entry["prs"]:
+                    entry["prs"].append((number, title))
+        for slug, cs in per_doc.items():
+            affected[slug]["hits"][number] = len(cs)
+            if book:
+                affected[slug]["bookkeeping"].add(number)
+
+    prev_gen, prev_entries = parse_previous_queue(previous_queue)
+    prev_when = prev_gen.isoformat() if prev_gen else None
+
+    def _entry(slug: str, data: dict) -> DocEntry:
+        meta = docs.get(slug)
+        exists = meta is not None
+        last_reviewed = None
+        if exists:
+            lr = meta.get("last_reviewed")
+            last_reviewed = lr if lr is None else str(lr)
+        age = doc_age_days(last_reviewed, run_date) if exists else None
+        # A missing/unparseable last_reviewed counts as stale (overdue by contract).
+        stale = exists and (age is None or age > stale_threshold_days)
+        machine = bool(last_reviewed) and last_reviewed in machine_bumps.get(slug, set())
+        lr_date = parse_iso_date(last_reviewed)
+        needs = exists and (machine or lr_date is None or lr_date < since_date)
+        return DocEntry(
+            slug=slug, last_reviewed=last_reviewed, exists=exists, stale=stale,
+            concepts=sorted(data["concepts"]), prs=list(data["prs"]),
+            machine_dated=machine, needs_review=needs,
+            bookkeeping=set(data.get("bookkeeping", ())), hits=dict(data.get("hits", {})),
+        )
+
+    doc_entries: dict[str, DocEntry] = {s: _entry(s, affected[s]) for s in affected}
+
+    # Carry forward: anything the previous queue listed for a doc nobody has read
+    # since. The queue is regenerated whole each week; without this, last week's
+    # unverified backlog is discarded on the next Monday.
+    for slug, prev in prev_entries.items():
+        meta = docs.get(slug)
+        if meta is None or meta.get("status") == "deprecated":
+            continue
+        if human_reviewed_after(meta, slug, prev_gen, machine_bumps):
+            continue
+        entry = doc_entries.get(slug)
+        if entry is None:
+            entry = doc_entries[slug] = _entry(
+                slug, {"concepts": set(prev["concepts"]), "prs": []})
+        seen = {n for n, _ in entry.prs}
+        entry.carried = [(n, t) for n, t in prev["prs"] if n not in seen]
+        entry.carried_since = prev_when
+        if not entry.concepts:
+            entry.concepts = sorted(prev["concepts"])
+        if not entry.prs and not entry.carried:
+            del doc_entries[slug]
+
+    return RefreshPlan(
+        run_date=run_date.isoformat(),
+        since_date=since_date.isoformat(),
+        candidates=candidates,
+        skipped=sorted(skipped),
+        docs=[doc_entries[s] for s in sorted(doc_entries)],
+    )
+
+
+def _rank_and_cap(
+    prs: list[tuple[int, str]], hits: dict[int, int], bookkeeping: set[int],
+    cap: int = PER_DOC_PR_CAP,
+) -> tuple[list[tuple[int, str]], list[int], list[int]]:
+    """(listed, bookkeeping numbers, beyond-cap numbers) — product PRs ranked by
+    how many of the doc's concepts they hit, then newest first; the rest collapsed."""
+    product = [p for p in prs if p[0] not in bookkeeping]
+    ranked = sorted(product, key=lambda p: (-hits.get(p[0], 0), -p[0]))
+    return (
+        ranked[:cap],
+        sorted((n for n, _ in prs if n in bookkeeping), reverse=True),
+        [n for n, _ in ranked[cap:]],
+    )
+
+
+def _pr_bullets(listed: list[tuple[int, str]]) -> list[str]:
+    out = []
+    for number, title in listed:
+        ref = f"#{number}" if number is not None else "(unknown PR)"
+        out.append(f"- {ref} — {title}" if title else f"- {ref}")
+    return out
+
+
+def _doc_state(d: DocEntry, plan: RefreshPlan) -> str:
+    if not d.exists:
+        return "doc not yet written — see _pages.yaml backlog"
+    if d.last_reviewed is None:
+        state = "NEVER HUMAN-REVIEWED — no last_reviewed"
+    elif d.machine_dated:
+        state = (f"last_reviewed {d.last_reviewed} was written by the refresh bot — "
+                 f"NOT HUMAN-REVIEWED")
+    elif d.needs_review:
+        state = f"last_reviewed {d.last_reviewed} — NEEDS REVIEW, a human last read it before {plan.since_date}"
+    else:
+        state = f"last_reviewed {d.last_reviewed} — human-reviewed inside this window"
+    return state + (", STALE >30d" if d.stale else "")
+
+
+def render_review_queue(plan: RefreshPlan) -> str:
+    """Render docs/help/REVIEW-QUEUE.md from a plan. Deterministic for a fixed plan."""
+    lines: list[str] = []
+    lines.append("# docs/help — knowledge-refresh review queue")
+    lines.append("")
+    lines.append(
+        f"_Generated by `tools/help-refresh` on {plan.run_date}, covering PRs "
+        f"merged to `main` since {plan.since_date}._"
+    )
+    lines.append("")
+    lines.append(
+        "This file is regenerated by each weekly run. Every entry below is a help "
+        "doc whose **concepts** were touched by a merged PR in the window, paired "
+        "with the PRs to check it against — plus any PRs still unverified from "
+        "earlier runs (**carried forward**; a run never discards them)."
+    )
+    lines.append("")
+    lines.append(
+        "**The tool never touches `last_reviewed`.** It stamps "
+        "`last_refreshed_against` (the window and concepts it checked, by machine) "
+        "and nothing else. `last_reviewed` moves only when a person has read the "
+        "prose: read the linked PRs, confirm the doc still matches what a user "
+        "sees, edit the prose if it drifted, then set `last_reviewed` yourself. "
+        "A doc whose `last_refreshed_against` is current but whose `last_reviewed` "
+        "is old is *checked by machine, not read by a person* — that is what the "
+        "state on each heading says. A `last_reviewed` date written by an earlier "
+        "bot run is marked as such and does not count as a human read."
+    )
+    lines.append("")
+
+    if not plan.docs:
+        lines.append("_No affected docs this week._")
+        lines.append("")
+        return "\n".join(lines)
+
+    for d in plan.docs:
+        lines.append(f"## {d.slug}.md  _({_doc_state(d, plan)})_")
+        lines.append("")
+        lines.append(f"Concepts touched: {', '.join(f'`{c}`' for c in d.concepts)}")
+        lines.append("")
+        if d.prs:
+            listed, book, beyond = _rank_and_cap(d.prs, d.hits, d.bookkeeping)
+            lines.append(
+                f"PRs to verify against (ranked by concepts hit; "
+                f"{len(listed)} of {len(d.prs) - len(book)} product PRs shown):"
+            )
+            lines.extend(_pr_bullets(listed))
+            if beyond:
+                lines.append("")
+                lines.append(f"Beyond the cap ({PER_DOC_PR_CAP}), still unread: "
+                             + " ".join(f"#{n}" for n in beyond))
+            if book:
+                lines.append("")
+                lines.append("Lane bookkeeping, names a concept but touches no product surface: "
+                             + " ".join(f"#{n}" for n in book))
+            lines.append("")
+        if d.carried:
+            since = f" (queued {d.carried_since})" if d.carried_since else ""
+            # Titled entries first, newest first; bare numbers (collapsed by an
+            # earlier run) fall past the cap instead of eating it.
+            ordered = sorted(d.carried, key=lambda p: (not p[1], -p[0]))
+            listed = ordered[:PER_DOC_PR_CAP]
+            lines.append(f"Carried forward from earlier runs{since} — no human read since:")
+            lines.extend(_pr_bullets(listed))
+            if ordered[PER_DOC_PR_CAP:]:
+                lines.append("")
+                lines.append(f"Beyond the cap ({PER_DOC_PR_CAP}), carried: "
+                             + " ".join(f"#{n}" for n, _ in ordered[PER_DOC_PR_CAP:]))
+            lines.append("")
+
+    return "\n".join(lines)
+
+
+_REFRESHED_LINE = re.compile(r"(?m)^last_refreshed_against:[ \t]*.*\n?")
+_LAST_REVIEWED_LINE = re.compile(r"(?m)^last_reviewed:[ \t]*.*$")
+
+
+def stamp_refreshed_against(text: str, value: str) -> str:
+    """Write the frontmatter ``last_refreshed_against:`` line. It NEVER reads or
+    rewrites ``last_reviewed:`` — a machine run cannot record a human read.
+
+    Replaces an existing stamp, else inserts after ``last_reviewed:`` (or at the
+    end of the frontmatter). Text with no frontmatter is returned unchanged.
+    """
+    m = _FM.match(text)
+    if not m:
+        return text
+    fm = _REFRESHED_LINE.sub("", m.group(1) + "\n").rstrip("\n")
+    line = 'last_refreshed_against: "' + value.replace('"', "'") + '"'
+    lr = _LAST_REVIEWED_LINE.search(fm)
+    fm = fm[: lr.end()] + "\n" + line + fm[lr.end():] if lr else fm + "\n" + line
+    return "---\n" + fm + "\n---\n" + text[m.end():]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Impure I/O — wall clock, filesystem, `gh`. Kept out of the tested core.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+_FM = re.compile(r"^---\n(.*?)\n---\n", re.DOTALL)
+
+
+def load_index(repo_root: Path) -> dict:
+    raw = (repo_root / INDEX_REL).read_text(encoding="utf-8")
+    return yaml.safe_load(raw) or {}
+
+
+def load_docs(repo_root: Path) -> dict[str, dict]:
+    """slug -> {"last_reviewed": str|None, "path": Path} for every docs/help/*.md.
+
+    Skips the registry/index YAML and REVIEW-QUEUE.md (not corpus docs).
+    """
+    help_dir = repo_root / HELP_DIR_REL
+    docs: dict[str, dict] = {}
+    for p in sorted(help_dir.glob("*.md")):
+        if p.name == "README.md" or p.name == Path(REVIEW_QUEUE_REL).name:
+            continue
+        text = p.read_text(encoding="utf-8")
+        m = _FM.match(text)
+        fm = (yaml.safe_load(m.group(1)) if m else None) or {}
+        lr = fm.get("last_reviewed")
+        docs[p.stem] = {
+            "last_reviewed": None if lr is None else str(lr),
+            "status": str(fm.get("status") or "active"),
+            "path": p,
+        }
+    return docs
+
+
+MACHINE_DATED_REL = f"{HELP_DIR_REL}/_machine-dated.yaml"
+
+
+def load_machine_bumps(repo_root: Path) -> dict[str, set[str]]:
+    """slug -> the ``last_reviewed`` dates the refresh BOT wrote before the field
+    split, from the frozen ledger ``docs/help/_machine-dated.yaml``.
+
+    Those dates record that a doc was refreshed, not that anyone read it; the
+    ledger is how the queue tells them from a person's. A ledger (not git
+    archaeology) because a squash-merge subject can make a human edit look like a
+    bot's. Missing ledger -> {} and the caller says so.
+    """
+    path = repo_root / MACHINE_DATED_REL
+    if not path.is_file():
+        return {}
+    raw = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("machine_dated") or {}
+    return {str(slug): {str(d) for d in dates or []} for slug, dates in raw.items()}
+
+
+def fetch_merged_prs(since_date: dt.date, *, until_date: dt.date | None = None,
+                     base: str = "main", limit: int = DEFAULT_PR_LIMIT) -> list[dict]:
+    """Collect merged PRs to ``base`` in ``since_date..until_date`` via the gh CLI.
+
+    Returns a list of {number, title, body, files:[path,...]} dicts — files
+    flattened from gh's [{path,additions,deletions}] shape to bare paths.
+    """
+    cmd = [
+        "gh", "pr", "list",
+        "--state", "merged",
+        "--base", base,
+        "--search",
+        f"merged:{since_date.isoformat()}..{until_date.isoformat()}" if until_date
+        else f"merged:>={since_date.isoformat()}",
+        "--json", "number,title,body,files",
+        "--limit", str(limit),
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    except FileNotFoundError as exc:  # pragma: no cover — gh not installed
+        raise RuntimeError("help-refresh: the `gh` CLI is required but was not found on PATH") from exc
+    except subprocess.CalledProcessError as exc:  # pragma: no cover — auth/network
+        raise RuntimeError(f"help-refresh: `gh pr list` failed:\n{exc.stderr.strip()}") from exc
+    data = json.loads(proc.stdout or "[]")
+    if len(data) >= limit:
+        # A list cut off at the limit is a window the tool did not read — it must
+        # not render as "no PRs touched this doc". Fail closed.
+        raise RuntimeError(
+            f"help-refresh: the PR list hit its limit ({limit}) — the window "
+            f"{since_date}..{until_date or 'now'} is truncated. Narrow --since or raise --limit."
+        )
+    for pr in data:
+        pr["files"] = [f.get("path", "") for f in (pr.get("files") or [])]
+    return data
+
+
+class SiteRebuildError(RuntimeError):
+    """A `last_reviewed` bump was due but docs/gitpages/help/ could not be rebuilt."""
+
+
+def site_build_blocker(repo_root: Path) -> str | None:
+    """Why the help site can't be rebuilt from ``repo_root`` — None if it can."""
+    builder = repo_root / SITE_BUILDER_REL
+    if not builder.is_file():
+        return f"{SITE_BUILDER_REL} not found under {repo_root}"
+    missing = [m for m in SITE_BUILD_DEPS if importlib.util.find_spec(m) is None]
+    if missing:
+        return (
+            f"{SITE_BUILDER_REL} needs {', '.join(missing)} "
+            f"(install with: pip install markdown pyyaml)"
+        )
+    return None
+
+
+def _snapshot_site(out_dir: Path) -> dict[Path, bytes]:
+    return {p: p.read_bytes() for p in out_dir.glob("*.html")} if out_dir.is_dir() else {}
+
+
+def rebuild_site(repo_root: Path) -> list[Path]:
+    """Run tools/build_help_site.py for ``repo_root``; return the pages it changed.
+
+    Raises SiteRebuildError (after restoring every page it touched) on failure.
+    """
+    out_dir = repo_root / SITE_OUT_REL
+    before = _snapshot_site(out_dir)
+    proc = subprocess.run(
+        [sys.executable, str(repo_root / SITE_BUILDER_REL)],
+        cwd=repo_root, capture_output=True, text=True,
+    )
+    after = _snapshot_site(out_dir)
+    if proc.returncode != 0:
+        for p in after:
+            if p in before:
+                p.write_bytes(before[p])
+            else:
+                p.unlink()
+        detail = (proc.stderr or proc.stdout).strip() or f"exit {proc.returncode}"
+        raise SiteRebuildError(f"{SITE_BUILDER_REL} failed: {detail}")
+    return sorted(p for p, b in after.items() if before.get(p) != b)
+
+
+def apply_plan(plan: RefreshPlan, repo_root: Path, *, dry_run: bool) -> list[Path]:
+    """Stamp ``last_refreshed_against`` on touched docs, (re)write REVIEW-QUEUE.md,
+    and — when any doc changed — regenerate docs/gitpages/help/.
+
+    NEVER writes ``last_reviewed``: that field records a person reading the
+    prose, and a machine run has no way to do that.
+
+    Returns the list of files that were (or, under --dry-run, would be) changed;
+    under --dry-run the site pages a stamp would regenerate are not listed.
+    Writes NOTHING when the plan has no affected docs, so a zero-candidate run
+    leaves the tree clean, and never runs the site build when no doc changed.
+
+    Fails closed: raises SiteRebuildError when a doc changed and the site can't
+    be rebuilt, having written nothing (the build is checked up front) or rolled
+    back everything it wrote (the build ran and failed).
+    """
+    changed: list[Path] = []
+    if not plan.has_changes:
+        return changed
+
+    help_dir = repo_root / HELP_DIR_REL
+    writes: dict[Path, tuple[str | None, str]] = {}  # path -> (old text, new text)
+    for d in plan.stamped_docs:
+        path = help_dir / f"{d.slug}.md"
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        stamped = stamp_refreshed_against(text, refreshed_against(plan, d))
+        if stamped != text:
+            writes[path] = (text, stamped)
+    bumped_any = bool(writes)
+
+    queue_path = repo_root / REVIEW_QUEUE_REL
+    new_queue = render_review_queue(plan)
+    old_queue = queue_path.read_text(encoding="utf-8") if queue_path.exists() else None
+    if new_queue != old_queue:
+        writes[queue_path] = (old_queue, new_queue)
+
+    changed.extend(writes)
+    if dry_run:
+        return changed
+
+    if bumped_any:
+        blocker = site_build_blocker(repo_root)
+        if blocker:
+            raise SiteRebuildError(blocker)
+
+    for path, (_, new) in writes.items():
+        path.write_text(new, encoding="utf-8")
+
+    if bumped_any:
+        try:
+            changed.extend(rebuild_site(repo_root))
+        except SiteRebuildError:
+            for path, (old, _) in writes.items():
+                if old is None:
+                    path.unlink()
+                else:
+                    path.write_text(old, encoding="utf-8")
+            raise
+
+    return changed
+
+
+def _print_summary(plan: RefreshPlan, changed: list[Path], repo_root: Path, *, dry_run: bool) -> None:
+    n_cand = len(plan.candidates)
+    n_skip = len(plan.skipped)
+    n_aff = len(plan.docs)
+    n_stamp = len(plan.stamped_docs)
+    n_unread = sum(1 for d in plan.docs if d.needs_review)
+    print(
+        f"help-refresh: window {plan.since_date}..{plan.run_date} · "
+        f"{n_cand} candidate PR(s), {n_skip} skipped · "
+        f"{n_aff} listed doc(s), {n_stamp} stamped, {n_unread} not human-reviewed "
+        f"(last_reviewed untouched)."
+    )
+    if plan.docs:
+        for d in plan.docs:
+            tag = "gap" if not d.exists else ("NEEDS-HUMAN" if d.needs_review else "human-reviewed")
+            print(f"  · {d.slug}.md [{tag}] — {len(d.prs)} PR(s) + {len(d.carried)} carried, "
+                  f"concepts: {', '.join(d.concepts)}")
+    verb = "would change" if dry_run else "changed"
+    if changed:
+        rels = sorted(str(p.relative_to(repo_root)) for p in changed)
+        print(f"help-refresh: {verb} {len(changed)} file(s): {', '.join(rels)}")
+    else:
+        print("help-refresh: no candidate-driven changes — nothing to refresh (clean tree, no PR).")
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(
+        description="Weekly knowledge-refresh routine for docs/help/ (README §Weekly knowledge-refresh).",
+    )
+    ap.add_argument(
+        "--since",
+        metavar="YYYY-MM-DD",
+        help="cutoff date for merged PRs (default: 7 days before --run-date).",
+    )
+    ap.add_argument(
+        "--run-date",
+        metavar="YYYY-MM-DD",
+        help="treat this date as 'today' for the window + staleness (default: today).",
+    )
+    ap.add_argument("--base", default="main", help="base branch for merged PRs (default: main).")
+    ap.add_argument("--limit", type=int, default=DEFAULT_PR_LIMIT, help="max PRs to fetch (default: 600); a list that hits it is refused as truncated.")
+    ap.add_argument("--repo-root", default=str(REPO_ROOT), help="repo root (default: this tool's repo).")
+    ap.add_argument("--dry-run", action="store_true", help="compute + print the plan; write nothing.")
+    ap.add_argument("--json", action="store_true", help="print the plan as JSON and exit (implies --dry-run).")
+    args = ap.parse_args(argv)
+
+    repo_root = Path(args.repo_root).resolve()
+
+    # Wall clock lives HERE and nowhere else — the logic above takes dates as args.
+    run_date = parse_iso_date(args.run_date) or dt.date.today()
+    if args.run_date and parse_iso_date(args.run_date) is None:
+        ap.error(f"--run-date {args.run_date!r} is not a valid YYYY-MM-DD date")
+    if args.since:
+        since_date = parse_iso_date(args.since)
+        if since_date is None:
+            ap.error(f"--since {args.since!r} is not a valid YYYY-MM-DD date")
+    else:
+        since_date = run_date - dt.timedelta(days=DEFAULT_LOOKBACK_DAYS)
+
+    index = load_index(repo_root)
+    docs = load_docs(repo_root)
+    try:
+        prs = fetch_merged_prs(since_date, until_date=run_date, base=args.base, limit=args.limit)
+    except RuntimeError as exc:
+        sys.stderr.write(f"{exc}\n")
+        return 2
+    queue_path = repo_root / REVIEW_QUEUE_REL
+    previous_queue = queue_path.read_text(encoding="utf-8") if queue_path.exists() else None
+    machine_bumps = load_machine_bumps(repo_root)
+    if not machine_bumps:
+        sys.stderr.write(
+            f"help-refresh: {MACHINE_DATED_REL} is missing or empty — every dated doc is "
+            "treated by its date alone, so bot-written dates cannot be told from a "
+            "person's.\n"
+        )
+
+    plan = build_plan(prs, index, docs, run_date, since_date=since_date,
+                      machine_bumps=machine_bumps, previous_queue=previous_queue)
+
+    if args.json:
+        print(json.dumps(plan.to_json(), indent=2))
+        return 0
+
+    try:
+        changed = apply_plan(plan, repo_root, dry_run=args.dry_run)
+    except SiteRebuildError as exc:
+        sys.stderr.write(
+            f"help-refresh: REFUSED — {len(plan.stamped_docs)} last_refreshed_against stamp(s) were due, "
+            f"but {SITE_OUT_REL}/ could not be regenerated to match, so the review PR would "
+            f"red help-site-check.\n  cause: {exc}\n"
+            f"  nothing was written; fix the cause and re-run.\n"
+        )
+        return 2
+    _print_summary(plan, changed, repo_root, dry_run=args.dry_run)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

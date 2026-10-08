@@ -1,0 +1,46 @@
+{
+  "format_version": "1.0",
+  "snapshot_source": {
+    "pkg_id": "p-be5885a2",
+    "pkg_version": "2026.09.26-1.9",
+    "snapshot_at": "2026-09-26T00:00:00Z",
+    "snapshot_by": "crossplay-coach first-party deterministic files-pack"
+  },
+  "files": [
+    {
+      "path": "scripts/crossplay_coach.py",
+      "mode": "0755",
+      "sha256": "15e49d67fde6fa25ef8041d3855ea8c0224ba534eaa4e2c3cc47fd5424016e1d",
+      "size_bytes": 65720,
+      "placeholders": []
+    },
+    {
+      "path": "scripts/crossplay_coach",
+      "mode": "0755",
+      "sha256": "0996fae5cf9df88569fb280dc69c59e528576da0ada56087d247cad1d7a9cac7",
+      "size_bytes": 132,
+      "placeholders": []
+    },
+    {
+      "path": "scripts/crossplay_route.py",
+      "mode": "0755",
+      "sha256": "c06da32888420e49d2eb09106b2f1145899b8ab9903f43113a645e155d5fa9a9",
+      "size_bytes": 23688,
+      "placeholders": []
+    },
+    {
+      "path": "scripts/crossplay_lexicon.json",
+      "mode": "0644",
+      "sha256": "142ffa434ca5d783245ebbbe49cd6ad334215eeacbdb46804b3ea774921f351d",
+      "size_bytes": 345,
+      "placeholders": []
+    },
+    {
+      "path": "docs/crossplay-coach.md",
+      "mode": "0644",
+      "sha256": "5e6f6d23aea14176b484730c4d157c3f44f22b2310f772b01e08861a69498b0a",
+      "size_bytes": 13942,
+      "placeholders": []
+    }
+  ]
+}

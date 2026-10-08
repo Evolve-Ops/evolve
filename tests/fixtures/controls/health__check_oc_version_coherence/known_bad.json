@@ -1,0 +1,11 @@
+{
+  "_comment": "AXIS: the same field, set to `untested`. Identical installed runtime; the ONLY difference is that no contract run is recorded for it. This is the control's reason to exist, and the one shape that must never read as a pass: absence of a run is not a pass. Replayed by packages/admin/tests/test_oc_runtime_controls.py::test_version_coherence_known_bad_warns.",
+  "_axis": "validation_state.state",
+  "installed_version": "2026.9.2",
+  "validation_state": {"state": "untested", "tested": [], "failing": []},
+  "expect": {
+    "status": "WARN",
+    "name": "oc_version_validated",
+    "message_contains": "Absence of a run is not a pass"
+  }
+}
