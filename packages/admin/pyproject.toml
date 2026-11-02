@@ -22,7 +22,7 @@ dependencies = [
     # RSI arbiter charter loader — charters are YAML on disk.
     "PyYAML>=6.0",
     # MCP bridge dependencies
-    "mcp>=2.2.0,<3",   # upper bound so the next major fails closed into a PR, the way
+    "mcp>=2.3.0,<3",   # upper bound so the next major fails closed into a PR, the way
                      # >=1.0 with no bound did not: 2.x removed the handler decorators
                      # and a lock refresh would have taken it silently (#4370 capped it
                      # at <2 until this migration landed).
